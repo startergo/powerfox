@@ -1417,6 +1417,7 @@ dependencies = [
  "unic-langid",
  "uuid",
  "warp",
+ "whatsys",
  "windows-sys",
  "yaml-rust2",
  "zip",
@@ -5920,6 +5921,7 @@ dependencies = [
  "pkcs11-bindings",
  "rsclientcerts",
  "rsclientcerts-util",
+ "whatsys",
  "winapi",
  "xpcom",
 ]

@@ -189,6 +189,9 @@ class TextInputHandler;
 - (FullscreenTitlebarTracker*)init;
 @end
 
+@interface TitlebarGradientView : NSView
+@end
+
 // NSWindow subclass for handling windows with toolbars.
 @interface ToolbarWindow : BaseWindow {
   // mFullscreenTitlebarTracker attaches an invisible rectangle to the system
@@ -196,6 +199,7 @@ class TextInputHandler;
   // fullscreen.
   FullscreenTitlebarTracker* mFullscreenTitlebarTracker;
 
+  TitlebarGradientView* mTitlebarGradientView;
   CGFloat mUnifiedToolbarHeight;
   /* Store the height of the titlebar when this window is initialized. The
      titlebarHeight getter returns 0 when in fullscreen, which is not useful in
@@ -209,6 +213,7 @@ class TextInputHandler;
 - (CGFloat)unifiedToolbarHeight;
 - (CGFloat)titlebarHeight;
 - (NSRect)titlebarRect;
+- (void)setTitlebarNeedsDisplay;
 - (void)setDrawsContentsIntoWindowFrame:(BOOL)aState;
 
 - (void)placeWindowButtons:(NSRect)aRect;

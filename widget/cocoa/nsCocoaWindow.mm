@@ -8857,6 +8857,27 @@ static bool MaybeDropEventForModalWindow(NSEvent* aEvent, id aDelegate) {
 - (void)_maskCorners:(NSUInteger)aFlags clipRect:(NSRect)aRect;
 @end
 
+@implementation TitlebarGradientView
+
+- (void)drawRect:(NSRect)aRect {
+  CGContextRef context =
+      (CGContextRef)[[NSGraphicsContext currentContext] graphicsPort];
+  ToolbarWindow* window = (ToolbarWindow*)self.window;
+  nsNativeThemeCocoa::DrawNativeTitlebar(
+      context, NSRectToCGRect(self.bounds), window.unifiedToolbarHeight,
+      window.isMainWindow, NO);
+}
+
+- (BOOL)isOpaque {
+  return YES;
+}
+
+- (BOOL)mouseDownCanMoveWindow {
+  return YES;
+}
+
+@end
+
 @implementation ToolbarWindow
 
 - (id)initWithContentRect:(NSRect)aChildViewRect
@@ -8896,12 +8917,15 @@ static bool MaybeDropEventForModalWindow(NSEvent* aEvent, id aDelegate) {
                                styleMask:aStyle
                                  backing:aBufferingType
                                    defer:aFlag])) {
+    mTitlebarGradientView = nil;
     mUnifiedToolbarHeight = 22.0f;
     mWindowButtonsRect = NSZeroRect;
     mFullScreenButtonRect = NSZeroRect;
 
     if ([self respondsToSelector:@selector(setTitlebarAppearsTransparent:)])
       self.titlebarAppearsTransparent = YES;
+
+    [self updateTitlebarGradientViewPresence];
 
     if (@available(macOS 11.0, *)) {
       self.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
@@ -8927,6 +8951,7 @@ static bool MaybeDropEventForModalWindow(NSEvent* aEvent, id aDelegate) {
   NS_OBJC_END_TRY_BLOCK_RETURN(nil);
 }
 - (void)dealloc {
+  [mTitlebarGradientView release];
   if (@available(macOS 10.11, *)) {
     [mFullscreenTitlebarTracker removeObserver:self forKeyPath:@"revealAmount"];
     [mFullscreenTitlebarTracker removeFromParentViewController];
@@ -8938,7 +8963,29 @@ static bool MaybeDropEventForModalWindow(NSEvent* aEvent, id aDelegate) {
 - (NSArray<NSView*>*)contentViewContents {
   NSMutableArray<NSView*>* contents =
       [[[self contentView] subviews] mutableCopy];
+  if (mTitlebarGradientView) {
+    [contents removeObject:mTitlebarGradientView];
+  }
   return [contents autorelease];
+}
+
+- (void)updateTitlebarGradientViewPresence {
+  BOOL needsTitlebarView = nsCocoaFeatures::OnYosemiteOrLater() &&
+                           !nsCocoaFeatures::OnBigSurOrLater() &&
+                           !self.drawsContentsIntoWindowFrame;
+  if (needsTitlebarView && !mTitlebarGradientView) {
+    mTitlebarGradientView =
+        [[TitlebarGradientView alloc] initWithFrame:self.titlebarRect];
+    mTitlebarGradientView.autoresizingMask =
+        NSViewWidthSizable | NSViewMinYMargin;
+    [self.contentView addSubview:mTitlebarGradientView
+                      positioned:NSWindowBelow
+                      relativeTo:nil];
+  } else if (!needsTitlebarView && mTitlebarGradientView) {
+    [mTitlebarGradientView removeFromSuperview];
+    [mTitlebarGradientView release];
+    mTitlebarGradientView = nil;
+  }
 }
 
 // Override methods that translate between content rect and frame rect.
@@ -8983,7 +9030,12 @@ static bool MaybeDropEventForModalWindow(NSEvent* aEvent, id aDelegate) {
   }
 }
 - (void)windowMainStateChanged {
+  [self setTitlebarNeedsDisplay];
   [[self mainChildView] ensureNextCompositeIsAtomicWithMainThreadPaint];
+}
+
+- (void)setTitlebarNeedsDisplay {
+  [mTitlebarGradientView setNeedsDisplay:YES];
 }
 
 - (void)observeValueForKeyPath:(NSString*)keyPath
@@ -9105,6 +9157,8 @@ static CGFloat DefaultTitlebarHeight() {
   if (aHeight == mUnifiedToolbarHeight) return;
 
   mUnifiedToolbarHeight = aHeight;
+
+  [self setTitlebarNeedsDisplay];
 }
 
 // Extending the content area into the title bar works by resizing the
@@ -9136,6 +9190,8 @@ static CGFloat DefaultTitlebarHeight() {
     // we'll send a mouse move event with the correct new position.
     ChildViewMouseTracker::ResendLastMouseMoveEvent();
   }
+
+  [self updateTitlebarGradientViewPresence];
 }
 
 - (void)placeWindowButtons:(NSRect)aRect {

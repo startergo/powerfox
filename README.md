@@ -1,6 +1,6 @@
 ![PowerFox](https://github.com/user-attachments/assets/35623fd8-1887-4976-ae16-cf85ca800a8c)
 
-<img src="https://powerfox.jazzzny.me/assets/img/2026-01-28-powerfox-ppc.jpg" alt="PowerFox screenshot" style="max-width: 400px;">
+<img src="https://powerfox.jazzzny.me/assets/img/2026-09-01-new-powerfox.png" alt="PowerFox screenshot" style="max-width: 400px;">
 
 PowerFox is a fast, reliable and private web browser based on Firefox 153 ESR for Mac OS X 10.7 Lion - macOS 10.14 Mojave.
 

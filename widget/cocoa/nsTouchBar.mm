@@ -463,19 +463,20 @@ static const uint32_t kInputIconSize = 16;
   }
   layoutFormat =
       [layoutFormat stringByAppendingString:[NSString stringWithFormat:@"|"]];
-  if(nsCocoaFeatures::OnLionOrLater()) {
-  NSArray* hConstraints = [NSLayoutConstraint
-      constraintsWithVisualFormat:layoutFormat
-                          options:NSLayoutFormatAlignAllCenterY
-                          metrics:nil
-                            views:constraintViews];
-  NSScrollView* scrollView = [[[NSScrollView alloc]
-      initWithFrame:CGRectMake(0, 0, size.width, size.height)] autorelease];
-  [documentView setFrame:NSMakeRect(0, 0, size.width, size.height)];
-  [NSLayoutConstraint activateConstraints:hConstraints];
-  scrollView.documentView = documentView;
-  aScrollViewItem.view = scrollView;
-}
+  Class layoutConstraintClass = objc_getClass("NSLayoutConstraint");
+  if (layoutConstraintClass) {
+    NSArray* hConstraints = [layoutConstraintClass
+        constraintsWithVisualFormat:layoutFormat
+                            options:NSLayoutFormatAlignAllCenterY
+                            metrics:nil
+                              views:constraintViews];
+    NSScrollView* scrollView = [[[NSScrollView alloc]
+        initWithFrame:CGRectMake(0, 0, size.width, size.height)] autorelease];
+    [documentView setFrame:NSMakeRect(0, 0, size.width, size.height)];
+    [layoutConstraintClass activateConstraints:hConstraints];
+    scrollView.documentView = documentView;
+    aScrollViewItem.view = scrollView;
+  }
 }
 
 - (void)updateLabel:(NSTextField*)aLabel

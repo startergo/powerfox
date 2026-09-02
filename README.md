@@ -1,18 +1,15 @@
-![Firefox Browser](./docs/readme/readme-banner.svg)
+![PowerFox](https://github.com/user-attachments/assets/35623fd8-1887-4976-ae16-cf85ca800a8c)
 
-[Firefox](https://firefox.com/) is a fast, reliable and private web browser from the non-profit [Mozilla organization](https://mozilla.org/).
+<img src="https://powerfox.jazzzny.me/assets/img/2026-01-28-powerfox-ppc.jpg" alt="PowerFox screenshot" style="max-width: 400px;">
 
-### Contributing
+PowerFox is a fast, reliable and private web browser based on Firefox 153 ESR for Mac OS X 10.7 Lion - macOS 10.14 Mojave.
 
-To learn how to contribute to Firefox read the [Firefox Contributors' Quick Reference document](https://firefox-source-docs.mozilla.org/contributing/contribution_quickref.html).
+For more information, visit the [PowerFox website](https://powerfox.jazzzny.me).
 
-We use [bugzilla.mozilla.org](https://bugzilla.mozilla.org/) as our issue tracker, please file bugs there.
+## Looking for PowerFox Classic?
+PowerFox Classic was formerly named PowerFox. PowerFox Classic, which supports Intel and PowerPC Macs on Mac OS X 10.3-10.6, is available from https://github.com/Jazzzny/powerfox-classic.
 
-### Resources
+PowerFox Classic will continue to receive regular updates.
 
-* [Firefox Source Docs](https://firefox-source-docs.mozilla.org/) is our primary documentation repository
-* Nightly development builds can be downloaded from [Firefox Nightly page](https://www.mozilla.org/firefox/channel/desktop/#nightly)
-
-If you have a question about developing Firefox, and can't find the solution
-on [Firefox Source Docs](https://firefox-source-docs.mozilla.org/), you can try asking your question on Matrix at
-chat.mozilla.org in the [Introduction channel](https://chat.mozilla.org/#/room/#introduction:mozilla.org).
+## Credits
+PowerFox would not have been possible without i3roly for the Firefox Dynasty 149 patchset and aobaharuki2005 for inspiration on the toolchain. Thank you!

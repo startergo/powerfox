@@ -62,6 +62,7 @@ AppleVDADecoder::AppleVDADecoder(const VideoInfo& aConfig,
       mTaskQueue(TaskQueue::Create(
           GetMediaThreadPool(MediaThreadType::PLATFORM_DECODER),
           "AppleVDADecoder")),
+      mDecoder(nullptr),
       mMaxRefFrames(
           mStreamType != StreamType::H264 ||
                   aOptions.contains(CreateDecoderParams::Option::LowLatency)
@@ -103,7 +104,11 @@ AppleVDADecoder::~AppleVDADecoder()
 RefPtr<MediaDataDecoder::InitPromise>
 AppleVDADecoder::Init()
 {
-  MediaResult rv = InitializeSession();
+  MediaResult rv = NS_OK;
+  if (!mDecoder) {
+    // The module may have probed the session at creation time already.
+    rv = InitializeSession();
+  }
 
   if (NS_SUCCEEDED(rv)) {
     return InitPromise::CreateAndResolve(TrackType::kVideoTrack, __func__);

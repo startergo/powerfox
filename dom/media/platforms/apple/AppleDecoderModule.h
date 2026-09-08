@@ -7,6 +7,14 @@
 
 #include "PlatformDecoderModule.h"
 
+#if __has_include(<VideoToolbox/VideoToolbox.h>)
+#  define APPLE_HAVE_VT 1
+#else
+// Pre-10.8 SDKs have no CoreMedia/VideoToolbox; the only hardware path is
+// VideoDecodeAcceleration (H.264, 10.6+).
+#  define APPLE_HAVE_VT 0
+#endif
+
 namespace mozilla {
 
 class AppleDecoderModule : public PlatformDecoderModule {

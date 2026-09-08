@@ -15,7 +15,7 @@
 #  include "AndroidWebAuthnService.h"
 #endif
 
-#ifdef XP_MACOSX
+#if defined(XP_MACOSX) && defined(MOZ_MACOS_PLATFORM_WEBAUTHN)
 #  include "MacOSWebAuthnService.h"
 #endif
 
@@ -43,9 +43,11 @@ class WebAuthnService final : public nsIWebAuthnService {
 #elif defined(MOZ_WIDGET_ANDROID)
     mPlatformService = new AndroidWebAuthnService();
 #elif defined(XP_MACOSX)
+#  if defined(MOZ_MACOS_PLATFORM_WEBAUTHN)
     if (__builtin_available(macos 13.3, *)) {
       mPlatformService = NewMacOSWebAuthnServiceIfAvailable();
     }
+#  endif
     if (!mPlatformService) {
       mPlatformService = mAuthrsService;
     }

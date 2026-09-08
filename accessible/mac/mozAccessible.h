@@ -122,7 +122,7 @@ enum CheckedState {
 - (nsStaticAtom*)ARIARole;
 
 // Get array of related mozAccessibles
-- (NSArray<mozAccessible*>*)getRelationsByType:
+- (NSArray*)getRelationsByType:
     (mozilla::a11y::RelationType)relationType;
 
 #pragma mark - mozAccessible protocol / widget

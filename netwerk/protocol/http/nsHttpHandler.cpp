@@ -13,6 +13,9 @@
 #include "nsHttp.h"
 #include "nsHttpConnectionMgr.h"
 #include "nsHttpHandler.h"
+#if defined(XP_MACOSX)
+#  include "nsCocoaFeatures.h"
+#endif
 #include "nsHttpChannel.h"
 #include "nsHTTPCompressConv.h"
 #include "nsHttpAuthCache.h"
@@ -2915,6 +2918,15 @@ HttpTrafficAnalyzer* nsHttpHandler::GetHttpTrafficAnalyzer() {
 
 bool nsHttpHandler::IsHttp3Enabled() {
   static const uint32_t TLS3_PREF_VALUE = 4;
+
+#if defined(XP_MACOSX)
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    // quinn UDP sockets cannot be initialized on 10.6 (the socket option it
+    // needs does not exist), and the failed speculative HTTP/3 connection
+    // wedges loads instead of falling back to HTTP/1.1 or h2.
+    return false;
+  }
+#endif
 
   return StaticPrefs::network_http_http3_enable() &&
          (StaticPrefs::security_tls_version_max() >= TLS3_PREF_VALUE);

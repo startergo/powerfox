@@ -7,6 +7,8 @@
 
 #import <Cocoa/Cocoa.h>
 
+#import "nsTouchBarNativeAPIDefines.h"
+
 #include "nsITouchBarInput.h"
 #include "nsCOMPtr.h"
 
@@ -32,7 +34,7 @@ class nsTouchBarInputIcon;
   TouchBarInputBaseType mBaseType;
   NSString* mType;
   nsCOMPtr<nsITouchBarInputCallback> mCallback;
-  NSMutableArray<TouchBarInput*>* mChildren;
+  NSMutableArray* mChildren;
 }
 
 @property(strong) NSString* key;
@@ -46,11 +48,11 @@ class nsTouchBarInputIcon;
 - (TouchBarInputBaseType)baseType;
 - (NSTouchBarItemIdentifier)nativeIdentifier;
 - (nsCOMPtr<nsITouchBarInputCallback>)callback;
-- (NSMutableArray<TouchBarInput*>*)children;
+- (NSMutableArray*)children;
 - (void)setImageURI:(nsCOMPtr<nsIURI>)aImageURI;
 - (void)setIcon:(RefPtr<nsTouchBarInputIcon>)aIcon;
 - (void)setCallback:(nsCOMPtr<nsITouchBarInputCallback>)aCallback;
-- (void)setChildren:(NSMutableArray<TouchBarInput*>*)aChildren;
+- (void)setChildren:(NSMutableArray*)aChildren;
 
 - (id)initWithKey:(NSString*)aKey
             title:(NSString*)aTitle

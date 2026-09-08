@@ -152,10 +152,14 @@ static void SetIOSurfaceCommonProperties(
     IOSurfaceSetValue(surfaceRef.get(), CFSTR("IOSurfaceColorPrimaries"),
                       kCVImageBufferColorPrimaries_ITU_R_709_2);
   } else {
-    IOSurfaceSetValue(surfaceRef.get(), CFSTR("IOSurfaceYCbCrMatrix"),
-                      kCVImageBufferYCbCrMatrix_ITU_R_2020);
-    IOSurfaceSetValue(surfaceRef.get(), CFSTR("IOSurfaceColorPrimaries"),
-                      kCVImageBufferColorPrimaries_ITU_R_2020);
+    if (kCVImageBufferYCbCrMatrix_ITU_R_2020) {
+      IOSurfaceSetValue(surfaceRef.get(), CFSTR("IOSurfaceYCbCrMatrix"),
+                        kCVImageBufferYCbCrMatrix_ITU_R_2020);
+    }
+    if (kCVImageBufferColorPrimaries_ITU_R_2020) {
+      IOSurfaceSetValue(surfaceRef.get(), CFSTR("IOSurfaceColorPrimaries"),
+                        kCVImageBufferColorPrimaries_ITU_R_2020);
+    }
   }
 
   // Transfer function is applied independently from the colorSpace.
@@ -445,11 +449,15 @@ OSType MacIOSurface::GetPixelFormat() const {
 }
 
 void MacIOSurface::IncrementUseCount() {
-  ::IOSurfaceIncrementUseCount(mIOSurfaceRef.get());
+  if (&::IOSurfaceIncrementUseCount) {
+    ::IOSurfaceIncrementUseCount(mIOSurfaceRef.get());
+  }
 }
 
 void MacIOSurface::DecrementUseCount() {
-  ::IOSurfaceDecrementUseCount(mIOSurfaceRef.get());
+  if (&::IOSurfaceDecrementUseCount) {
+    ::IOSurfaceDecrementUseCount(mIOSurfaceRef.get());
+  }
 }
 
 bool MacIOSurface::Lock(bool aReadOnly) {
@@ -758,14 +766,22 @@ void MacIOSurface::SetColorSpace(const mozilla::gfx::ColorSpace2 cs) const {
       str = Some(kCGColorSpaceSRGB);
       break;
     case gfx::ColorSpace2::DISPLAY_P3:
-      str = Some(kCGColorSpaceDisplayP3);
+      if (kCGColorSpaceDisplayP3) {
+        // Requires macOS 10.11.
+        str = Some(kCGColorSpaceDisplayP3);
+      }
       break;
     case gfx::ColorSpace2::BT601_525:  // Doesn't really have a better option.
     case gfx::ColorSpace2::BT709:
-      str = Some(kCGColorSpaceITUR_709);
+      if (kCGColorSpaceITUR_709) {
+        str = Some(kCGColorSpaceITUR_709);
+      }
       break;
     case gfx::ColorSpace2::BT2020:
-      str = Some(kCGColorSpaceITUR_2020);
+      if (kCGColorSpaceITUR_2020) {
+        // Requires macOS 10.11.
+        str = Some(kCGColorSpaceITUR_2020);
+      }
       break;
   }
   if (str) {

@@ -311,12 +311,14 @@ endif
 export LIBZ_RS_SYS_PREFIX=MOZ_Z_
 
 ifndef RUSTC_BOOTSTRAP
-RUSTC_BOOTSTRAP := mozglue_static,qcms
+RUSTC_BOOTSTRAP := mozglue_static,qcms,coremidi_sys
 ifdef MOZ_RUST_SIMD
 RUSTC_BOOTSTRAP := $(RUSTC_BOOTSTRAP),encoding_rs,any_all_workaround
 endif
-export RUSTC_BOOTSTRAP
 endif
+# Export unconditionally: a value supplied on the make command line (e.g.
+# from a mozconfig) must still reach cargo and rustc.
+export RUSTC_BOOTSTRAP
 
 target_rust_ltoable := force-cargo-library-build $(ADD_RUST_LTOABLE)
 target_rust_nonltoable := force-cargo-test-run force-cargo-program-build

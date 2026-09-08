@@ -65,6 +65,9 @@ features = [
 # Required for tests
 mock = []
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(pfx_pre_10_7_sdk)'] }
+
 [build-dependencies]
 bindgen = { version = "0.69", default-features = false, features = ["runtime"] }
 embed-manifest = "1.4"

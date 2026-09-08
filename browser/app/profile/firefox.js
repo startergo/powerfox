@@ -3627,3 +3627,14 @@ pref("distribution.mozillaonline.ignore", true);
 #ifdef XP_MACOSX
   pref("browser.macAppMenu.setAsDefaultShown", false);
 #endif
+
+// PowerFox 10.6 backport: sensible defaults for 2-core/4-thread era
+// hardware; eight content processes oversubscribes and adds scheduling
+// cost, and session snapshots every 15s cause periodic main-thread churn.
+#ifdef MOZ_LEGACY_MACOS_TARGET
+  pref("dom.ipc.processCount", 4);
+  pref("browser.sessionstore.interval", 30000);
+  // AV1 decode cannot keep up on this hardware; let YouTube negotiate
+  // VP9 or H.264.
+  pref("media.av1.enabled", false);
+#endif

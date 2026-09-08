@@ -2499,6 +2499,17 @@ void gfxPlatform::InitAcceleration() {
 }
 
 void gfxPlatform::InitGPUProcessPrefs() {
+#if defined(XP_MACOSX)
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    // The GPU process cannot create a GL context on 10.6, and its crash
+    // handling hangs the parent's synchronous launch wait in a kill-restart
+    // loop that blocks window creation entirely.
+    gfxConfig::GetFeature(Feature::GPU_PROCESS)
+        .DisableByDefault(FeatureStatus::Blocked, "macOS version too old",
+                          "FEATURE_FAILURE_MACOS_TOO_OLD"_ns);
+    return;
+  }
+#endif
   // We want to hide this from about:support, so only set a default if the
   // pref is known to be true.
   if (!StaticPrefs::layers_gpu_process_enabled_AtStartup() &&
@@ -2631,6 +2642,14 @@ void gfxPlatform::InitWebRenderConfig() {
   }
 
   bool hasHardware = gfxConfig::IsEnabled(Feature::WEBRENDER);
+#if defined(XP_MACOSX)
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    // No GL context can be created in-process on 10.6 either; composite
+    // with software WebRender instead of panicking on missing GL entry
+    // points.
+    hasHardware = false;
+  }
+#endif
 
 #ifdef MOZ_WIDGET_GTK
   // We require a hardware driver to back the GL context unless the user forced

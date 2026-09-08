@@ -15,6 +15,9 @@
 extern "C" {
 #endif
 const CFStringRef kSecTransformInputAttributeName = CFSTR("INPUT");
+const CFStringRef kSecDigestTypeAttribute = CFSTR("DigestType");
+const CFStringRef kSecDigestSHA2 = CFSTR("SHA2");
+const CFStringRef kSecDigestLengthAttribute = CFSTR("DigestLength");
 typedef CFTypeRef SecTransformRef;
 typedef OpaqueSecKeyRef* SecKeyRef;
 

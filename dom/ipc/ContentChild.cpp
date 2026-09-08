@@ -246,7 +246,9 @@
 #endif
 
 #if defined(XP_MACOSX)
-#  include <sys/qos.h>
+#  if __has_include(<sys/qos.h>)
+#    include <sys/qos.h>
+#  endif
 
 #  include "nsMacUtilsImpl.h"
 #endif /* XP_MACOSX */

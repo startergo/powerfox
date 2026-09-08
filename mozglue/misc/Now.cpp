@@ -24,6 +24,27 @@ namespace mozilla {
 
 static constexpr uint64_t kNSperMS = 1000000;
 
+// clock_gettime_nsec_np and the clockid_t clocks require macOS 10.12.
+#  if !defined(__MAC_OS_X_VERSION_MIN_REQUIRED) || \
+      __MAC_OS_X_VERSION_MIN_REQUIRED < 101200
+static uint64_t MachTimeNS() {
+  static mach_timebase_info_data_t timebaseInfo;
+  if (timebaseInfo.denom == 0) {
+    mach_timebase_info(&timebaseInfo);
+  }
+  return mach_absolute_time() * timebaseInfo.numer / timebaseInfo.denom;
+}
+
+Maybe<uint64_t> NowExcludingSuspendMs() {
+  return Some(MachTimeNS() / kNSperMS);
+}
+
+Maybe<uint64_t> NowIncludingSuspendMs() {
+  // mach_continuous_time, which includes suspend time, requires macOS 10.12;
+  // fall back to mach_absolute_time, which is monotonic but excludes suspend.
+  return Some(MachTimeNS() / kNSperMS);
+}
+#  else
 Maybe<uint64_t> NowExcludingSuspendMs() {
   return Some(clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / kNSperMS);
 }
@@ -31,6 +52,7 @@ Maybe<uint64_t> NowExcludingSuspendMs() {
 Maybe<uint64_t> NowIncludingSuspendMs() {
   return Some(clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) / kNSperMS);
 }
+#  endif
 
 #elif defined(XP_WIN)
 

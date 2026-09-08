@@ -405,7 +405,9 @@ nsresult nsAppShell::Init() {
     //    already been initialized and its main run loop is already running.
     GeckoNSApplication* app = [GeckoNSApplication sharedApplication];
 
-    if (@available(macOS 10.8, *)) {
+    if ([NSBundle
+            instancesRespondToSelector:@selector(
+                loadNibNamed:owner:topLevelObjects:)]) {
     [[NSBundle mainBundle] loadNibNamed:@"res/MainMenu"
                                     owner:app
                         topLevelObjects:nil];
@@ -1031,6 +1033,13 @@ nsAppShell::AfterProcessNextEvent(nsIThreadInternal* aThread,
 }
 
 void nsAppShell::InitMemoryPressureObserver() {
+#if !defined(DISPATCH_SOURCE_TYPE_MEMORYPRESSURE)
+  // The memory pressure dispatch source requires macOS 10.9; the memory
+  // watcher below still polls on older systems.
+  RefPtr<mozilla::nsAvailableMemoryWatcherBase> watcher(
+      nsAvailableMemoryWatcherBase::GetSingleton());
+  return;
+#else
   // Testing shows that sometimes the memory pressure event is not fired for
   // over a minute after the memory pressure change is reflected in sysctl
   // values. Hence this may need to be augmented with polling of the memory
@@ -1053,8 +1062,10 @@ void nsAppShell::InitMemoryPressureObserver() {
   // Initialize the memory watcher.
   RefPtr<mozilla::nsAvailableMemoryWatcherBase> watcher(
       nsAvailableMemoryWatcherBase::GetSingleton());
+#endif
 }
 
+#ifdef DISPATCH_SOURCE_TYPE_MEMORYPRESSURE
 void nsAppShell::OnMemoryPressureChanged(
     dispatch_source_memorypressure_flags_t aPressureLevel) {
   // The memory pressure dispatch source is created (above) with
@@ -1080,6 +1091,7 @@ void nsAppShell::OnMemoryPressureChanged(
       nsAvailableMemoryWatcherBase::GetSingleton());
   watcher->OnMemoryPressureChanged(geckoPressureLevel);
 }
+#endif
 
 // AppShellDelegate implementation
 

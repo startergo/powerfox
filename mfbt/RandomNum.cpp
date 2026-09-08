@@ -83,6 +83,13 @@ static_assert(GRND_NONBLOCK == 1,
 
 namespace mozilla {
 
+#if defined(XP_DARWIN) && \
+    (!defined(MAC_OS_X_VERSION_10_7) || \
+     MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7)
+// Present in 10.6's libSystem but not declared in its SDK headers.
+extern "C" void arc4random_buf(void* __buf, size_t __n);
+#endif
+
 MFBT_API bool GenerateRandomBytesFromOS(void* aBuffer, size_t aLength) {
   MOZ_ASSERT(aBuffer);
   MOZ_ASSERT(aLength > 0);

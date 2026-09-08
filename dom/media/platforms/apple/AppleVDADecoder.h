@@ -8,8 +8,14 @@
 #define mozilla_AppleVDADecoder_h
 
 #include <CoreFoundation/CFDictionary.h>  // For CFDictionaryRef
-#include <CoreMedia/CoreMedia.h>          // For CMVideoFormatDescriptionRef
-#include <VideoToolbox/VideoToolbox.h>    // For VTDecompressionSessionRef
+#if __has_include(<VideoToolbox/VideoToolbox.h>)
+#  include <CoreMedia/CoreMedia.h>        // For CMVideoFormatDescriptionRef
+#  include <VideoToolbox/VideoToolbox.h>  // For VTDecompressionSessionRef
+#else
+// Pre-10.8 SDKs: opaque members the VDA path declares but never uses.
+typedef struct CMFormatDescription* CMVideoFormatDescriptionRef;
+typedef struct OpaqueVTDecompressionSession* VTDecompressionSessionRef;
+#endif
 
 #include "AppleDecoderModule.h"
 #include "AppleVTDecoder.h"

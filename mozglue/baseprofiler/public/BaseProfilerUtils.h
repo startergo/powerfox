@@ -5,6 +5,8 @@
 #ifndef BaseProfilerUtils_h
 #define BaseProfilerUtils_h
 
+#include <stdint.h>
+
 // This header contains most process- and thread-related functions.
 // It is safe to include unconditionally.
 

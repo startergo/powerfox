@@ -113,7 +113,12 @@ void TextRecognition::FillShadow(ShadowRoot& aShadow,
   aShadow.AppendChildTo(div, true, IgnoreErrors());
 }
 
-#ifndef XP_MACOSX
+// On macOS the real implementation (TextRecognition.mm, Vision framework)
+// is only compiled for deployment targets >= 10.13; match that here so the
+// symbol always resolves (unreachable: IsSupported() gates callers).
+#if !defined(XP_MACOSX) || \
+    (defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && \
+     __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 101300)
 auto TextRecognition::DoFindText(gfx::DataSourceSurface&,
                                  const nsTArray<nsCString>&)
     -> RefPtr<NativePromise> {

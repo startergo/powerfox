@@ -47,7 +47,30 @@
 
 #ifdef XP_MACOSX
 // for qos controls
-#  include <sys/qos.h>
+#  if __has_include(<sys/qos.h>)
+#    include <sys/qos.h>
+#  else
+// The qos APIs require macOS 10.10; declared here with availability
+// annotations so the __builtin_available-guarded paths below compile with
+// pre-10.10 SDKs and weak-link to nothing on older systems.
+typedef int qos_class_t;
+#    define QOS_CLASS_USER_INTERACTIVE 0x21
+#    define QOS_CLASS_USER_INITIATED 0x19
+#    define QOS_CLASS_DEFAULT 0x15
+#    define QOS_CLASS_UTILITY 0x11
+#    define QOS_CLASS_BACKGROUND 0x09
+typedef struct pthread_override_s* pthread_override_t;
+extern "C" {
+qos_class_t qos_class_self(void)
+    __attribute__((availability(macos, introduced = 10.10)));
+int pthread_set_qos_class_self_np(qos_class_t __qos_class, unsigned long __relative_priority)
+    __attribute__((availability(macos, introduced = 10.10)));
+pthread_override_t pthread_override_qos_class_start_np(pthread_t __thr, qos_class_t __qos_class, unsigned long __relative_priority)
+    __attribute__((availability(macos, introduced = 10.10)));
+void pthread_override_qos_class_end_np(pthread_override_t __override)
+    __attribute__((availability(macos, introduced = 10.10)));
+}
+#  endif
 #endif
 
 using namespace mozilla;

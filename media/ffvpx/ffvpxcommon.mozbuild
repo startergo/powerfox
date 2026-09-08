@@ -2,6 +2,13 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+# The software H.264/HEVC/AAC decoders are only built for the legacy macOS
+# target; the C code gets this define from the global set_define, but nasm
+# needs it in ASFLAGS, before the -P config pre-include below, which tests it.
+if CONFIG['MOZ_LEGACY_MACOS_TARGET']:
+    DEFINES['MOZ_LEGACY_MACOS_TARGET'] = True
+    ASFLAGS += ['-DMOZ_LEGACY_MACOS_TARGET']
+
 # Add assembler flags and includes
 if CONFIG['TARGET_CPU'] != 'aarch64':
     ASFLAGS += CONFIG['FFVPX_ASFLAGS']

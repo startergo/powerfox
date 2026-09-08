@@ -7,6 +7,7 @@
 #import <Accessibility/Accessibility.h>
 #import <ApplicationServices/ApplicationServices.h>
 
+#import "SDKDeclarations.h"
 #import "mozAccessible.h"
 #include "MOXAccessibleBase.h"
 
@@ -647,7 +648,7 @@ static bool ProvidesTitle(const Accessible* aAccessible, nsString& aName) {
 
 - (NSArray*)moxCustomActions {
   if (@available(macOS 13.0, *)) {
-    NSMutableArray<NSAccessibilityCustomAction*>* customActions =
+    NSMutableArray* customActions =
         [[[NSMutableArray alloc] init] autorelease];
     Relation relatedActions(
         mGeckoAccessible->RelationByType(RelationType::ACTION));
@@ -1116,13 +1117,15 @@ static bool ProvidesTitle(const Accessible* aAccessible, nsString& aName) {
     xpcAccessibleMacEvent::FireEvent(
         GetNativeFromGeckoAccessible(maybeRoot),
         NSAccessibilityAnnouncementRequestedNotification, info);
-    NSAccessibilityPostNotificationWithUserInfo(
-        NSApp, NSAccessibilityAnnouncementRequestedNotification, info);
+    if (&NSAccessibilityPostNotificationWithUserInfo) {
+      NSAccessibilityPostNotificationWithUserInfo(
+          NSApp, NSAccessibilityAnnouncementRequestedNotification, info);
+    }
   }
 }
 
-- (NSArray<mozAccessible*>*)getRelationsByType:(RelationType)relationType {
-  NSMutableArray<mozAccessible*>* relations =
+- (NSArray*)getRelationsByType:(RelationType)relationType {
+  NSMutableArray* relations =
       [[[NSMutableArray alloc] init] autorelease];
   Relation rel = mGeckoAccessible->RelationByType(relationType);
   while (Accessible* relAcc = rel.Next()) {

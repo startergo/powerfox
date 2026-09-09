@@ -121,6 +121,17 @@ stage-legacy-cxx-runtimes: stage-package
 	if test -f '$(LEGACY_CXX_RUNTIME_DIR)/libunwind.1.0.dylib'; then \
 	  cp -f '$(LEGACY_CXX_RUNTIME_DIR)/libunwind.1.0.dylib' '$(LEGACY_CXX_RUNTIME_DEST)/libunwind.1.dylib'; \
 	fi
+	cd '$(LEGACY_CXX_RUNTIME_DEST)' && \
+	  find . -type f \( -name '*.dylib' -o -iname 'firefox' -o -iname 'xul' -o -iname 'plugin-container' -o -iname 'crashreporter' -o -iname 'updater' \) | while read f; do \
+	    if otool -L "$$f" 2>/dev/null | grep -q '/usr/lib/libc++'; then \
+	      install_name_tool -change /usr/lib/libc++.1.dylib @rpath/libc++.1.dylib "$$f" && \
+	      install_name_tool -change /usr/lib/libc++abi.dylib @rpath/libc++abi.1.dylib "$$f" && \
+	      install_name_tool -change /usr/lib/libc++abi.1.dylib @rpath/libc++abi.1.dylib "$$f" || exit 1; \
+	    fi; \
+	    case "$$f" in ./*.app/Contents/MacOS/*) \
+	      install_name_tool -add_rpath @executable_path/../../../. "$$f" 2>/dev/null; \
+	      ;; esac; \
+	  done
 	cd '$(DIST)/$(MOZ_PKG_DIR)/$(MOZ_PKG_RESPATH)' && \
 	  $(PYTHON3) '$(MOZILLA_DIR)/config/createprecomplete.py'
 endif

@@ -121,7 +121,7 @@ stage-legacy-cxx-runtimes: stage-package
 	if test -f '$(LEGACY_CXX_RUNTIME_DIR)/libunwind.1.0.dylib'; then \
 	  cp -f '$(LEGACY_CXX_RUNTIME_DIR)/libunwind.1.0.dylib' '$(LEGACY_CXX_RUNTIME_DEST)/libunwind.1.dylib'; \
 	fi
-	cd '$(LEGACY_CXX_RUNTIME_DEST)' && \
+	cd '$(DIST)/$(MOZ_PKG_DIR)' && \
 	  find . -type f | while read f; do \
 	    deps=$$(otool -L "$$f" 2>/dev/null) || continue; \
 	    case "$$deps" in *"/usr/lib/libc++"*) \
@@ -130,7 +130,7 @@ stage-legacy-cxx-runtimes: stage-package
 	      install_name_tool -change /usr/lib/libc++abi.1.dylib @rpath/libc++abi.1.dylib "$$f" || exit 1; \
 	      otool -l "$$f" | grep -q 'path @executable_path/\.' || \
 	        install_name_tool -add_rpath @executable_path/. "$$f" || exit 1; \
-	      case "$$f" in ./*.app/Contents/MacOS/*) \
+	      case "$$f" in ./Contents/MacOS/*.app/Contents/MacOS/*) \
 	        install_name_tool -add_rpath @executable_path/../../../. "$$f" || exit 1; \
 	        ;; esac; \
 	      ;; esac; \

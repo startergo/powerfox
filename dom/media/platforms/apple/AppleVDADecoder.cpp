@@ -193,16 +193,22 @@ void AppleVDADecoder::SetSeekThreshold(const media::TimeUnit& aTime) {
 // This needs to be static because the API takes a C-style pair of
 // function and userdata pointers. This validates parameters and
 // forwards the decoded image back to an object method.
-static void
+void
 PlatformCallback(void* decompressionOutputRefCon,
                  CFDictionaryRef frameInfo,
                  OSStatus status,
                  VDADecodeInfoFlags infoFlags,
                  CVImageBufferRef image)
 {
+  AppleVDADecoder* decoder =
+    static_cast<AppleVDADecoder*>(decompressionOutputRefCon);
+
   // The callback can fire synchronously on the error path, before
   // ProcessDecode's dictionary is set up.
   if (!frameInfo) {
+    if (status != noErr) {
+      decoder->OnDecodeError(status);
+    }
     return;
   }
 
@@ -224,9 +230,6 @@ PlatformCallback(void* decompressionOutputRefCon,
     MOZ_ASSERT(image || CFGetTypeID(image) == CVPixelBufferGetTypeID(),
                "AppleVDADecoder returned an unexpected image type");
   }
-
-  AppleVDADecoder* decoder =
-    static_cast<AppleVDADecoder*>(decompressionOutputRefCon);
 
   // Borrowed references from the dictionary; CFDictionaryGetValue does not
   // hand out ownership, so they must not be released.
@@ -259,7 +262,8 @@ PlatformCallback(void* decompressionOutputRefCon,
   CFNumberGetValue(kfref, kCFNumberSInt8Type, &is_sync_point);
 
   // Release the reference ProcessDecode added for the decoder's async
-  // delivery (TN2267).
+  // delivery (TN2267), and let its error path know it was consumed.
+  decoder->mCallbackConsumedFrameInfo = true;
   CFRelease(frameInfo);
 
   AppleVDADecoder::AppleFrameRef frameRef(
@@ -532,12 +536,19 @@ AppleVDADecoder::ProcessDecode(MediaRawData* aSample)
                        std::size(keys),
                        &kCFTypeDictionaryKeyCallBacks,
                        &kCFTypeDictionaryValueCallBacks));
+  if (!frameInfo) {
+    MonitorAutoLock mon(mMonitor);
+    mPromise.Reject(
+        MediaResult(NS_ERROR_OUT_OF_MEMORY, __func__), __func__);
+    return;
+  }
 
   // TN2267: the decoder delivers frameInfo to the callback asynchronously
   // without keeping it alive, so retain our own reference for that
   // delivery; PlatformCallback releases it. The callback can also fire
   // synchronously, so this must happen before the decode call.
   CFRetain(frameInfo);
+  mCallbackConsumedFrameInfo = false;
 
   OSStatus rv = VDADecoderDecode(mDecoder,
                                  0,
@@ -546,8 +557,11 @@ AppleVDADecoder::ProcessDecode(MediaRawData* aSample)
 
   if (rv != noErr) {
     NS_WARNING("AppleVDADecoder: Couldn't pass frame to decoder");
-    // No callback will run to release the compensation reference.
-    CFRelease(frameInfo);
+    // A synchronous callback may already have released the compensation
+    // reference; only release it here if none ran.
+    if (!mCallbackConsumedFrameInfo) {
+      CFRelease(frameInfo);
+    }
     return;
   }
 

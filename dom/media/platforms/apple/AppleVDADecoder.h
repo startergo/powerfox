@@ -110,6 +110,10 @@ public:
 
 private:
   friend class AppleDecoderModule;  // To access InitializeSession.
+  friend void PlatformCallback(void* aRefCon, CFDictionaryRef aFrameInfo,
+                               OSStatus aStatus,
+                               VDADecodeInfoFlags aInfoFlags,
+                               CVImageBufferRef aImage);
   virtual ~AppleVDADecoder();
 
   // Flush and Drain operation, always run
@@ -162,6 +166,10 @@ private:
   // Set on reader/decode thread calling Flush() to indicate that output is
   // not required and so input samples on mTaskQueue need not be processed.
   Atomic<bool> mIsFlushing;
+  // Set by PlatformCallback when it consumed the frame-info dictionary's
+  // compensation reference; ProcessDecode's error path must not release it
+  // again after a synchronous callback.
+  bool mCallbackConsumedFrameInfo = false;
   std::atomic<ProfilerThreadId> mCallbackThreadId;
   // Protects mReorderQueue and mPromise.
   Monitor mMonitor MOZ_UNANNOTATED;

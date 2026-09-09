@@ -3015,17 +3015,23 @@ void gfxPlatform::InitWebRenderConfig() {
 }
 
 void gfxPlatform::InitHardwareVideoConfig() {
-#ifdef MOZ_LEGACY_MACOS_TARGET
-  // The graphics sanity test never runs on this target, so a persisted
-  // failure latch can only be stale from an earlier build; clear it or
-  // hardware video decoding stays force-disabled forever.
-  if (Preferences::HasUserValue("media.hardware-video-decoding.failed")) {
-    Preferences::ClearUser("media.hardware-video-decoding.failed");
-  }
-#endif
   if (!XRE_IsParentProcess()) {
     return;
   }
+
+#ifdef MOZ_LEGACY_MACOS_TARGET
+  // The graphics sanity test never runs on this target, so a persisted
+  // failure latch can only predate this fix; clear it once. A value set
+  // afterwards is a deliberate user choice and is preserved.
+  if (!Preferences::GetBool(
+          "media.hardware-video-decoding.failed.latch-cleared", false)) {
+    if (Preferences::HasUserValue("media.hardware-video-decoding.failed")) {
+      Preferences::ClearUser("media.hardware-video-decoding.failed");
+    }
+    Preferences::SetBool(
+        "media.hardware-video-decoding.failed.latch-cleared", true);
+  }
+#endif
 
 #ifdef XP_MACOSX
   const bool isXpcshell = !!PR_GetEnv("XPCSHELL_TEST_PROFILE_DIR");

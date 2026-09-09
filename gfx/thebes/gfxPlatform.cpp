@@ -3030,6 +3030,13 @@ void gfxPlatform::InitHardwareVideoConfig() {
     }
     Preferences::SetBool(
         "media.hardware-video-decoding.failed.latch-cleared", true);
+    // Persist the marker now: losing it to a crash before the shutdown
+    // save would re-clear a deliberate user choice on the next startup.
+    nsCOMPtr<nsIPrefService> prefs =
+        do_GetService(NS_PREFSERVICE_CONTRACTID);
+    if (prefs) {
+      prefs->SavePrefFile(nullptr);
+    }
   }
 #endif
 

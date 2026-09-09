@@ -193,7 +193,16 @@ void AppleVDADecoder::SetSeekThreshold(const media::TimeUnit& aTime) {
 // This needs to be static because the API takes a C-style pair of
 // function and userdata pointers. This validates parameters and
 // forwards the decoded image back to an object method.
-void
+// Marks the frame-info dictionary as carrying the compensation reference
+// ProcessDecode added for asynchronous delivery; PlatformCallback removes
+// it when it consumes the reference, so the error path can tell whether
+// the callback for this very frame already ran — a callback for an earlier
+// frame cannot interfere.
+static CFStringRef FrameInfoCompensationKey() {
+  return CFSTR("FRAME_INFO_COMPENSATION");
+}
+
+static void
 PlatformCallback(void* decompressionOutputRefCon,
                  CFDictionaryRef frameInfo,
                  OSStatus status,
@@ -262,8 +271,10 @@ PlatformCallback(void* decompressionOutputRefCon,
   CFNumberGetValue(kfref, kCFNumberSInt8Type, &is_sync_point);
 
   // Release the reference ProcessDecode added for the decoder's async
-  // delivery (TN2267), and let its error path know it was consumed.
-  decoder->mCallbackConsumedFrameInfo = true;
+  // delivery (TN2267); removing the key first records, per frame, that
+  // the compensation was consumed.
+  CFDictionaryRemoveValue((CFMutableDictionaryRef)frameInfo,
+                          FrameInfoCompensationKey());
   CFRelease(frameInfo);
 
   AppleVDADecoder::AppleFrameRef frameRef(
@@ -529,18 +540,21 @@ AppleVDADecoder::ProcessDecode(MediaRawData* aSample)
   static_assert(std::size(keys) == std::size(values),
                 "Non matching keys/values array size");
 
-  AutoCFTypeRef<CFDictionaryRef> frameInfo(
-    CFDictionaryCreate(kCFAllocatorDefault,
-                       keys,
-                       values,
-                       std::size(keys),
-                       &kCFTypeDictionaryKeyCallBacks,
-                       &kCFTypeDictionaryValueCallBacks));
+  AutoCFTypeRef<CFMutableDictionaryRef> frameInfo(
+    CFDictionaryCreateMutable(kCFAllocatorDefault,
+                              std::size(keys) + 1,
+                              &kCFTypeDictionaryKeyCallBacks,
+                              &kCFTypeDictionaryValueCallBacks));
   if (!frameInfo) {
     MonitorAutoLock mon(mMonitor);
     mPromise.Reject(
         MediaResult(NS_ERROR_OUT_OF_MEMORY, __func__), __func__);
     return;
+  }
+  CFDictionaryAddValue(frameInfo, FrameInfoCompensationKey(),
+                       kCFBooleanTrue);
+  for (size_t i = 0; i < std::size(keys); i++) {
+    CFDictionaryAddValue(frameInfo, keys[i], values[i]);
   }
 
   // TN2267: the decoder delivers frameInfo to the callback asynchronously
@@ -548,7 +562,6 @@ AppleVDADecoder::ProcessDecode(MediaRawData* aSample)
   // delivery; PlatformCallback releases it. The callback can also fire
   // synchronously, so this must happen before the decode call.
   CFRetain(frameInfo);
-  mCallbackConsumedFrameInfo = false;
 
   OSStatus rv = VDADecoderDecode(mDecoder,
                                  0,
@@ -557,9 +570,9 @@ AppleVDADecoder::ProcessDecode(MediaRawData* aSample)
 
   if (rv != noErr) {
     NS_WARNING("AppleVDADecoder: Couldn't pass frame to decoder");
-    // A synchronous callback may already have released the compensation
-    // reference; only release it here if none ran.
-    if (!mCallbackConsumedFrameInfo) {
+    // The callback for this frame may already have consumed the
+    // compensation reference; only release it if it did not.
+    if (CFDictionaryContainsKey(frameInfo, FrameInfoCompensationKey())) {
       CFRelease(frameInfo);
     }
     return;

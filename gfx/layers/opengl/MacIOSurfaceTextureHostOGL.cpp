@@ -3,9 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "MacIOSurfaceTextureHostOGL.h"
-#if defined(XP_MACOSX)
-#  include "nsCocoaFeatures.h"
-#endif
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/gfx/MacIOSurface.h"
 #include "mozilla/layers/GpuFence.h"
@@ -215,14 +212,6 @@ void MacIOSurfaceTextureHostOGL::PushDisplayItems(
     const Range<wr::ImageKey>& aImageKeys, PushDisplayItemFlagSet aFlags) {
   bool preferCompositorSurface =
       aFlags.contains(PushDisplayItemFlag::PREFER_COMPOSITOR_SURFACE);
-#if defined(XP_MACOSX)
-  if (!nsCocoaFeatures::OnMountainLionOrLater()) {
-    // Pre-10.8 the layer tree is unhosted and presented by blitting; video
-    // compositor surfaces render under the scene there, so render video
-    // into the scene instead.
-    preferCompositorSurface = false;
-  }
-#endif
   switch (GetFormat()) {
     case gfx::SurfaceFormat::B8G8R8A8:
     case gfx::SurfaceFormat::B8G8R8X8: {

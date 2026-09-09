@@ -223,6 +223,15 @@ static uint32_t sUniqueKeyEventId = 0;
 
 @end
 
+// Pre-10.8, the compositor's CA tree is hosted in a layer-backed
+// PixelHostingView so CoreAnimation composites it, matching the 10.8+
+// architecture. The drawRect blit path stays for rollback but is
+// unreachable while hosting is enabled.
+static bool pfHostLayersPreML() {
+  static bool sHost = !nsCocoaFeatures::OnMountainLionOrLater();
+  return sHost;
+}
+
 @interface ChildView (Private)
 
 // sets up our view, attaching it to its owning gecko view
@@ -930,20 +939,21 @@ void nsCocoaWindow::PresentCompositedFrame() {
   if (!mNativeLayerRoot || !mChildView) {
     return;
   }
-  // Video-driven renders arrive continuously; blitting the whole window for
-  // each one starves the main thread. Only present when the commit carries
-  // updates, invalidate just the changed layers' bounds so AppKit redraws a
-  // dirty region instead of the window, and let pfBlitLayer's per-layer
-  // image cache keep unchanged tiles out of the copy.
+  // When the tree is hosted, the main-thread commit is the present:
+  // CoreAnimation composites it and there is nothing to invalidate.
+  bool hosted = pfHostLayersPreML();
   gfx::IntRect dirty;
   bool committed;
   {
     MutexAutoLock lock(mCompositingLock);
-    committed = mNativeLayerRoot->CommitToScreen(&dirty);
+    committed = mNativeLayerRoot->CommitToScreen(hosted ? nullptr : &dirty);
   }
-  if (!committed) {
+  if (!committed || hosted) {
     return;
   }
+  // Unhosted pre-10.8: invalidate just the changed layers' bounds so AppKit
+  // redraws a dirty region instead of the window, and let pfBlitLayer's
+  // per-layer image cache keep unchanged tiles out of the copy.
   if (NSView* view = [mChildView pixelHostingView]) {
     // Layer coordinates are bottom-up; NSView is flipped.
     CGFloat height = NSHeight([view bounds]);
@@ -1788,13 +1798,15 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
   if (!nsCocoaFeatures::OnMountainLionOrLater()) {
     mRootCALayer.geometryFlipped = YES;
   }
-  if (nsCocoaFeatures::OnMountainLionOrLater()) {
+  if (nsCocoaFeatures::OnMountainLionOrLater() || pfHostLayersPreML()) {
+    [mPixelHostingView setWantsLayer:YES];
     [mPixelHostingView.layer addSublayer:mRootCALayer];
   }
-  // Pre-10.8: the layer tree stays unhosted. A layer-backed NSView
-  // corrupts AppKit's graphics state on 10.6 (lockFocus crash); the
-  // compositor still commits surfaces into mRootCALayer and drawRect:
-  // blits them (the nsChildView model powerfox-browser uses).
+  // Pre-10.8 the tree used to stay unhosted, with drawRect: blitting the
+  // committed surfaces into the window (the powerfox-browser model); that
+  // burns a core during video. The tree is now hosted like on 10.8+ and
+  // CoreAnimation composites it, with updateRootCALayer re-attaching when
+  // AppKit swaps the view's backing layer.
 
   mLastPressureStage = 0;
 
@@ -2281,6 +2293,13 @@ static const int16_t* pfYUV601Table() {
       // setNeedsDisplay; rescheduling from here would spin a permanent
       // redraw loop whose unbounded CATransaction commits eventually wedge
       // 10.6's window server connection (CAViewEndDraw blocks forever).
+      if (pfHostLayersPreML() &&
+          mRootCALayer.superlayer != mPixelHostingView.layer) {
+        // AppKit can swap a layer-backed view's backing layer (10.6 does it
+        // across fullscreen style changes); re-attach the tree or every
+        // commit lands in the detached layer and the view stays grey.
+        [mPixelHostingView.layer addSublayer:mRootCALayer];
+      }
       if (!CGRectEqualToRect(mRootCALayer.bounds,
                              [mPixelHostingView bounds])) {
         mRootCALayer.bounds = [mPixelHostingView bounds];
@@ -5186,7 +5205,7 @@ nsresult nsCocoaWindow::RestoreHiDPIMode() {
     return nil;
   }
 
-  if (nsCocoaFeatures::OnMountainLionOrLater()) {
+  if (nsCocoaFeatures::OnMountainLionOrLater() || pfHostLayersPreML()) {
     self.wantsLayer = YES;
     self.layerContentsRedrawPolicy =
         NSViewLayerContentsRedrawDuringViewResize;
@@ -5198,6 +5217,15 @@ nsresult nsCocoaWindow::RestoreHiDPIMode() {
   return YES;
 }
 
+- (void)viewDidMoveToWindow {
+  [(ChildView*)[self superview] updateRootCALayer];
+}
+
+- (void)setFrameSize:(NSSize)aSize {
+  [super setFrameSize:aSize];
+  [(ChildView*)[self superview] updateRootCALayer];
+}
+
 - (NSView*)hitTest:(NSPoint)aPoint {
   return nil;
 }
@@ -5205,7 +5233,7 @@ nsresult nsCocoaWindow::RestoreHiDPIMode() {
 - (void)drawRect:(NSRect)aRect {
   ChildView* child = (ChildView*)[self superview];
   [child updateRootCALayer];
-  if (!nsCocoaFeatures::OnMountainLionOrLater()) {
+  if (!nsCocoaFeatures::OnMountainLionOrLater() && !pfHostLayersPreML()) {
     CGContextRef ctx =
         (CGContextRef)[[NSGraphicsContext currentContext] graphicsPort];
     [child drawRootCALayerIntoCGContext:ctx viewSize:[self bounds].size];

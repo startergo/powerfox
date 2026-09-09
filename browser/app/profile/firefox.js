@@ -3637,4 +3637,8 @@ pref("distribution.mozillaonline.ignore", true);
   // AV1 decode cannot keep up on this hardware; let YouTube negotiate
   // VP9 or H.264.
   pref("media.av1.enabled", false);
+  // The sanity test's drawWindow readback cannot see the hosted
+  // CoreAnimation presentation, and its failure latch would silently
+  // force-disable the VDA hardware decoder on machines where it works.
+  pref("media.sanity-test.disabled", true);
 #endif

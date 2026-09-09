@@ -254,6 +254,8 @@ PlatformCallback(void* decompressionOutputRefCon,
     (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_KEYFRAME"));
   if (!ptsref || !dtsref || !durref || !boref || !kfref) {
     NS_WARNING("AppleVDADecoder: incomplete frame info");
+    CFDictionaryRemoveValue((CFMutableDictionaryRef)frameInfo,
+                            FrameInfoCompensationKey());
     CFRelease(frameInfo);
     return;
   }

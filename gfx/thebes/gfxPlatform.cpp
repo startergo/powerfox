@@ -3015,6 +3015,14 @@ void gfxPlatform::InitWebRenderConfig() {
 }
 
 void gfxPlatform::InitHardwareVideoConfig() {
+#ifdef MOZ_LEGACY_MACOS_TARGET
+  // The graphics sanity test never runs on this target, so a persisted
+  // failure latch can only be stale from an earlier build; clear it or
+  // hardware video decoding stays force-disabled forever.
+  if (Preferences::HasUserValue("media.hardware-video-decoding.failed")) {
+    Preferences::ClearUser("media.hardware-video-decoding.failed");
+  }
+#endif
   if (!XRE_IsParentProcess()) {
     return;
   }

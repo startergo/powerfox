@@ -242,8 +242,6 @@ void MacIOSurfaceTextureHostOGL::PushDisplayItems(
         MOZ_ASSERT_UNREACHABLE("unexpected key length or plane count");
         return;
       }
-      // We disable external compositing for RGB surfaces for now until
-      // we've tested support more thoroughly. Bug 1667917.
       aBuilder.PushImage(aBounds, aClip, true, false, aFilter, aImageKeys[0],
                          !(mFlags & TextureFlags::NON_PREMULTIPLIED),
                          wr::ColorF{1.0f, 1.0f, 1.0f, 1.0f},

@@ -28,6 +28,12 @@
 #endif
 
 #include <string.h>
+
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+#  include "MacIOSurfaceImage.h"
+#  include "YCbCrUtils.h"
+#  include "mozilla/gfx/MacIOSurface.h"
+#endif
 #ifdef XP_UNIX
 #  include <unistd.h>
 #endif
@@ -1974,6 +1980,74 @@ static uint32_t AVChromaLocationToWPChromaLocation(uint32_t aAVChromaLocation) {
 }
 #endif
 
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+
+// Software-decoded frames normally reach the compositor as planar YCbCr
+// shared memory and the software renderer converts and scales them into the
+// scene on every present. Converting each frame once into a BGRA IOSurface
+// instead lets CoreAnimation composite and scale it without further CPU
+// work; 10.6 CoreAnimation cannot display YUV IOSurfaces, so BGRA is the
+// one format both the compositor surface path and the hardware can use.
+already_AddRefed<VideoData>
+FFmpegVideoDecoder<LIBAV_VER>::CreateMacIOSurfaceVideoData(
+    const VideoData::QuantizableBuffer& aBuffer, int64_t aOffset,
+    int64_t aPts, int64_t aDuration) {
+  gfx::IntSize size(aBuffer.mPlanes[0].mWidth, aBuffer.mPlanes[0].mHeight);
+  RefPtr<MacIOSurface> surface = TakePooledBGRASurface(size);
+  if (!surface) {
+    surface = MacIOSurface::CreateIOSurface(size.width, size.height,
+                                            MacIOSurface::AllowAlpha::No);
+    if (!surface) {
+      return nullptr;
+    }
+  }
+  if (!surface->Lock(false)) {
+    return nullptr;
+  }
+  layers::PlanarYCbCrData data;
+  data.mYChannel = aBuffer.mPlanes[0].mData;
+  data.mYStride = aBuffer.mPlanes[0].mStride;
+  data.mYSkip = aBuffer.mPlanes[0].mSkip;
+  data.mCbChannel = aBuffer.mPlanes[1].mData;
+  data.mCrChannel = aBuffer.mPlanes[2].mData;
+  data.mCbCrStride = aBuffer.mPlanes[1].mStride;
+  data.mCbSkip = aBuffer.mPlanes[1].mSkip;
+  data.mCrSkip = aBuffer.mPlanes[2].mSkip;
+  data.mPictureRect = gfx::IntRect(gfx::IntPoint(), size);
+  data.mYUVColorSpace = aBuffer.mYUVColorSpace;
+  data.mColorRange = aBuffer.mColorRange;
+  data.mChromaSubsampling = gfx::ChromaSubsampling::HALF_WIDTH_AND_HEIGHT;
+  gfx::ConvertYCbCrToRGB(data, gfx::SurfaceFormat::B8G8R8X8, size,
+                         (unsigned char*)surface->GetBaseAddressOfPlane(0),
+                         surface->GetBytesPerRow(0));
+  surface->Unlock(false);
+  RefPtr<layers::MacIOSurfaceImage> image =
+      new layers::MacIOSurfaceImage(surface);
+  mBGRASurfacePool.AppendElement(std::move(surface));
+  return VideoData::CreateFromImage(
+      mInfo.mDisplay, aOffset, TimeUnit::FromMicroseconds(aPts),
+      TimeUnit::FromMicroseconds(aDuration), image.forget(),
+      IsKeyFrame(mFrame), TimeUnit::FromMicroseconds(mFrame->pkt_dts));
+}
+
+RefPtr<MacIOSurface>
+FFmpegVideoDecoder<LIBAV_VER>::TakePooledBGRASurface(
+    const gfx::IntSize& aSize) {
+  mBGRASurfacePool.RemoveElementsBy(
+      [](const RefPtr<MacIOSurface>& aSurface) {
+        return IOSurfaceIsInUse(aSurface->GetIOSurfaceRef().get());
+      });
+  for (auto& surface : mBGRASurfacePool) {
+    if (surface->GetSize(0) == aSize) {
+      RefPtr<MacIOSurface> result = surface;
+      mBGRASurfacePool.RemoveElement(surface);
+      return result;
+    }
+  }
+  return nullptr;
+}
+#endif
+
 MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImage(
     int64_t aOffset, int64_t aPts, int64_t aDuration,
     MediaDataDecoder::DecodedData& aResults) {
@@ -2001,6 +2075,12 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImage(
   b.mColorRange = GetFrameColorRange();
 
   RefPtr<VideoData> v;
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+  if (b.mColorDepth == gfx::ColorDepth::COLOR_8 &&
+      b.mChromaSubsampling == gfx::ChromaSubsampling::HALF_WIDTH_AND_HEIGHT) {
+    v = CreateMacIOSurfaceVideoData(b, aOffset, aPts, aDuration);
+  }
+#endif
 #ifdef CUSTOMIZED_BUFFER_ALLOCATION
   bool requiresCopy = false;
 #  ifdef XP_MACOSX
@@ -2015,7 +2095,7 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImage(
   // bit-depth decoded data directly.
   requiresCopy = m8BitOutput && b.mColorDepth != gfx::ColorDepth::COLOR_8;
 #  endif
-  if (mIsUsingShmemBufferForDecode && *mIsUsingShmemBufferForDecode &&
+  if (!v && mIsUsingShmemBufferForDecode && *mIsUsingShmemBufferForDecode &&
       !requiresCopy) {
     auto* wrapper = static_cast<ImageBufferWrapper*>(
         mLib->av_buffer_get_opaque(mFrame->buf[0]));

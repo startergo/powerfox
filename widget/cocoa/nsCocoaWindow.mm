@@ -954,9 +954,10 @@ void nsCocoaWindow::PresentCompositedFrame() {
   if (!committed || hosted) {
     return;
   }
-  // Unhosted pre-10.8: invalidate just the changed layers' bounds so AppKit
-  // redraws a dirty region instead of the window, and let pfBlitLayer's
-  // per-layer image cache keep unchanged tiles out of the copy.
+  // Unhosted pre-10.8 (PF_LEGACY_BLIT): invalidate just the changed layers'
+  // bounds so AppKit redraws a dirty region instead of the window, and let
+  // pfBlitLayer's per-layer image cache keep unchanged tiles out of the
+  // copy.
   if (NSView* view = [mChildView pixelHostingView]) {
     // Layer coordinates are bottom-up; NSView is flipped.
     CGFloat height = NSHeight([view bounds]);

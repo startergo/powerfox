@@ -225,10 +225,13 @@ static uint32_t sUniqueKeyEventId = 0;
 
 // Pre-10.8, the compositor's CA tree is hosted in a layer-backed
 // PixelHostingView so CoreAnimation composites it, matching the 10.8+
-// architecture. The drawRect blit path stays for rollback but is
-// unreachable while hosting is enabled.
+// architecture. CoreAnimation does display the IOSurface-backed layer
+// contents on 10.6 (the tiles and the in-scene video rasterize to BGRA
+// IOSurfaces); only biplanar YUV surfaces fail there. PF_LEGACY_BLIT
+// falls back to the old drawRect blit presentation for troubleshooting.
 static bool pfHostLayersPreML() {
-  static bool sHost = !nsCocoaFeatures::OnMountainLionOrLater();
+  static bool sHost =
+      !nsCocoaFeatures::OnMountainLionOrLater() && !getenv("PF_LEGACY_BLIT");
   return sHost;
 }
 
@@ -1806,7 +1809,8 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
   // committed surfaces into the window (the powerfox-browser model); that
   // burns a core during video. The tree is now hosted like on 10.8+ and
   // CoreAnimation composites it, with updateRootCALayer re-attaching when
-  // AppKit swaps the view's backing layer.
+  // AppKit swaps the view's backing layer. PF_LEGACY_BLIT restores the
+  // unhosted blit presentation.
 
   mLastPressureStage = 0;
 
@@ -1985,28 +1989,30 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
   if (!mIsUpdatingLayer) {
     if (nsCocoaFeatures::OnMountainLionOrLater()) {
-    [mPixelHostingView.layer setNeedsDisplay];
-    } else {
-      // Pre-10.8: AppKit's wantsUpdateLayer path is unavailable and CA
-      // transactions must not run inside drawRect (they corrupt AppKit's
-      // graphics state on 10.6). Run the paint/composite outside the focus
-      // lock, then invalidate so drawRect blits the fresh surfaces.
-      if (!mGeckoChild) {
-        return;
-      }
-      static bool sPendingComposite = false;
-      if (!sPendingComposite) {
-        sPendingComposite = true;
-        ChildView* strongSelf = self;
-        NSView* view = mPixelHostingView;
-        dispatch_async(dispatch_get_main_queue(), ^{
-          sPendingComposite = false;
-          if (strongSelf->mGeckoChild) {
-            strongSelf->mGeckoChild->HandleMainThreadCATransaction();
-          }
-          [view setNeedsDisplay:YES];
-        });
-      }
+      [mPixelHostingView.layer setNeedsDisplay];
+      return;
+    }
+    // Pre-10.8: AppKit's wantsUpdateLayer path is unavailable and CA
+    // transactions must not run inside drawRect (they corrupt AppKit's
+    // graphics state on 10.6), so run the paint/composite outside the
+    // focus lock. The invalidation stays even when the tree is hosted:
+    // AppKit's draw cycle is what flushes the CA transaction on 10.6, and
+    // removing it measurably raised steady-state CPU during video.
+    if (!mGeckoChild) {
+      return;
+    }
+    static bool sPendingComposite = false;
+    if (!sPendingComposite) {
+      sPendingComposite = true;
+      ChildView* strongSelf = self;
+      NSView* view = mPixelHostingView;
+      dispatch_async(dispatch_get_main_queue(), ^{
+        sPendingComposite = false;
+        if (strongSelf->mGeckoChild) {
+          strongSelf->mGeckoChild->HandleMainThreadCATransaction();
+        }
+        [view setNeedsDisplay:YES];
+      });
     }
   }
 }
@@ -2018,10 +2024,11 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
   }
 }
 
-// Pre-10.8 present path: CoreAnimation on 10.6 does not display IOSurface
-// layer contents, so after committing the CA transaction, composite the
-// layer tree into the drawRect: CGContext ourselves, following each
-// sublayer's geometry (the model powerfox-browser used).
+// Pre-10.8 legacy present path (PF_LEGACY_BLIT): composite the layer tree
+// into the drawRect: CGContext ourselves, following each sublayer's
+// geometry. CoreAnimation does display the IOSurface layer contents on
+// 10.6, so the hosted tree is presented natively and this path is only a
+// troubleshooting fallback.
 - (void)drawRootCALayerIntoCGContext:(CGContextRef)aContext
                              viewSize:(NSSize)aViewSize {
   if (!mRootCALayer || mRootCALayer.sublayers.count == 0) {

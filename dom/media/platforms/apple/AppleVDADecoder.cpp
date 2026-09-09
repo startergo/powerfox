@@ -200,6 +200,12 @@ PlatformCallback(void* decompressionOutputRefCon,
                  VDADecodeInfoFlags infoFlags,
                  CVImageBufferRef image)
 {
+  // The callback can fire synchronously on the error path, before
+  // ProcessDecode's dictionary is set up.
+  if (!frameInfo) {
+    return;
+  }
+
   LOG("AppleVDADecoder[%s] status %d flags %d retainCount %ld",
       __func__, status, infoFlags, CFGetRetainCount(frameInfo));
 
@@ -222,16 +228,23 @@ PlatformCallback(void* decompressionOutputRefCon,
   AppleVDADecoder* decoder =
     static_cast<AppleVDADecoder*>(decompressionOutputRefCon);
 
-  AutoCFTypeRef<CFNumberRef> ptsref(
-    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_PTS")));
-  AutoCFTypeRef<CFNumberRef> dtsref(
-    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_DTS")));
-  AutoCFTypeRef<CFNumberRef> durref(
-    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_DURATION")));
-  AutoCFTypeRef<CFNumberRef> boref(
-    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_OFFSET")));
-  AutoCFTypeRef<CFNumberRef> kfref(
-    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_KEYFRAME")));
+  // Borrowed references from the dictionary; CFDictionaryGetValue does not
+  // hand out ownership, so they must not be released.
+  CFNumberRef ptsref =
+    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_PTS"));
+  CFNumberRef dtsref =
+    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_DTS"));
+  CFNumberRef durref =
+    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_DURATION"));
+  CFNumberRef boref =
+    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_OFFSET"));
+  CFNumberRef kfref =
+    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_KEYFRAME"));
+  if (!ptsref || !dtsref || !durref || !boref || !kfref) {
+    NS_WARNING("AppleVDADecoder: incomplete frame info");
+    CFRelease(frameInfo);
+    return;
+  }
 
   int64_t dts;
   int64_t pts;
@@ -244,6 +257,10 @@ PlatformCallback(void* decompressionOutputRefCon,
   CFNumberGetValue(durref, kCFNumberSInt64Type, &duration);
   CFNumberGetValue(boref, kCFNumberSInt64Type, &byte_offset);
   CFNumberGetValue(kfref, kCFNumberSInt8Type, &is_sync_point);
+
+  // Release the reference ProcessDecode added for the decoder's async
+  // delivery (TN2267).
+  CFRelease(frameInfo);
 
   AppleVDADecoder::AppleFrameRef frameRef(
       media::TimeUnit::FromMicroseconds(dts),
@@ -516,6 +533,12 @@ AppleVDADecoder::ProcessDecode(MediaRawData* aSample)
                        &kCFTypeDictionaryKeyCallBacks,
                        &kCFTypeDictionaryValueCallBacks));
 
+  // TN2267: the decoder delivers frameInfo to the callback asynchronously
+  // without keeping it alive, so retain our own reference for that
+  // delivery; PlatformCallback releases it. The callback can also fire
+  // synchronously, so this must happen before the decode call.
+  CFRetain(frameInfo);
+
   OSStatus rv = VDADecoderDecode(mDecoder,
                                  0,
                                  block,
@@ -523,10 +546,29 @@ AppleVDADecoder::ProcessDecode(MediaRawData* aSample)
 
   if (rv != noErr) {
     NS_WARNING("AppleVDADecoder: Couldn't pass frame to decoder");
+    // No callback will run to release the compensation reference.
+    CFRelease(frameInfo);
     return;
   }
 
   return;
+}
+
+static const char* VDAErrorName(OSStatus aError) {
+  switch (aError) {
+    case kVDADecoderNoErr:
+      return "kVDADecoderNoErr";
+    case kVDADecoderHardwareNotSupportedErr:
+      return "kVDADecoderHardwareNotSupportedErr";
+    case kVDADecoderFormatNotSupportedErr:
+      return "kVDADecoderFormatNotSupportedErr";
+    case kVDADecoderConfigurationError:
+      return "kVDADecoderConfigurationError";
+    case kVDADecoderDecoderFailedErr:
+      return "kVDADecoderDecoderFailedErr";
+    default:
+      return "unknown";
+  }
 }
 
 MediaResult
@@ -549,7 +591,13 @@ AppleVDADecoder::InitializeSession()
 
   mIsHardwareAccelerated = rv == 0 ? 1 : 0; //kVDADecoderNoErr = 0
   if (rv != noErr) {
-    LOG("AppleVDADecoder: Couldn't create hardware VDA decoder, error %d", rv);
+    size_t extraSize = mExtraData->Length();
+    LOG("AppleVDADecoder: VDADecoderCreate failed: %s (%d), %dx%d, avcC %zu "
+        "bytes, profile %d compat %d level %d",
+        VDAErrorName(rv), rv, mPictureWidth, mPictureHeight, extraSize,
+        extraSize >= 4 ? (*mExtraData)[1] : 0,
+        extraSize >= 4 ? (*mExtraData)[2] : 0,
+        extraSize >= 4 ? (*mExtraData)[3] : 0);
       return MediaResult(NS_ERROR_DOM_MEDIA_FATAL_ERR,
                        RESULT_DETAIL("Couldn't create format description!"));
   }

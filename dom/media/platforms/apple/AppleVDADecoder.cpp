@@ -29,6 +29,11 @@
 #include "MacIOSurfaceImage.h"
 #endif
 
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+#  include "libyuv/convert_argb.h"
+#  include "mozilla/gfx/MacIOSurface.h"
+#endif
+
 #define LOG(...) MOZ_LOG(sPDMLog, mozilla::LogLevel::Debug, (__VA_ARGS__))
 #define LOGEX(_this, ...) \
   DDMOZ_LOGEX(_this, sPDMLog, mozilla::LogLevel::Debug, __VA_ARGS__)
@@ -360,10 +365,18 @@ AppleVDADecoder::OutputFrame(CVPixelBufferRef aImage,
   info.mDisplay = gfx::IntSize(mDisplayWidth, mDisplayHeight);
   info.mTransferFunction = Some(mTransferFunction);
 
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+  // The software-images copy lands in a YUV IOSurface that pre-10.8
+  // CoreAnimation cannot display; always convert to BGRA instead.
+  const bool useSoftwareImages = false;
+#else
+  const bool useSoftwareImages = mUseSoftwareImages;
+#endif
+
   if (useNullSample) {
     data = new NullData(aFrameRef.byte_offset, aFrameRef.composition_timestamp,
                       aFrameRef.duration);
-  } else if (mUseSoftwareImages) {
+  } else if (useSoftwareImages) {
     size_t width = CVPixelBufferGetWidth(aImage);
     size_t height = CVPixelBufferGetHeight(aImage);
     DebugOnly<size_t> planes = CVPixelBufferGetPlaneCount(aImage);
@@ -427,6 +440,9 @@ AppleVDADecoder::OutputFrame(CVPixelBufferRef aImage,
 
   } else {
 #ifndef MOZ_WIDGET_UIKIT
+#  if defined(MOZ_LEGACY_MACOS_TARGET)
+    RefPtr<layers::Image> image = CreateBGRAImage(aImage);
+#  else
     CFTypeRefPtr<IOSurfaceRef> surface =
         CFTypeRefPtr<IOSurfaceRef>::WrapUnderGetRule(
             CVPixelBufferGetIOSurface(aImage));
@@ -439,6 +455,7 @@ AppleVDADecoder::OutputFrame(CVPixelBufferRef aImage,
     macSurface->mColorPrimaries = mColorPrimaries;
 
     RefPtr<layers::Image> image = new layers::MacIOSurfaceImage(macSurface);
+#  endif
 
     data = VideoData::CreateFromImage(
         info.mDisplay, aFrameRef.byte_offset, aFrameRef.composition_timestamp,
@@ -467,6 +484,103 @@ AppleVDADecoder::OutputFrame(CVPixelBufferRef aImage,
       static_cast<unsigned long long>(mReorderQueue.Length()));
 
 }
+
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+// CoreAnimation cannot display VDA's YUV output before 10.8, so convert each
+// frame once into a BGRA IOSurface the compositor can present directly.
+// libyuv's "ARGB" is byte-order B,G,R,A on little-endian, the layout of a
+// BGRA surface, and VDA output is always limited-range YUV.
+already_AddRefed<layers::Image>
+AppleVDADecoder::CreateBGRAImage(CVPixelBufferRef aImage)
+{
+  if (CVPixelBufferLockBaseAddress(aImage, kCVPixelBufferLock_ReadOnly) !=
+      kCVReturnSuccess) {
+    return nullptr;
+  }
+  gfx::IntSize size((int32_t)CVPixelBufferGetWidth(aImage),
+                    (int32_t)CVPixelBufferGetHeight(aImage));
+  LOG("AppleVDADecoder: BGRA frame %dx%d format %c%c%c%c", size.width,
+      size.height, (char)(CVPixelBufferGetPixelFormatType(aImage) >> 24),
+      (char)(CVPixelBufferGetPixelFormatType(aImage) >> 16),
+      (char)(CVPixelBufferGetPixelFormatType(aImage) >> 8),
+      (char)CVPixelBufferGetPixelFormatType(aImage));
+  RefPtr<MacIOSurface> surface = TakePooledBGRASurface(size);
+  if (!surface) {
+    surface = MacIOSurface::CreateIOSurface(size.width, size.height,
+                                            MacIOSurface::AllowAlpha::No);
+  }
+  if (!surface || !surface->Lock(false)) {
+    CVPixelBufferUnlockBaseAddress(aImage, kCVPixelBufferLock_ReadOnly);
+    return nullptr;
+  }
+  const libyuv::YuvConstants* matrix = nullptr;
+  switch (mColorSpace) {
+    case gfx::YUVColorSpace::BT2020:
+      matrix = &libyuv::kYuv2020Constants;
+      break;
+    case gfx::YUVColorSpace::BT709:
+      matrix = &libyuv::kYuvH709Constants;
+      break;
+    default:
+      matrix = &libyuv::kYuvI601Constants;
+      break;
+  }
+  if (CVPixelBufferGetPixelFormatType(aImage) ==
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) {
+    libyuv::NV12ToARGBMatrix(
+        (const uint8_t*)CVPixelBufferGetBaseAddressOfPlane(aImage, 0),
+        (int)CVPixelBufferGetBytesPerRowOfPlane(aImage, 0),
+        (const uint8_t*)CVPixelBufferGetBaseAddressOfPlane(aImage, 1),
+        (int)CVPixelBufferGetBytesPerRowOfPlane(aImage, 1),
+        (uint8_t*)surface->GetBaseAddressOfPlane(0),
+        surface->GetBytesPerRow(0), matrix, size.width, size.height);
+  } else {
+    libyuv::UYVYToARGBMatrix(
+        (const uint8_t*)CVPixelBufferGetBaseAddress(aImage),
+        (int)CVPixelBufferGetBytesPerRow(aImage),
+        (uint8_t*)surface->GetBaseAddressOfPlane(0),
+        surface->GetBytesPerRow(0), matrix, size.width, size.height);
+  }
+  surface->Unlock(false);
+  CVPixelBufferUnlockBaseAddress(aImage, kCVPixelBufferLock_ReadOnly);
+  RefPtr<layers::Image> image = new layers::MacIOSurfaceImage(surface);
+  mBGRASurfacePool.AppendElement(std::move(surface));
+  return image.forget();
+}
+
+RefPtr<MacIOSurface>
+AppleVDADecoder::TakePooledBGRASurface(const gfx::IntSize& aSize)
+{
+  // A surface is only safe to overwrite once nothing references its pixels:
+  // while a decoded frame holds the surface through its MacIOSurfaceImage the
+  // pool is not the sole owner (refCount > 1), and IOSurfaceIsInUse must be
+  // clear so no pending CoreAnimation read in the compositor process loses
+  // the race. Recycle oldest-first; evict still-referenced surfaces only
+  // when a different size is requested.
+  mBGRASurfacePool.RemoveElementsBy(
+      [](const RefPtr<MacIOSurface>& aSurface) {
+        return &::IOSurfaceIsInUse &&
+               ::IOSurfaceIsInUse(aSurface->GetIOSurfaceRef().get());
+      });
+  for (uint32_t i = 0; i < mBGRASurfacePool.Length(); i++) {
+    // A reference, not a copy: taking a RefPtr here would raise the refcount
+    // and make the sole-owner test below always fail.
+    RefPtr<MacIOSurface>& surface = mBGRASurfacePool[i];
+    if (surface->GetSize(0) != aSize) {
+      mBGRASurfacePool.RemoveElementAt(i);
+      i--;
+      continue;
+    }
+    if (surface->refCount() != 1) {
+      continue;
+    }
+    RefPtr<MacIOSurface> result = surface;
+    mBGRASurfacePool.RemoveElementAt(i);
+    return result;
+  }
+  return nullptr;
+}
+#endif
 
 
 void AppleVDADecoder::OnDecodeError(OSStatus aError) {
@@ -507,18 +621,23 @@ AppleVDADecoder::ProcessDecode(MediaRawData* aSample)
     return;
   }
 
+  // TimeUnit members must not be passed to CFNumberCreate by pointer: their
+  // internal tick count is in the media timescale, not microseconds.
+  int64_t samplePts = aSample->mTime.ToMicroseconds();
+  int64_t sampleDts = aSample->mTimecode.ToMicroseconds();
+  int64_t sampleDuration = aSample->mDuration.ToMicroseconds();
   AutoCFTypeRef<CFNumberRef> pts(
     CFNumberCreate(kCFAllocatorDefault,
                    kCFNumberSInt64Type,
-                   &aSample->mTime));
+                   &samplePts));
   AutoCFTypeRef<CFNumberRef> dts(
     CFNumberCreate(kCFAllocatorDefault,
                    kCFNumberSInt64Type,
-                   &aSample->mTimecode));
+                   &sampleDts));
   AutoCFTypeRef<CFNumberRef> duration(
     CFNumberCreate(kCFAllocatorDefault,
                    kCFNumberSInt64Type,
-                   &aSample->mDuration));
+                   &sampleDuration));
   AutoCFTypeRef<CFNumberRef> byte_offset(
     CFNumberCreate(kCFAllocatorDefault,
                    kCFNumberSInt64Type,
@@ -618,6 +737,23 @@ AppleVDADecoder::InitializeSession()
                      this,
                      &mDecoder);
 
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+  // The hardware's native output is packed UYVY; if a VDA implementation
+  // refuses it, retry once with NV12.
+  if (rv != noErr && !mOutputIsNV12) {
+    LOG("AppleVDADecoder: UYVY output refused (%d), retrying with NV12", rv);
+    mOutputIsNV12 = true;
+    AutoCFTypeRef<CFDictionaryRef> nv12Configuration(
+      CreateOutputConfiguration());
+    rv =
+      VDADecoderCreate(decoderConfig,
+                       nv12Configuration,
+                       (VDADecoderOutputCallback*)PlatformCallback,
+                       this,
+                       &mDecoder);
+  }
+#endif
+
   mIsHardwareAccelerated = rv == 0 ? 1 : 0; //kVDADecoderNoErr = 0
   if (rv != noErr) {
     size_t extraSize = mExtraData->Length();
@@ -683,7 +819,11 @@ AppleVDADecoder::CreateDecoderSpecification()
 CFDictionaryRef
 AppleVDADecoder::CreateOutputConfiguration()
 {
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+  if (mOutputIsNV12) {
+#else
   if (mUseSoftwareImages) {
+#endif
     // Output format type:
     SInt32 PixelFormatTypeValue =
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;

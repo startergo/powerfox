@@ -126,13 +126,6 @@ already_AddRefed<MediaDataDecoder> AppleDecoderModule::CreateVideoDecoder(
   } else
 #endif
   {
-#if defined(MOZ_LEGACY_MACOS_TARGET)
-      // VDA's packed-YUV IOSurface output cannot be displayed before 10.8:
-      // CoreAnimation rejects YUV surfaces there and the fallback presents
-      // nothing, so hardware-decoded video freezes on its first frame. Let
-      // the software decoders handle everything.
-      return nullptr;
-#endif
       if (!MP4Decoder::IsH264(aParams.VideoConfig().mMimeType) ||
           aParams.mOptions.contains(
               CreateDecoderParams::Option::HardwareDecoderNotAllowed)) {

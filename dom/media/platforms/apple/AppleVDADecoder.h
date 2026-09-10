@@ -30,6 +30,12 @@ typedef struct OpaqueVTDecompressionSession* VTDecompressionSessionRef;
 
 #include "VideoDecodeAcceleration/VDADecoder.h"
 
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+#  include "mozilla/gfx/Point.h"  // For gfx::IntSize
+
+class MacIOSurface;
+#endif
+
 namespace mozilla {
 
 DDLoggedTypeDeclNameAndBase(AppleVDADecoder, MediaDataDecoder);
@@ -125,6 +131,16 @@ private:
 
   AppleFrameRef* CreateAppleFrameRef(const MediaRawData* aSample);
   CFDictionaryRef CreateOutputConfiguration();
+
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+  already_AddRefed<layers::Image> CreateBGRAImage(CVPixelBufferRef aImage);
+  RefPtr<MacIOSurface> TakePooledBGRASurface(const gfx::IntSize& aSize);
+  nsTArray<RefPtr<MacIOSurface>> mBGRASurfacePool;
+  // Output format negotiation: UYVY is the hardware's native output on this
+  // target; requesting NV12 makes VideoToolbox insert a software blit per
+  // frame (vt_Copy_2vuy_420v), so it is only a fallback.
+  bool mOutputIsNV12 = false;
+#endif
 
   const RefPtr<MediaByteBuffer> mExtraData;
   const uint32_t mPictureWidth;

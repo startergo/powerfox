@@ -2047,7 +2047,9 @@ FFmpegVideoDecoder<LIBAV_VER>::TakePooledBGRASurface(
                ::IOSurfaceIsInUse(aSurface->GetIOSurfaceRef().get());
       });
   for (uint32_t i = 0; i < mBGRASurfacePool.Length(); i++) {
-    RefPtr<MacIOSurface> surface = mBGRASurfacePool[i];
+    // A reference, not a copy: taking a RefPtr here would raise the
+    // refcount and make the sole-owner test below always fail.
+    RefPtr<MacIOSurface>& surface = mBGRASurfacePool[i];
     if (surface->GetSize(0) != aSize) {
       mBGRASurfacePool.RemoveElementAt(i);
       i--;
@@ -2056,8 +2058,9 @@ FFmpegVideoDecoder<LIBAV_VER>::TakePooledBGRASurface(
     if (surface->refCount() != 1) {
       continue;
     }
+    RefPtr<MacIOSurface> result = surface;
     mBGRASurfacePool.RemoveElementAt(i);
-    return surface;
+    return result;
   }
   return nullptr;
 }

@@ -2033,24 +2033,31 @@ FFmpegVideoDecoder<LIBAV_VER>::CreateMacIOSurfaceVideoData(
 RefPtr<MacIOSurface>
 FFmpegVideoDecoder<LIBAV_VER>::TakePooledBGRASurface(
     const gfx::IntSize& aSize) {
-  // IOSurfaceIsInUse only reflects the surface's in-use count, which a
-  // pending CoreAnimation read does not necessarily hold; a surface can
-  // still be referenced by a decoded-ahead frame that has not been
-  // presented. Only recycle the oldest surfaces, so a frame's pixels stay
-  // untouched for several frames' worth of decode-ahead and composition
-  // latency.
-  const uint32_t kMinInFlight = 6;
+  // A surface is only safe to overwrite once nothing references its
+  // pixels: while a decoded frame — possibly still queued in the same
+  // DecodedData batch being built — holds the surface through its
+  // MacIOSurfaceImage, the pool is not the sole owner (refCount > 1), and
+  // IOSurfaceIsInUse must be clear so no pending CoreAnimation read in
+  // the compositor process loses the race. Recycle oldest-first; evict
+  // in-use or still-referenced surfaces at the front only when a
+  // different size is requested.
   mBGRASurfacePool.RemoveElementsBy(
       [](const RefPtr<MacIOSurface>& aSurface) {
         return &::IOSurfaceIsInUse &&
                ::IOSurfaceIsInUse(aSurface->GetIOSurfaceRef().get());
       });
-  while (mBGRASurfacePool.Length() > kMinInFlight) {
-    RefPtr<MacIOSurface> surface = mBGRASurfacePool[0];
-    mBGRASurfacePool.RemoveElementAt(0);
-    if (surface->GetSize(0) == aSize) {
-      return surface;
+  for (uint32_t i = 0; i < mBGRASurfacePool.Length(); i++) {
+    RefPtr<MacIOSurface> surface = mBGRASurfacePool[i];
+    if (surface->GetSize(0) != aSize) {
+      mBGRASurfacePool.RemoveElementAt(i);
+      i--;
+      continue;
     }
+    if (surface->refCount() != 1) {
+      continue;
+    }
+    mBGRASurfacePool.RemoveElementAt(i);
+    return surface;
   }
   return nullptr;
 }

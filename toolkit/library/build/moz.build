@@ -12,6 +12,22 @@ USE_LIBS += ["gkrust"]
 
 Libxul("xul-real")
 
+if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
+    if CONFIG["MOZ_CORETEXT_IN_APPLICATION_SERVICES"]:
+        GeneratedFile(
+            "CoreText.tbd",
+            script="/toolkit/library/gen_legacy_coretext_tbd.py",
+            flags=[CONFIG["MACOS_SDK_DIR"]],
+        )
+        coretext_install_name = (
+            "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText"
+        )
+        LDFLAGS += [
+            "-Wl,-dylib_file,%s:%s/CoreText.tbd"
+            % (coretext_install_name, OBJDIR)
+        ]
+        EXTRA_LINK_DEPS += ["!CoreText.tbd"]
+
 if CONFIG["COMPILE_ENVIRONMENT"]:
     if CONFIG["MOZ_WIDGET_TOOLKIT"] in ("cocoa", "uikit"):
         full_libname = SHARED_LIBRARY_NAME

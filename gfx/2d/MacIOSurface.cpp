@@ -69,7 +69,8 @@ void SetSizeProperties(const CFTypeRefPtr<CFMutableDictionaryRef>& aDict,
 
 /* static */
 already_AddRefed<MacIOSurface> MacIOSurface::CreateIOSurface(
-    int aWidth, int aHeight, AllowAlpha aAllowAlpha) {
+    int aWidth, int aHeight, AllowAlpha aAllowAlpha,
+    gfx::YUVColorSpace aColorSpace, gfx::TransferFunction aTransferFunction) {
   auto props = CFTypeRefPtr<CFMutableDictionaryRef>::WrapUnderCreateRule(
       ::CFDictionaryCreateMutable(kCFAllocatorDefault, 4,
                                   &kCFTypeDictionaryKeyCallBacks,
@@ -99,8 +100,8 @@ already_AddRefed<MacIOSurface> MacIOSurface::CreateIOSurface(
   }
 
   RefPtr<MacIOSurface> ioSurface =
-      new MacIOSurface(std::move(surfaceRef), gfx::YUVColorSpace::Identity,
-                       gfx::TransferFunction::SRGB, aAllowAlpha);
+      new MacIOSurface(std::move(surfaceRef), aColorSpace, aTransferFunction,
+                       aAllowAlpha);
 
   return ioSurface.forget();
 }

@@ -506,9 +506,11 @@ AppleVDADecoder::CreateBGRAImage(CVPixelBufferRef aImage)
       (char)CVPixelBufferGetPixelFormatType(aImage));
   RefPtr<MacIOSurface> surface = TakePooledBGRASurface(size);
   if (!surface) {
-    surface = MacIOSurface::CreateIOSurface(size.width, size.height,
-                                            MacIOSurface::AllowAlpha::No);
+    surface = MacIOSurface::CreateIOSurface(
+        size.width, size.height, MacIOSurface::AllowAlpha::No,
+        gfx::YUVColorSpace::Identity, mTransferFunction);
   }
+  surface->mColorPrimaries = mColorPrimaries;
   if (!surface || !surface->Lock(false)) {
     CVPixelBufferUnlockBaseAddress(aImage, kCVPixelBufferLock_ReadOnly);
     return nullptr;

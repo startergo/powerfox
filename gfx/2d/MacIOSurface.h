@@ -115,8 +115,10 @@ class MacIOSurface final
   // of the MacIOSurface instance.
   // MacIOSurface holds a reference to the corresponding IOSurface.
 
-  static already_AddRefed<MacIOSurface> CreateIOSurface(int aWidth, int aHeight,
-                                                        AllowAlpha aAllowAlpha);
+  static already_AddRefed<MacIOSurface> CreateIOSurface(
+      int aWidth, int aHeight, AllowAlpha aAllowAlpha,
+      YUVColorSpace aColorSpace = YUVColorSpace::Identity,
+      TransferFunction aTransferFunction = TransferFunction::SRGB);
   static already_AddRefed<MacIOSurface> CreateBiPlanarSurface(
       const IntSize& aYSize, const IntSize& aCbCrSize,
       ChromaSubsampling aChromaSubsampling, YUVColorSpace aColorSpace,

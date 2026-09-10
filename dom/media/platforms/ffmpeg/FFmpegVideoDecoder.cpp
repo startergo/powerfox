@@ -1996,12 +1996,16 @@ FFmpegVideoDecoder<LIBAV_VER>::CreateMacIOSurfaceVideoData(
   gfx::IntSize size(aBuffer.mPlanes[0].mWidth, aBuffer.mPlanes[0].mHeight);
   RefPtr<MacIOSurface> surface = TakePooledBGRASurface(size);
   if (!surface) {
-    surface = MacIOSurface::CreateIOSurface(size.width, size.height,
-                                            MacIOSurface::AllowAlpha::No);
+    surface = MacIOSurface::CreateIOSurface(
+        size.width, size.height, MacIOSurface::AllowAlpha::No,
+        gfx::YUVColorSpace::Identity,
+        mInfo.mTransferFunction.refOr(gfx::TransferFunction::BT709));
     if (!surface) {
       return nullptr;
     }
   }
+  surface->mColorPrimaries =
+      mInfo.mColorPrimaries.valueOr(gfx::ColorSpace2::UNKNOWN);
   if (!surface->Lock(false)) {
     return nullptr;
   }

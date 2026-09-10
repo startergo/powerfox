@@ -2009,14 +2009,22 @@ FFmpegVideoDecoder<LIBAV_VER>::CreateMacIOSurfaceVideoData(
     // libyuv's "ARGB" is byte-order B,G,R,A on little-endian, which is the
     // layout of the BGRA surface.
     const libyuv::YuvConstants* matrix = nullptr;
-    if (aBuffer.mYUVColorSpace == gfx::YUVColorSpace::BT709) {
-      matrix = aBuffer.mColorRange == gfx::ColorRange::FULL
-                   ? &libyuv::kYuvF709Constants
-                   : &libyuv::kYuvH709Constants;
-    } else {
-      matrix = aBuffer.mColorRange == gfx::ColorRange::FULL
-                   ? &libyuv::kYuvJPEGConstants
-                   : &libyuv::kYuvI601Constants;
+    switch (aBuffer.mYUVColorSpace) {
+      case gfx::YUVColorSpace::BT2020:
+        matrix = aBuffer.mColorRange == gfx::ColorRange::FULL
+                     ? &libyuv::kYuvV2020Constants
+                     : &libyuv::kYuv2020Constants;
+        break;
+      case gfx::YUVColorSpace::BT709:
+        matrix = aBuffer.mColorRange == gfx::ColorRange::FULL
+                     ? &libyuv::kYuvF709Constants
+                     : &libyuv::kYuvH709Constants;
+        break;
+      default:
+        matrix = aBuffer.mColorRange == gfx::ColorRange::FULL
+                     ? &libyuv::kYuvJPEGConstants
+                     : &libyuv::kYuvI601Constants;
+        break;
     }
     // libyuv advances its uint16 pointers by the stride argument, so the
     // plane strides must be converted from bytes to 16-bit elements; the

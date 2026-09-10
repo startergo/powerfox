@@ -131,6 +131,16 @@ already_AddRefed<MediaDataDecoder> AppleDecoderModule::CreateVideoDecoder(
               CreateDecoderParams::Option::HardwareDecoderNotAllowed)) {
         return nullptr;
       }
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+      // The single VDA callback thread serializes the driver's
+      // slice-completion work with the UYVY to BGRA conversion and cannot
+      // sustain high frame rates; the shortfall desynchronizes the media
+      // clock and presentation freezes. Software decoding keeps those
+      // streams smooth.
+      if (aParams.mRate.mValue > 48) {
+        return nullptr;
+      }
+#endif
       RefPtr<AppleVDADecoder> vda(
           new AppleVDADecoder(aParams.VideoConfig(), aParams.mImageContainer,
                               aParams.mOptions, aParams.mKnowsCompositor,

@@ -510,11 +510,11 @@ AppleVDADecoder::CreateBGRAImage(CVPixelBufferRef aImage)
         size.width, size.height, MacIOSurface::AllowAlpha::No,
         gfx::YUVColorSpace::Identity, mTransferFunction);
   }
-  surface->mColorPrimaries = mColorPrimaries;
   if (!surface || !surface->Lock(false)) {
     CVPixelBufferUnlockBaseAddress(aImage, kCVPixelBufferLock_ReadOnly);
     return nullptr;
   }
+  surface->mColorPrimaries = mColorPrimaries;
   const libyuv::YuvConstants* matrix = nullptr;
   switch (mColorSpace) {
     case gfx::YUVColorSpace::BT2020:
@@ -741,17 +741,27 @@ AppleVDADecoder::InitializeSession()
 
 #if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
   // The hardware's native output is packed UYVY; if a VDA implementation
-  // refuses it, retry with NV12. Session creation is also intermittently
-  // refused right after a previous session was destroyed (loop points,
-  // error recovery), so retry a few times with a delay before giving up
-  // and letting software decoding take over.
-  for (int attempt = 0; rv != noErr && attempt < 3; attempt++) {
-    if (rv != noErr && !mOutputIsNV12) {
-      LOG("AppleVDADecoder: UYVY output refused (%d), retrying with NV12", rv);
-      mOutputIsNV12 = true;
-    } else {
-      LOG("AppleVDADecoder: session refused (%d), retry %d", rv, attempt);
-    }
+  // refuses it, retry once with NV12 regardless of the error kind.
+  if (rv != noErr && !mOutputIsNV12) {
+    LOG("AppleVDADecoder: UYVY output refused (%d), retrying with NV12", rv);
+    mOutputIsNV12 = true;
+    AutoCFTypeRef<CFDictionaryRef> nv12Configuration(
+      CreateOutputConfiguration());
+    rv =
+      VDADecoderCreate(decoderConfig,
+                       nv12Configuration,
+                       (VDADecoderOutputCallback*)PlatformCallback,
+                       this,
+                       &mDecoder);
+  }
+  // Session creation is intermittently refused with
+  // kVDADecoderDecoderFailedErr right after a previous session was
+  // destroyed (loop points, error recovery); other errors are permanent,
+  // so only this one deserves delayed retries before falling back to
+  // software decoding.
+  for (int attempt = 0;
+       rv == kVDADecoderDecoderFailedErr && attempt < 3; attempt++) {
+    LOG("AppleVDADecoder: session refused (%d), retry %d", rv, attempt);
     PR_Sleep(PR_MillisecondsToInterval(100));
     AutoCFTypeRef<CFDictionaryRef> retryConfiguration(
       CreateOutputConfiguration());

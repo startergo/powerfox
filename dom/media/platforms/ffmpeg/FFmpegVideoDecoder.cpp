@@ -32,6 +32,7 @@
 #if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
 #  include "MacIOSurfaceImage.h"
 #  include "YCbCrUtils.h"
+#  include "libyuv/convert_argb.h"
 #  include "mozilla/gfx/MacIOSurface.h"
 #endif
 #ifdef XP_UNIX
@@ -2004,6 +2005,40 @@ FFmpegVideoDecoder<LIBAV_VER>::CreateMacIOSurfaceVideoData(
   if (!surface->Lock(false)) {
     return nullptr;
   }
+  if (aBuffer.mColorDepth != gfx::ColorDepth::COLOR_8) {
+    // libyuv's "ARGB" is byte-order B,G,R,A on little-endian, which is the
+    // layout of the BGRA surface.
+    const libyuv::YuvConstants* matrix = nullptr;
+    if (aBuffer.mYUVColorSpace == gfx::YUVColorSpace::BT709) {
+      matrix = aBuffer.mColorRange == gfx::ColorRange::FULL
+                   ? &libyuv::kYuvF709Constants
+                   : &libyuv::kYuvH709Constants;
+    } else {
+      matrix = aBuffer.mColorRange == gfx::ColorRange::FULL
+                   ? &libyuv::kYuvJPEGConstants
+                   : &libyuv::kYuvI601Constants;
+    }
+    // libyuv advances its uint16 pointers by the stride argument, so the
+    // plane strides must be converted from bytes to 16-bit elements; the
+    // destination stride stays in bytes.
+    libyuv::I010ToARGBMatrix(
+        (const uint16_t*)aBuffer.mPlanes[0].mData,
+        aBuffer.mPlanes[0].mStride / 2,
+        (const uint16_t*)aBuffer.mPlanes[1].mData,
+        aBuffer.mPlanes[1].mStride / 2,
+        (const uint16_t*)aBuffer.mPlanes[2].mData,
+        aBuffer.mPlanes[2].mStride / 2,
+        (uint8_t*)surface->GetBaseAddressOfPlane(0),
+        surface->GetBytesPerRow(0), matrix, size.width, size.height);
+    surface->Unlock(false);
+    RefPtr<layers::MacIOSurfaceImage> image =
+        new layers::MacIOSurfaceImage(surface);
+    mBGRASurfacePool.AppendElement(std::move(surface));
+    return VideoData::CreateFromImage(
+        mInfo.mDisplay, aOffset, TimeUnit::FromMicroseconds(aPts),
+        TimeUnit::FromMicroseconds(aDuration), image.forget(),
+        IsKeyFrame(mFrame), TimeUnit::FromMicroseconds(mFrame->pkt_dts));
+  }
   layers::PlanarYCbCrData data;
   data.mYChannel = aBuffer.mPlanes[0].mData;
   data.mYStride = aBuffer.mPlanes[0].mStride;
@@ -2094,7 +2129,8 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImage(
 
   RefPtr<VideoData> v;
 #if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
-  if (b.mColorDepth == gfx::ColorDepth::COLOR_8 &&
+  if ((b.mColorDepth == gfx::ColorDepth::COLOR_8 ||
+       b.mColorDepth == gfx::ColorDepth::COLOR_10) &&
       b.mChromaSubsampling == gfx::ChromaSubsampling::HALF_WIDTH_AND_HEIGHT) {
     v = CreateMacIOSurfaceVideoData(b, aOffset, aPts, aDuration);
   }

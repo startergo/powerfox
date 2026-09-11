@@ -86,6 +86,7 @@
 
 #ifdef MOZ_WIDGET_COCOA
 #  include "nsCocoaFeatures.h"
+#  include <sys/sysctl.h>
 #endif
 
 #if defined(XP_MACOSX)
@@ -106,10 +107,29 @@ void glFinishFenceAPPLE(GLuint fence);
 
 namespace mozilla {
 
+#if defined(XP_MACOSX)
+static bool FewCoreMachine() {
+  static const bool few = []() {
+    int count = 0;
+    size_t len = sizeof(count);
+    sysctlbyname("hw.ncpu", &count, &len, nullptr, 0);
+    return count > 0 && count <= 2;
+  }();
+  return few;
+}
+#endif
+
 WebGLContextOptions::WebGLContextOptions() {
   // Set default alpha state based on preference.
   alpha = !StaticPrefs::webgl_default_no_alpha();
   antialias = StaticPrefs::webgl_default_antialias();
+#if defined(XP_MACOSX)
+  // MSAA costs a third of the achievable frame rate on few-core machines;
+  // pages that explicitly request antialias still get it.
+  if (FewCoreMachine()) {
+    antialias = false;
+  }
+#endif
 }
 
 StaticMutex WebGLContext::sLruMutex;
@@ -1366,11 +1386,17 @@ bool WebGLContext::PushRemoteTexture(
       return;
     }
     // The 10.6 NVIDIA driver leaves a spurious GL_INVALID_OPERATION from this
-    // sequence; consume it here so it does not surface to pages. Do not query
-    // between the calls: each mid-sequence getError forces a pipeline sync.
+    // sequence; the trailing query consumes it. On few-core machines the
+    // producer also needs a per-frame pacing point or frames deliver
+    // unevenly: a single mid-sequence sync after glSetFenceAPPLE provides
+    // one, but would cost throughput on machines with headroom.
+    static const bool paceProducer = FewCoreMachine();
     GLuint fence = 0;
     glGenFencesAPPLE(1, &fence);
     glSetFenceAPPLE(fence);
+    if (paceProducer) {
+      (void)gl.fGetError();
+    }
     glFinishFenceAPPLE(fence);
     glDeleteFencesAPPLE(1, &fence);
     (void)gl.fGetError();

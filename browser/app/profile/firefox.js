@@ -3641,4 +3641,7 @@ pref("distribution.mozillaonline.ignore", true);
   // CoreAnimation presentation, and its failure latch would silently
   // force-disable the VDA hardware decoder on machines where it works.
   pref("media.sanity-test.disabled", true);
+  // The DoH rollout would enable DNS-over-HTTPS, whose requests stall
+  // on 10.6 and wedge page loads.
+  pref("doh-rollout.enabled", false);
 #endif

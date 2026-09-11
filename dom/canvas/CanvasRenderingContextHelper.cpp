@@ -13,8 +13,12 @@
 #include "mozilla/UniquePtr.h"
 #include "mozilla/dom/CanvasRenderingContext2D.h"
 #include "mozilla/dom/OffscreenCanvasRenderingContext2D.h"
+#include "mozilla/gfx/gfxVars.h"
 #include "mozilla/glean/DomCanvasMetrics.h"
 #include "mozilla/webgpu/CanvasContext.h"
+#if defined(XP_MACOSX)
+#  include "nsCocoaFeatures.h"
+#endif
 #include "nsContentUtils.h"
 #include "nsDOMJSUtils.h"
 #include "nsIScriptContext.h"
@@ -172,6 +176,15 @@ already_AddRefed<nsISupports> CanvasRenderingContextHelper::GetOrCreateContext(
 already_AddRefed<nsISupports> CanvasRenderingContextHelper::GetOrCreateContext(
     JSContext* aCx, CanvasContextType aContextType,
     JS::Handle<JS::Value> aContextOptions, ErrorResult& aRv) {
+#if defined(XP_MACOSX)
+  // On 10.6, WebGL2 cannot work (GL 2.1 ceiling). Refuse before creating a
+  // context so getContext() returns null without a creation-error event,
+  // letting pages fall back to WebGL1.
+  if (aContextType == CanvasContextType::WebGL2 &&
+      !nsCocoaFeatures::OnLionOrLater() && !gfx::gfxVars::AllowWebgl2()) {
+    return nullptr;
+  }
+#endif
   if (!mCurrentContext) {
     // This canvas doesn't have a context yet.
     RefPtr<nsICanvasRenderingContextInternal> context;

@@ -2644,9 +2644,9 @@ void gfxPlatform::InitWebRenderConfig() {
   bool hasHardware = gfxConfig::IsEnabled(Feature::WEBRENDER);
 #if defined(XP_MACOSX)
   if (!nsCocoaFeatures::OnLionOrLater()) {
-    // No GL context can be created in-process on 10.6 either; composite
-    // with software WebRender instead of panicking on missing GL entry
-    // points.
+    // WebRender's desktop shaders require GLSL 1.50 (ShaderVersion::Gl in
+    // webrender_build), but 10.6 only provides GL 2.1 / GLSL 1.20, so
+    // hardware WebRender cannot run; composite with software WebRender.
     hasHardware = false;
   }
 #endif
@@ -3028,12 +3028,11 @@ void gfxPlatform::InitHardwareVideoConfig() {
     if (Preferences::HasUserValue("media.hardware-video-decoding.failed")) {
       Preferences::ClearUser("media.hardware-video-decoding.failed");
     }
-    Preferences::SetBool(
-        "media.hardware-video-decoding.failed.latch-cleared", true);
+    Preferences::SetBool("media.hardware-video-decoding.failed.latch-cleared",
+                         true);
     // Persist the marker now: losing it to a crash before the shutdown
     // save would re-clear a deliberate user choice on the next startup.
-    nsCOMPtr<nsIPrefService> prefs =
-        do_GetService(NS_PREFSERVICE_CONTRACTID);
+    nsCOMPtr<nsIPrefService> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
     if (prefs) {
       prefs->SavePrefFile(nullptr);
     }
@@ -3298,6 +3297,12 @@ void gfxPlatform::InitWebGLConfig() {
          deviceID.EqualsLiteral("0x0126"))) {
       gfxVars::SetWebglAllowCoreProfile(false);
     }
+    if (!nsCocoaFeatures::OnLionOrLater()) {
+      // 10.6 tops out at GL 2.1 / GLSL 1.20: force the legacy profile and
+      // drop WebGL2 (it requires a 3.2 core context).
+      gfxVars::SetWebglAllowCoreProfile(false);
+      gfxVars::SetAllowWebgl2(false);
+    }
   }
 
 #ifdef MOZ_WIDGET_ANDROID
@@ -3307,8 +3312,15 @@ void gfxPlatform::InitWebGLConfig() {
 
   // Until bug 1999136 lands and the GPU process works with headless, we should
   // allow WebGL in the parent process when headless.
+  bool allowInParent = StaticPrefs::webgl_allow_in_parent_AtStartup();
+#if defined(XP_MACOSX)
+  // The GPU process cannot exist below 10.7, so WebGL must run in the parent.
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    allowInParent = true;
+  }
+#endif
   if (!gfxConfig::IsEnabled(Feature::GPU_PROCESS) && !IsHeadless() &&
-      !StaticPrefs::webgl_allow_in_parent_AtStartup()) {
+      !allowInParent) {
     featureWebGL.Disable(FeatureStatus::UnavailableNoGpuProcess,
                          "Disabled without GPU process",
                          "FEATURE_WEBGL_NO_GPU_PROCESS"_ns);

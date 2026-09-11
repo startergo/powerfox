@@ -88,6 +88,14 @@
 #  include "nsCocoaFeatures.h"
 #endif
 
+#if defined(XP_MACOSX)
+extern "C" {
+void glGenFencesAPPLE(GLsizei n, GLuint* fences);
+void glDeleteFencesAPPLE(GLsizei n, const GLuint* fences);
+void glSetFenceAPPLE(GLuint fence);
+void glFinishFenceAPPLE(GLuint fence);
+}
+#endif
 
 #ifdef XP_WIN
 #  include "WGLLibrary.h"
@@ -687,7 +695,7 @@ void WebGLContext::FinishInit() {
     }
   }
 
-    mNeedsFakeNoStencil_UserFBs = false;
+  mNeedsFakeNoStencil_UserFBs = false;
 #ifdef MOZ_WIDGET_COCOA
   if (!nsCocoaFeatures::IsAtLeastVersion(10, 12) &&
       gl->Vendor() == gl::GLVendor::Intel) {
@@ -1344,6 +1352,31 @@ bool WebGLContext::PushRemoteTexture(
     std::shared_ptr<gl::SharedSurface> surf,
     const webgl::SwapChainOptions& options,
     layers::RemoteTextureOwnerClient* ownerClient) {
+#if defined(XP_MACOSX)
+  // CoreAnimation may scan out a swap-chain IOSurface as soon as it is
+  // attached to a layer, so the producer's GL writes must be retired first.
+  // On 10.6, GL_APPLE_fence is the only fence available (ARB_sync et al. are
+  // not exposed by the NVIDIA driver).
+  static const auto sFlushForHandoff = [](gl::GLContext& gl) {
+    if (!gl.MakeCurrent()) return;
+    gl.fFlush();
+    static const bool sHasAppleFence = [&]() {
+      const auto exts =
+          reinterpret_cast<const char*>(gl.fGetString(LOCAL_GL_EXTENSIONS));
+      return exts && strstr(exts, "GL_APPLE_fence");
+    }();
+    if (!sHasAppleFence) {
+      gl.fFinish();
+      return;
+    }
+    GLuint fence = 0;
+    glGenFencesAPPLE(1, &fence);
+    glSetFenceAPPLE(fence);
+    glFinishFenceAPPLE(fence);
+    glDeleteFencesAPPLE(1, &fence);
+  };
+#endif
+
   const auto onFailure = [&]() -> bool {
     GenerateWarning("Remote texture creation failed.");
     LoseContext();
@@ -1443,6 +1476,13 @@ bool WebGLContext::PushRemoteTexture(
     ownerClient->PushTexture(textureId, ownerId, std::move(data));
     return true;
   }
+
+#if defined(XP_MACOSX)
+  if (desc && desc->type() ==
+                  layers::SurfaceDescriptor::TSurfaceDescriptorMacIOSurface) {
+    sFlushForHandoff(*gl);
+  }
+#endif
 
   // SharedSurfaces of SurfaceDescriptorD3D10 and SurfaceDescriptorMacIOSurface
   // need to be kept alive. They will be recycled by
@@ -2035,12 +2075,12 @@ ScopedDrawCallWrapper::ScopedDrawCallWrapper(WebGLContext& webgl)
     }
     driverDepthTest &= !mWebGL.mNeedsFakeNoDepth;
     driverStencilTest &= !mWebGL.mNeedsFakeNoStencil;
-    } else {
-      if (mWebGL.mNeedsFakeNoStencil_UserFBs &&
-          fb->DepthAttachment().HasAttachment() &&
-          !fb->StencilAttachment().HasAttachment()) {
-        driverStencilTest = false;
-      }
+  } else {
+    if (mWebGL.mNeedsFakeNoStencil_UserFBs &&
+        fb->DepthAttachment().HasAttachment() &&
+        !fb->StencilAttachment().HasAttachment()) {
+      driverStencilTest = false;
+    }
   }
   const auto& gl = mWebGL.gl;
   mWebGL.DoColorMask(Some(0), driverColorMask0);

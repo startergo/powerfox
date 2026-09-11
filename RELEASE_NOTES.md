@@ -5,7 +5,7 @@ Requirements:
 - The bundled libc++ runtime ships inside the app; no extra installs needed
 
 What's new since macos10.6-pre2:
-- WebGL 1 works, rendered on the graphics card. The WebGL implementation runs in-process (this OS vintage has no GPU process), creates a real hardware GL context, and presents through the same graphics-card compositing path video uses — no readback, no intermediate copies. WebGL 1 games and demos run at display rate on 2010-class hardware with headroom (verified on a Core i5 MacBook Pro).
+- WebGL 1 works, rendered on the graphics card. The WebGL implementation runs in-process (this OS vintage has no GPU process), creates a real hardware GL context, and presents through the same graphics-card compositing path video uses — no readback, no intermediate copies. WebGL 1 games and demos run at display rate on 2010-class hardware with headroom (verified on a Core i7 MacBook Pro).
 - On two-core machines, frame delivery is paced to what the GPU actually sustains: an even, steady frame rate instead of a nominal higher number with visible stutter. Multisampling is off by default there for the same reason (it costs about a third of the achievable rate); pages that explicitly request antialiasing still get it.
 - WebGL 2 remains unavailable — it requires a GL 3.2 core context, which no 10.6 driver offers (verified: the driver rejects the request outright). Sites that try WebGL 2 and fall back to WebGL 1 now work like they do on the sibling UXP build; forcing via webgl.force-enabled keeps its usual behavior.
 - WebGL contexts keep a clean GL error state; a driver quirk that surfaced one spurious error per frame to pages that call getError() themselves is worked around internally.

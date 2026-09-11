@@ -103,7 +103,7 @@ $CXX $TARGET_FLAGS -o "$DIST/lib/libc++.1.0.dylib" \
   -dynamiclib -nodefaultlibs \
   -current_version 1.0.5 -compatibility_version 1 \
   -install_name @rpath/libc++.1.dylib \
-  "$DIST/lib/libc++abi.1.0.dylib" \
+  -Wl,-reexport_library,"$DIST/lib/libc++abi.1.0.dylib" \
   -lSystem *.o
 
 echo "=== Installing headers ==="

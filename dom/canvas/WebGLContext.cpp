@@ -1366,14 +1366,12 @@ bool WebGLContext::PushRemoteTexture(
       return;
     }
     // The 10.6 NVIDIA driver leaves a spurious GL_INVALID_OPERATION from this
-    // sequence unless an error query interleaves the calls; drain after each.
+    // sequence; consume it here so it does not surface to pages. Do not query
+    // between the calls: each mid-sequence getError forces a pipeline sync.
     GLuint fence = 0;
     glGenFencesAPPLE(1, &fence);
-    (void)gl.fGetError();
     glSetFenceAPPLE(fence);
-    (void)gl.fGetError();
     glFinishFenceAPPLE(fence);
-    (void)gl.fGetError();
     glDeleteFencesAPPLE(1, &fence);
     (void)gl.fGetError();
   };

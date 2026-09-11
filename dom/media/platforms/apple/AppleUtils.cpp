@@ -4,7 +4,12 @@
 
 #include "apple/AppleUtils.h"
 
-#include <VideoToolbox/VideoToolbox.h>
+#if __has_include(<VideoToolbox/VideoToolbox.h>)
+#  include <VideoToolbox/VideoToolbox.h>
+#  define APPLE_UTILS_HAVE_VT 1
+#endif
+
+#ifdef APPLE_UTILS_HAVE_VT
 
 namespace mozilla {
 
@@ -78,3 +83,4 @@ OSStatus SessionPropertyManager::Set(CFStringRef aKey, V aValue,
 }
 
 }  // namespace mozilla
+#endif  // APPLE_UTILS_HAVE_VT

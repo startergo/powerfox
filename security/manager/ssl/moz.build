@@ -188,9 +188,14 @@ if CONFIG["TARGET_KERNEL"] == "Darwin":
         "KeychainSecret.cpp",
         "OSReauthenticatorDarwin.mm",
     ]
+    # Weakly linked on pre-10.7 targets: LocalAuthentication is absent from
+    # the 10.6 SDK.
+    _fw = "-framework "
+    if CONFIG["MOZ_LEGACY_MACOS_TARGET"]:
+        _fw = "-weak_framework "
     OS_LIBS += [
         "-framework CoreFoundation",
-        "-framework LocalAuthentication",
+        _fw + "LocalAuthentication",
         "-framework Security",
     ]
 

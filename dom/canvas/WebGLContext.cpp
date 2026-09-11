@@ -86,8 +86,17 @@
 
 #ifdef MOZ_WIDGET_COCOA
 #  include "nsCocoaFeatures.h"
+#  include <sys/sysctl.h>
 #endif
 
+#if defined(XP_MACOSX)
+extern "C" {
+void glGenFencesAPPLE(GLsizei n, GLuint* fences);
+void glDeleteFencesAPPLE(GLsizei n, const GLuint* fences);
+void glSetFenceAPPLE(GLuint fence);
+void glFinishFenceAPPLE(GLuint fence);
+}
+#endif
 
 #ifdef XP_WIN
 #  include "WGLLibrary.h"
@@ -98,10 +107,29 @@
 
 namespace mozilla {
 
+#if defined(XP_MACOSX)
+static bool FewCoreMachine() {
+  static const bool few = []() {
+    int count = 0;
+    size_t len = sizeof(count);
+    sysctlbyname("hw.ncpu", &count, &len, nullptr, 0);
+    return count > 0 && count <= 2;
+  }();
+  return few;
+}
+#endif
+
 WebGLContextOptions::WebGLContextOptions() {
   // Set default alpha state based on preference.
   alpha = !StaticPrefs::webgl_default_no_alpha();
   antialias = StaticPrefs::webgl_default_antialias();
+#if defined(XP_MACOSX)
+  // MSAA costs a third of the achievable frame rate on few-core machines;
+  // pages that explicitly request antialias still get it.
+  if (FewCoreMachine()) {
+    antialias = false;
+  }
+#endif
 }
 
 StaticMutex WebGLContext::sLruMutex;
@@ -687,7 +715,7 @@ void WebGLContext::FinishInit() {
     }
   }
 
-    mNeedsFakeNoStencil_UserFBs = false;
+  mNeedsFakeNoStencil_UserFBs = false;
 #ifdef MOZ_WIDGET_COCOA
   if (!nsCocoaFeatures::IsAtLeastVersion(10, 12) &&
       gl->Vendor() == gl::GLVendor::Intel) {
@@ -1344,6 +1372,37 @@ bool WebGLContext::PushRemoteTexture(
     std::shared_ptr<gl::SharedSurface> surf,
     const webgl::SwapChainOptions& options,
     layers::RemoteTextureOwnerClient* ownerClient) {
+#if defined(XP_MACOSX)
+  // CoreAnimation may scan out a swap-chain IOSurface as soon as it is
+  // attached to a layer, so the producer's GL writes must be retired first.
+  // On 10.6, GL_APPLE_fence is the only fence available (ARB_sync et al. are
+  // not exposed by the NVIDIA driver). Query the extension through
+  // GLContext's table: calling glGetString here trips GL_INVALID_OPERATION on
+  // the 10.6 NVIDIA driver.
+  static const auto sFlushForHandoff = [](gl::GLContext& gl) {
+    gl.fFlush();
+    if (!gl.IsExtensionSupported(gl::GLContext::APPLE_fence)) {
+      gl.fFinish();
+      return;
+    }
+    // The 10.6 NVIDIA driver leaves a spurious GL_INVALID_OPERATION from this
+    // sequence; the trailing query consumes it. On few-core machines the
+    // producer also needs a per-frame pacing point or frames deliver
+    // unevenly: a single mid-sequence sync after glSetFenceAPPLE provides
+    // one, but would cost throughput on machines with headroom.
+    static const bool paceProducer = FewCoreMachine();
+    GLuint fence = 0;
+    glGenFencesAPPLE(1, &fence);
+    glSetFenceAPPLE(fence);
+    if (paceProducer) {
+      (void)gl.fGetError();
+    }
+    glFinishFenceAPPLE(fence);
+    glDeleteFencesAPPLE(1, &fence);
+    (void)gl.fGetError();
+  };
+#endif
+
   const auto onFailure = [&]() -> bool {
     GenerateWarning("Remote texture creation failed.");
     LoseContext();
@@ -1443,6 +1502,13 @@ bool WebGLContext::PushRemoteTexture(
     ownerClient->PushTexture(textureId, ownerId, std::move(data));
     return true;
   }
+
+#if defined(XP_MACOSX)
+  if (desc && desc->type() ==
+                  layers::SurfaceDescriptor::TSurfaceDescriptorMacIOSurface) {
+    sFlushForHandoff(*gl);
+  }
+#endif
 
   // SharedSurfaces of SurfaceDescriptorD3D10 and SurfaceDescriptorMacIOSurface
   // need to be kept alive. They will be recycled by
@@ -2035,12 +2101,12 @@ ScopedDrawCallWrapper::ScopedDrawCallWrapper(WebGLContext& webgl)
     }
     driverDepthTest &= !mWebGL.mNeedsFakeNoDepth;
     driverStencilTest &= !mWebGL.mNeedsFakeNoStencil;
-    } else {
-      if (mWebGL.mNeedsFakeNoStencil_UserFBs &&
-          fb->DepthAttachment().HasAttachment() &&
-          !fb->StencilAttachment().HasAttachment()) {
-        driverStencilTest = false;
-      }
+  } else {
+    if (mWebGL.mNeedsFakeNoStencil_UserFBs &&
+        fb->DepthAttachment().HasAttachment() &&
+        !fb->StencilAttachment().HasAttachment()) {
+      driverStencilTest = false;
+    }
   }
   const auto& gl = mWebGL.gl;
   mWebGL.DoColorMask(Some(0), driverColorMask0);

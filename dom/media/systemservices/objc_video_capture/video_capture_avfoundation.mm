@@ -123,7 +123,7 @@ webrtc::scoped_refptr<VideoCaptureModule> VideoCaptureAvFoundation::Create(
     Clock* _Nonnull clock, const char* _Nullable aDeviceUniqueIdUTF8) {
   std::string uniqueId(aDeviceUniqueIdUTF8);
 
-  NSArray<AVCaptureDevice*>* devices;
+  NSArray* devices;
   if (@available(macOS 10.15, *)) {
     devices = [RTCCameraVideoCapturer
         captureDevicesWithDeviceTypes:

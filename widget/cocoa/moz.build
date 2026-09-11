@@ -21,6 +21,7 @@ EXPORTS += [
     "nsChangeObserver.h",
     "nsCocoaFeatures.h",
     "nsCocoaUtils.h",
+    "SDKDeclarations.h",
 ]
 
 EXPORTS.mozilla.widget += [
@@ -78,7 +79,6 @@ UNIFIED_SOURCES += [
     "nsWindowMap.mm",
     "ScreenHelperCocoa.mm",
     "TextInputHandler.mm",
-    "TextRecognition.mm",
     "VibrancyManager.mm",
     "ViewRegion.mm",
 ]
@@ -87,12 +87,26 @@ UNIFIED_SOURCES += [
 SOURCES += [
     "DesktopBackgroundImage.mm",
     "MediaHardwareKeysEventSourceMac.mm",
-    "MediaHardwareKeysEventSourceMacMediaCenter.mm",
     "MediaKeysEventSourceFactory.cpp",
     "nsClipboard.mm",
     "nsDragService.mm",
     "nsNativeThemeCocoa.mm",
 ]
+
+if not CONFIG["MACOS_DEPLOYMENT_TARGET"] or tuple(
+    int(c) for c in CONFIG["MACOS_DEPLOYMENT_TARGET"].split(".")
+) >= (10, 13):
+    UNIFIED_SOURCES += [
+        "TextRecognition.mm",
+    ]
+
+# The MediaPlayer framework requires macOS 10.12.2.
+if not CONFIG["MACOS_DEPLOYMENT_TARGET"] or tuple(
+    int(c) for c in CONFIG["MACOS_DEPLOYMENT_TARGET"].split(".")
+) >= (10, 12, 2):
+    SOURCES += [
+        "MediaHardwareKeysEventSourceMacMediaCenter.mm",
+    ]
 
 if not CONFIG["RELEASE_OR_BETA"] or CONFIG["MOZ_DEBUG"]:
     SOURCES += [
@@ -169,8 +183,15 @@ RESOURCE_FILES.__setattr__(
 
 OS_LIBS += [
     "-framework IOSurface",
-    "-framework Vision",
 ]
+
+# The Vision framework requires macOS 10.13.
+if not CONFIG["MACOS_DEPLOYMENT_TARGET"] or tuple(
+    int(c) for c in CONFIG["MACOS_DEPLOYMENT_TARGET"].split(".")
+) >= (10, 13):
+    OS_LIBS += [
+        "-framework Vision",
+    ]
 
 SPHINX_TREES["/widget/cocoa"] = "docs"
 

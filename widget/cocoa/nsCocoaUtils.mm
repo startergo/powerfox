@@ -2,7 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#import <AVFoundation/AVFoundation.h>
+#if __has_include(<AVFoundation/AVFoundation.h>)
+#  import <AVFoundation/AVFoundation.h>
+#endif
 
 #include <cmath>
 
@@ -214,14 +216,21 @@ NSPoint nsCocoaUtils::EventLocationForWindow(NSEvent* anEvent,
   NS_OBJC_END_TRY_BLOCK_RETURN(NSMakePoint(0.0, 0.0));
 }
 
+static bool EventSupportsPhaseInformation(NSEvent* aEvent) {
+  // NSEvent phase accessors require 10.7
+  return [aEvent respondsToSelector:@selector(phase)];
+}
+
 BOOL nsCocoaUtils::IsMomentumScrollEvent(NSEvent* aEvent) {
   return [aEvent type] == NSEventTypeScrollWheel &&
+         EventSupportsPhaseInformation(aEvent) &&
          [aEvent momentumPhase] != NSEventPhaseNone;
 }
 
 BOOL nsCocoaUtils::EventHasPhaseInformation(NSEvent* aEvent) {
-  return [aEvent phase] != NSEventPhaseNone ||
-         [aEvent momentumPhase] != NSEventPhaseNone;
+  return EventSupportsPhaseInformation(aEvent) &&
+         ([aEvent phase] != NSEventPhaseNone ||
+          [aEvent momentumPhase] != NSEventPhaseNone);
 }
 
 void nsCocoaUtils::HideOSChromeOnScreen(bool aShouldHide) {
@@ -1599,10 +1608,14 @@ bool static ShouldConsiderStartingSwipeFromEvent(NSEvent* anEvent) {
   // fluid swipe tracking is disabled, and a horizontal two-finger gesture is
   // always a scroll (even in Safari).  This preference can't (currently) be set
   // from the Preferences UI -- only using 'defaults write'.
-  NSEventPhase eventPhase = [anEvent phase];
+  NSEventPhase eventPhase = EventSupportsPhaseInformation(anEvent)
+                                ? [anEvent phase]
+                                : NSEventPhaseNone;
   return [anEvent type] == NSEventTypeScrollWheel &&
          eventPhase == NSEventPhaseBegan &&
          [anEvent hasPreciseScrollingDeltas] &&
+         [NSEvent respondsToSelector:@selector(
+             isSwipeTrackingFromScrollEventsEnabled)] &&
          [NSEvent isSwipeTrackingFromScrollEventsEnabled];
 }
 

@@ -3,6 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "CubebUtils.h"
+#if defined(XP_MACOSX)
+#  include "nsCocoaFeatures.h"
+#endif
 
 #include "audio_thread_priority.h"
 #include "base/process_util.h"
@@ -379,10 +382,21 @@ void PrefChanged(const char* aPref, void* aClosure) {
   else if (strcmp(aPref, PREF_CUBEB_SANDBOX) == 0) {
     StaticMutexAutoLock lock(sMutex);
     sCubebSandbox = Preferences::GetBool(aPref);
+#if defined(XP_MACOSX)
+    if (!nsCocoaFeatures::OnLionOrLater()) {
+      // The audioipc server cannot start on 10.6; without this, cubeb has
+      // no context and all audio playback fails.
+      sCubebSandbox = false;
+    }
+#endif
     MOZ_LOG_FMT(gCubebLog, LogLevel::Verbose, "{}: {}", PREF_CUBEB_SANDBOX,
                 sCubebSandbox ? "true" : "false");
 #  if defined(MOZ_SANDBOX)
-    if (!sCubebSandbox && IsContentSandboxEnabled()) {
+    if (!sCubebSandbox && IsContentSandboxEnabled()
+#    if defined(XP_MACOSX)
+        && nsCocoaFeatures::OnLionOrLater()
+#    endif
+    ) {
       sCubebSandbox = true;
       MOZ_LOG_FMT(gCubebLog, LogLevel::Error,
                   "{}: false, but content sandbox enabled - forcing true",

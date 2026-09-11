@@ -6,7 +6,7 @@
 
 #include "PlatformEncoderModule.h"
 
-#ifdef MOZ_APPLEMEDIA
+#if defined(MOZ_APPLEMEDIA) && __has_include(<VideoToolbox/VideoToolbox.h>)
 #  include "AppleEncoderModule.h"
 #endif
 
@@ -78,7 +78,7 @@ void PEMFactory::InitGpuPEMs() {
     return;
   }
 
-#ifdef MOZ_APPLEMEDIA
+#if defined(MOZ_APPLEMEDIA) && __has_include(<VideoToolbox/VideoToolbox.h>)
   if (StaticPrefs::media_gpu_process_encoder()) {
     RefPtr<PlatformEncoderModule> m(new AppleEncoderModule());
     mCurrentPEMs.AppendElement(m);
@@ -114,7 +114,7 @@ void PEMFactory::InitGpuPEMs() {
 }
 
 void PEMFactory::InitRddPEMs() {
-#ifdef MOZ_APPLEMEDIA
+#if defined(MOZ_APPLEMEDIA) && __has_include(<VideoToolbox/VideoToolbox.h>)
   if (StaticPrefs::media_use_remote_encoder_video() &&
       StaticPrefs::media_rdd_applemedia_enabled()) {
     RefPtr<PlatformEncoderModule> m(new AppleEncoderModule());
@@ -232,7 +232,7 @@ void PEMFactory::InitContentPEMs() {
   }
 
   if (!StaticPrefs::media_use_remote_encoder_video()) {
-#ifdef MOZ_APPLEMEDIA
+#if defined(MOZ_APPLEMEDIA) && __has_include(<VideoToolbox/VideoToolbox.h>)
     RefPtr<PlatformEncoderModule> m(new AppleEncoderModule());
     mCurrentPEMs.AppendElement(m);
 #endif
@@ -293,7 +293,7 @@ void PEMFactory::InitContentPEMs() {
 }
 
 void PEMFactory::InitDefaultPEMs() {
-#ifdef MOZ_APPLEMEDIA
+#if defined(MOZ_APPLEMEDIA) && __has_include(<VideoToolbox/VideoToolbox.h>)
   RefPtr<PlatformEncoderModule> m(new AppleEncoderModule());
   mCurrentPEMs.AppendElement(m);
 #endif

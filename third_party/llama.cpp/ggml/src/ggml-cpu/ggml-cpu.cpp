@@ -344,6 +344,13 @@ static void ggml_backend_cpu_device_get_memory(ggml_backend_dev_t dev, size_t * 
     GlobalMemoryStatusEx(&status);
     *total = status.ullTotalPhys;
     *free = status.ullAvailPhys;
+#elif defined(__APPLE__) && !defined(_SC_PHYS_PAGES)
+    int mib[2] = {CTL_HW, HW_MEMSIZE};
+    uint64_t memsize = 0;
+    size_t len = sizeof(memsize);
+    sysctl(mib, 2, &memsize, &len, NULL, 0);
+    *total = (size_t)memsize;
+    *free = *total;
 #else
     long pages = sysconf(_SC_PHYS_PAGES);
     long page_size = sysconf(_SC_PAGE_SIZE);

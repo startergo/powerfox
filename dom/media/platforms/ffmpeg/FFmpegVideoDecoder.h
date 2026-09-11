@@ -58,6 +58,8 @@ struct AVFrame;
 #  include <vulkan/vulkan.h>
 #endif
 
+class MacIOSurface;
+
 namespace mozilla {
 namespace layers {
 class BufferRecycleBin;
@@ -441,6 +443,14 @@ class FFmpegVideoDecoder<LIBAV_VER>
   // See bug 1970771 for details.
   Atomic<bool> m8BitOutput;
   RefPtr<layers::BufferRecycleBin> m8BitRecycleBin;
+
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+  already_AddRefed<VideoData> CreateMacIOSurfaceVideoData(
+      const VideoData::QuantizableBuffer& aBuffer, int64_t aOffset,
+      int64_t aPts, int64_t aDuration);
+  RefPtr<MacIOSurface> TakePooledBGRASurface(const gfx::IntSize& aSize);
+  nsTArray<RefPtr<MacIOSurface>> mBGRASurfacePool;
+#endif
 };
 
 #ifdef CUSTOMIZED_BUFFER_ALLOCATION

@@ -96,9 +96,9 @@ if CONFIG["MOZ_APPLEMEDIA"]:
         "apple/AppleCVLinker.cpp",
         "apple/AppleDecoderModule.cpp",
         "apple/AppleEncoderModule.cpp",
-        'apple/AppleUtils.cpp',
-        'apple/AppleVDADecoder.cpp',
-        'apple/AppleVDALinker.cpp',
+        "apple/AppleUtils.cpp",
+        "apple/AppleVDADecoder.cpp",
+        "apple/AppleVDALinker.cpp",
         "apple/AppleVTDecoder.cpp",
         "apple/AppleVTEncoder.cpp",
         "apple/AppleVTLinker.cpp",
@@ -106,10 +106,15 @@ if CONFIG["MOZ_APPLEMEDIA"]:
     LOCAL_INCLUDES += [
         "/media/libyuv/libyuv/include",
     ]
+    # Weakly linked on pre-10.7 targets: 10.8+ frameworks absent from 10.6
+    # (their users compile out there; the VDA path is what remains).
+    _fw = "-framework "
+    if CONFIG["MOZ_LEGACY_MACOS_TARGET"]:
+        _fw = "-weak_framework "
     OS_LIBS += [
         "-framework AudioToolbox",
-        "-framework CoreMedia",
-        "-framework VideoToolbox",
+        _fw + "CoreMedia",
+        _fw + "VideoToolbox",
         "-framework VideoDecodeAcceleration",
         # For some unknown reason, the documented method of using weak_import
         # attribute doesn't work with VideoToolbox's functions.

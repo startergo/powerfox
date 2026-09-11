@@ -553,6 +553,10 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
   bool mLastNotifiedHasLayers = false;
   bool mReceivedDisplayList = false;
   bool mSkippedComposite = false;
+  // The widget size last sent in a SetDocumentView; the scene's output rect
+  // must track the widget even when no display list is coming.
+  LayoutDeviceIntSize mLastDocumentViewSize =
+      LayoutDeviceIntSize(-1, -1);
   // These payloads are being used for SCROLL_PRESENT_LATENCY telemetry
   DataMutex<nsClassHashtable<nsUint64HashKey, nsTArray<CompositionPayload>>>
       mPendingScrollPayloads{"WebRenderBridgeParent::mPendingScrollPayloads"};

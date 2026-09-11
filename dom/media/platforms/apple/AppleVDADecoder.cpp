@@ -29,6 +29,11 @@
 #include "MacIOSurfaceImage.h"
 #endif
 
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+#  include "libyuv/convert_argb.h"
+#  include "mozilla/gfx/MacIOSurface.h"
+#endif
+
 #define LOG(...) MOZ_LOG(sPDMLog, mozilla::LogLevel::Debug, (__VA_ARGS__))
 #define LOGEX(_this, ...) \
   DDMOZ_LOGEX(_this, sPDMLog, mozilla::LogLevel::Debug, __VA_ARGS__)
@@ -62,6 +67,7 @@ AppleVDADecoder::AppleVDADecoder(const VideoInfo& aConfig,
       mTaskQueue(TaskQueue::Create(
           GetMediaThreadPool(MediaThreadType::PLATFORM_DECODER),
           "AppleVDADecoder")),
+      mDecoder(nullptr),
       mMaxRefFrames(
           mStreamType != StreamType::H264 ||
                   aOptions.contains(CreateDecoderParams::Option::LowLatency)
@@ -103,7 +109,11 @@ AppleVDADecoder::~AppleVDADecoder()
 RefPtr<MediaDataDecoder::InitPromise>
 AppleVDADecoder::Init()
 {
-  MediaResult rv = InitializeSession();
+  MediaResult rv = NS_OK;
+  if (!mDecoder) {
+    // The module may have probed the session at creation time already.
+    rv = InitializeSession();
+  }
 
   if (NS_SUCCEEDED(rv)) {
     return InitPromise::CreateAndResolve(TrackType::kVideoTrack, __func__);
@@ -188,6 +198,15 @@ void AppleVDADecoder::SetSeekThreshold(const media::TimeUnit& aTime) {
 // This needs to be static because the API takes a C-style pair of
 // function and userdata pointers. This validates parameters and
 // forwards the decoded image back to an object method.
+// Marks the frame-info dictionary as carrying the compensation reference
+// ProcessDecode added for asynchronous delivery; PlatformCallback removes
+// it when it consumes the reference, so the error path can tell whether
+// the callback for this very frame already ran — a callback for an earlier
+// frame cannot interfere.
+static CFStringRef FrameInfoCompensationKey() {
+  return CFSTR("FRAME_INFO_COMPENSATION");
+}
+
 static void
 PlatformCallback(void* decompressionOutputRefCon,
                  CFDictionaryRef frameInfo,
@@ -195,6 +214,18 @@ PlatformCallback(void* decompressionOutputRefCon,
                  VDADecodeInfoFlags infoFlags,
                  CVImageBufferRef image)
 {
+  AppleVDADecoder* decoder =
+    static_cast<AppleVDADecoder*>(decompressionOutputRefCon);
+
+  // The callback can fire synchronously on the error path, before
+  // ProcessDecode's dictionary is set up.
+  if (!frameInfo) {
+    if (status != noErr) {
+      decoder->OnDecodeError(status);
+    }
+    return;
+  }
+
   LOG("AppleVDADecoder[%s] status %d flags %d retainCount %ld",
       __func__, status, infoFlags, CFGetRetainCount(frameInfo));
 
@@ -214,19 +245,25 @@ PlatformCallback(void* decompressionOutputRefCon,
                "AppleVDADecoder returned an unexpected image type");
   }
 
-  AppleVDADecoder* decoder =
-    static_cast<AppleVDADecoder*>(decompressionOutputRefCon);
-
-  AutoCFTypeRef<CFNumberRef> ptsref(
-    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_PTS")));
-  AutoCFTypeRef<CFNumberRef> dtsref(
-    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_DTS")));
-  AutoCFTypeRef<CFNumberRef> durref(
-    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_DURATION")));
-  AutoCFTypeRef<CFNumberRef> boref(
-    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_OFFSET")));
-  AutoCFTypeRef<CFNumberRef> kfref(
-    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_KEYFRAME")));
+  // Borrowed references from the dictionary; CFDictionaryGetValue does not
+  // hand out ownership, so they must not be released.
+  CFNumberRef ptsref =
+    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_PTS"));
+  CFNumberRef dtsref =
+    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_DTS"));
+  CFNumberRef durref =
+    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_DURATION"));
+  CFNumberRef boref =
+    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_OFFSET"));
+  CFNumberRef kfref =
+    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_KEYFRAME"));
+  if (!ptsref || !dtsref || !durref || !boref || !kfref) {
+    NS_WARNING("AppleVDADecoder: incomplete frame info");
+    CFDictionaryRemoveValue((CFMutableDictionaryRef)frameInfo,
+                            FrameInfoCompensationKey());
+    CFRelease(frameInfo);
+    return;
+  }
 
   int64_t dts;
   int64_t pts;
@@ -239,6 +276,13 @@ PlatformCallback(void* decompressionOutputRefCon,
   CFNumberGetValue(durref, kCFNumberSInt64Type, &duration);
   CFNumberGetValue(boref, kCFNumberSInt64Type, &byte_offset);
   CFNumberGetValue(kfref, kCFNumberSInt8Type, &is_sync_point);
+
+  // Release the reference ProcessDecode added for the decoder's async
+  // delivery (TN2267); removing the key first records, per frame, that
+  // the compensation was consumed.
+  CFDictionaryRemoveValue((CFMutableDictionaryRef)frameInfo,
+                          FrameInfoCompensationKey());
+  CFRelease(frameInfo);
 
   AppleVDADecoder::AppleFrameRef frameRef(
       media::TimeUnit::FromMicroseconds(dts),
@@ -321,10 +365,18 @@ AppleVDADecoder::OutputFrame(CVPixelBufferRef aImage,
   info.mDisplay = gfx::IntSize(mDisplayWidth, mDisplayHeight);
   info.mTransferFunction = Some(mTransferFunction);
 
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+  // The software-images copy lands in a YUV IOSurface that pre-10.8
+  // CoreAnimation cannot display; always convert to BGRA instead.
+  const bool useSoftwareImages = false;
+#else
+  const bool useSoftwareImages = mUseSoftwareImages;
+#endif
+
   if (useNullSample) {
     data = new NullData(aFrameRef.byte_offset, aFrameRef.composition_timestamp,
                       aFrameRef.duration);
-  } else if (mUseSoftwareImages) {
+  } else if (useSoftwareImages) {
     size_t width = CVPixelBufferGetWidth(aImage);
     size_t height = CVPixelBufferGetHeight(aImage);
     DebugOnly<size_t> planes = CVPixelBufferGetPlaneCount(aImage);
@@ -388,6 +440,9 @@ AppleVDADecoder::OutputFrame(CVPixelBufferRef aImage,
 
   } else {
 #ifndef MOZ_WIDGET_UIKIT
+#  if defined(MOZ_LEGACY_MACOS_TARGET)
+    RefPtr<layers::Image> image = CreateBGRAImage(aImage);
+#  else
     CFTypeRefPtr<IOSurfaceRef> surface =
         CFTypeRefPtr<IOSurfaceRef>::WrapUnderGetRule(
             CVPixelBufferGetIOSurface(aImage));
@@ -400,6 +455,7 @@ AppleVDADecoder::OutputFrame(CVPixelBufferRef aImage,
     macSurface->mColorPrimaries = mColorPrimaries;
 
     RefPtr<layers::Image> image = new layers::MacIOSurfaceImage(macSurface);
+#  endif
 
     data = VideoData::CreateFromImage(
         info.mDisplay, aFrameRef.byte_offset, aFrameRef.composition_timestamp,
@@ -428,6 +484,105 @@ AppleVDADecoder::OutputFrame(CVPixelBufferRef aImage,
       static_cast<unsigned long long>(mReorderQueue.Length()));
 
 }
+
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+// CoreAnimation cannot display VDA's YUV output before 10.8, so convert each
+// frame once into a BGRA IOSurface the compositor can present directly.
+// libyuv's "ARGB" is byte-order B,G,R,A on little-endian, the layout of a
+// BGRA surface, and VDA output is always limited-range YUV.
+already_AddRefed<layers::Image>
+AppleVDADecoder::CreateBGRAImage(CVPixelBufferRef aImage)
+{
+  if (CVPixelBufferLockBaseAddress(aImage, kCVPixelBufferLock_ReadOnly) !=
+      kCVReturnSuccess) {
+    return nullptr;
+  }
+  gfx::IntSize size((int32_t)CVPixelBufferGetWidth(aImage),
+                    (int32_t)CVPixelBufferGetHeight(aImage));
+  LOG("AppleVDADecoder: BGRA frame %dx%d format %c%c%c%c", size.width,
+      size.height, (char)(CVPixelBufferGetPixelFormatType(aImage) >> 24),
+      (char)(CVPixelBufferGetPixelFormatType(aImage) >> 16),
+      (char)(CVPixelBufferGetPixelFormatType(aImage) >> 8),
+      (char)CVPixelBufferGetPixelFormatType(aImage));
+  RefPtr<MacIOSurface> surface = TakePooledBGRASurface(size);
+  if (!surface) {
+    surface = MacIOSurface::CreateIOSurface(
+        size.width, size.height, MacIOSurface::AllowAlpha::No,
+        gfx::YUVColorSpace::Identity, mTransferFunction);
+  }
+  if (!surface || !surface->Lock(false)) {
+    CVPixelBufferUnlockBaseAddress(aImage, kCVPixelBufferLock_ReadOnly);
+    return nullptr;
+  }
+  surface->mColorPrimaries = mColorPrimaries;
+  const libyuv::YuvConstants* matrix = nullptr;
+  switch (mColorSpace) {
+    case gfx::YUVColorSpace::BT2020:
+      matrix = &libyuv::kYuv2020Constants;
+      break;
+    case gfx::YUVColorSpace::BT709:
+      matrix = &libyuv::kYuvH709Constants;
+      break;
+    default:
+      matrix = &libyuv::kYuvI601Constants;
+      break;
+  }
+  if (CVPixelBufferGetPixelFormatType(aImage) ==
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) {
+    libyuv::NV12ToARGBMatrix(
+        (const uint8_t*)CVPixelBufferGetBaseAddressOfPlane(aImage, 0),
+        (int)CVPixelBufferGetBytesPerRowOfPlane(aImage, 0),
+        (const uint8_t*)CVPixelBufferGetBaseAddressOfPlane(aImage, 1),
+        (int)CVPixelBufferGetBytesPerRowOfPlane(aImage, 1),
+        (uint8_t*)surface->GetBaseAddressOfPlane(0),
+        surface->GetBytesPerRow(0), matrix, size.width, size.height);
+  } else {
+    libyuv::UYVYToARGBMatrix(
+        (const uint8_t*)CVPixelBufferGetBaseAddress(aImage),
+        (int)CVPixelBufferGetBytesPerRow(aImage),
+        (uint8_t*)surface->GetBaseAddressOfPlane(0),
+        surface->GetBytesPerRow(0), matrix, size.width, size.height);
+  }
+  surface->Unlock(false);
+  CVPixelBufferUnlockBaseAddress(aImage, kCVPixelBufferLock_ReadOnly);
+  RefPtr<layers::Image> image = new layers::MacIOSurfaceImage(surface);
+  mBGRASurfacePool.AppendElement(std::move(surface));
+  return image.forget();
+}
+
+RefPtr<MacIOSurface>
+AppleVDADecoder::TakePooledBGRASurface(const gfx::IntSize& aSize)
+{
+  // A surface is only safe to overwrite once nothing references its pixels:
+  // while a decoded frame holds the surface through its MacIOSurfaceImage the
+  // pool is not the sole owner (refCount > 1), and IOSurfaceIsInUse must be
+  // clear so no pending CoreAnimation read in the compositor process loses
+  // the race. Recycle oldest-first; evict still-referenced surfaces only
+  // when a different size is requested.
+  mBGRASurfacePool.RemoveElementsBy(
+      [](const RefPtr<MacIOSurface>& aSurface) {
+        return &::IOSurfaceIsInUse &&
+               ::IOSurfaceIsInUse(aSurface->GetIOSurfaceRef().get());
+      });
+  for (uint32_t i = 0; i < mBGRASurfacePool.Length(); i++) {
+    // A reference, not a copy: taking a RefPtr here would raise the refcount
+    // and make the sole-owner test below always fail.
+    RefPtr<MacIOSurface>& surface = mBGRASurfacePool[i];
+    if (surface->GetSize(0) != aSize) {
+      mBGRASurfacePool.RemoveElementAt(i);
+      i--;
+      continue;
+    }
+    if (surface->refCount() != 1) {
+      continue;
+    }
+    RefPtr<MacIOSurface> result = surface;
+    mBGRASurfacePool.RemoveElementAt(i);
+    return result;
+  }
+  return nullptr;
+}
+#endif
 
 
 void AppleVDADecoder::OnDecodeError(OSStatus aError) {
@@ -468,18 +623,23 @@ AppleVDADecoder::ProcessDecode(MediaRawData* aSample)
     return;
   }
 
+  // TimeUnit members must not be passed to CFNumberCreate by pointer: their
+  // internal tick count is in the media timescale, not microseconds.
+  int64_t samplePts = aSample->mTime.ToMicroseconds();
+  int64_t sampleDts = aSample->mTimecode.ToMicroseconds();
+  int64_t sampleDuration = aSample->mDuration.ToMicroseconds();
   AutoCFTypeRef<CFNumberRef> pts(
     CFNumberCreate(kCFAllocatorDefault,
                    kCFNumberSInt64Type,
-                   &aSample->mTime));
+                   &samplePts));
   AutoCFTypeRef<CFNumberRef> dts(
     CFNumberCreate(kCFAllocatorDefault,
                    kCFNumberSInt64Type,
-                   &aSample->mTimecode));
+                   &sampleDts));
   AutoCFTypeRef<CFNumberRef> duration(
     CFNumberCreate(kCFAllocatorDefault,
                    kCFNumberSInt64Type,
-                   &aSample->mDuration));
+                   &sampleDuration));
   AutoCFTypeRef<CFNumberRef> byte_offset(
     CFNumberCreate(kCFAllocatorDefault,
                    kCFNumberSInt64Type,
@@ -503,13 +663,28 @@ AppleVDADecoder::ProcessDecode(MediaRawData* aSample)
   static_assert(std::size(keys) == std::size(values),
                 "Non matching keys/values array size");
 
-  AutoCFTypeRef<CFDictionaryRef> frameInfo(
-    CFDictionaryCreate(kCFAllocatorDefault,
-                       keys,
-                       values,
-                       std::size(keys),
-                       &kCFTypeDictionaryKeyCallBacks,
-                       &kCFTypeDictionaryValueCallBacks));
+  AutoCFTypeRef<CFMutableDictionaryRef> frameInfo(
+    CFDictionaryCreateMutable(kCFAllocatorDefault,
+                              std::size(keys) + 1,
+                              &kCFTypeDictionaryKeyCallBacks,
+                              &kCFTypeDictionaryValueCallBacks));
+  if (!frameInfo) {
+    MonitorAutoLock mon(mMonitor);
+    mPromise.Reject(
+        MediaResult(NS_ERROR_OUT_OF_MEMORY, __func__), __func__);
+    return;
+  }
+  CFDictionaryAddValue(frameInfo, FrameInfoCompensationKey(),
+                       kCFBooleanTrue);
+  for (size_t i = 0; i < std::size(keys); i++) {
+    CFDictionaryAddValue(frameInfo, keys[i], values[i]);
+  }
+
+  // TN2267: the decoder delivers frameInfo to the callback asynchronously
+  // without keeping it alive, so retain our own reference for that
+  // delivery; PlatformCallback releases it. The callback can also fire
+  // synchronously, so this must happen before the decode call.
+  CFRetain(frameInfo);
 
   OSStatus rv = VDADecoderDecode(mDecoder,
                                  0,
@@ -518,10 +693,32 @@ AppleVDADecoder::ProcessDecode(MediaRawData* aSample)
 
   if (rv != noErr) {
     NS_WARNING("AppleVDADecoder: Couldn't pass frame to decoder");
+    // The callback for this frame may already have consumed the
+    // compensation reference; only release it if it did not.
+    if (CFDictionaryContainsKey(frameInfo, FrameInfoCompensationKey())) {
+      CFRelease(frameInfo);
+    }
     return;
   }
 
   return;
+}
+
+static const char* VDAErrorName(OSStatus aError) {
+  switch (aError) {
+    case kVDADecoderNoErr:
+      return "kVDADecoderNoErr";
+    case kVDADecoderHardwareNotSupportedErr:
+      return "kVDADecoderHardwareNotSupportedErr";
+    case kVDADecoderFormatNotSupportedErr:
+      return "kVDADecoderFormatNotSupportedErr";
+    case kVDADecoderConfigurationError:
+      return "kVDADecoderConfigurationError";
+    case kVDADecoderDecoderFailedErr:
+      return "kVDADecoderDecoderFailedErr";
+    default:
+      return "unknown";
+  }
 }
 
 MediaResult
@@ -542,9 +739,50 @@ AppleVDADecoder::InitializeSession()
                      this,
                      &mDecoder);
 
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+  // The hardware's native output is packed UYVY; if a VDA implementation
+  // refuses it, retry once with NV12 regardless of the error kind.
+  if (rv != noErr && !mOutputIsNV12) {
+    LOG("AppleVDADecoder: UYVY output refused (%d), retrying with NV12", rv);
+    mOutputIsNV12 = true;
+    AutoCFTypeRef<CFDictionaryRef> nv12Configuration(
+      CreateOutputConfiguration());
+    rv =
+      VDADecoderCreate(decoderConfig,
+                       nv12Configuration,
+                       (VDADecoderOutputCallback*)PlatformCallback,
+                       this,
+                       &mDecoder);
+  }
+  // Session creation is intermittently refused with
+  // kVDADecoderDecoderFailedErr right after a previous session was
+  // destroyed (loop points, error recovery); other errors are permanent,
+  // so only this one deserves delayed retries before falling back to
+  // software decoding.
+  for (int attempt = 0;
+       rv == kVDADecoderDecoderFailedErr && attempt < 3; attempt++) {
+    LOG("AppleVDADecoder: session refused (%d), retry %d", rv, attempt);
+    PR_Sleep(PR_MillisecondsToInterval(100));
+    AutoCFTypeRef<CFDictionaryRef> retryConfiguration(
+      CreateOutputConfiguration());
+    rv =
+      VDADecoderCreate(decoderConfig,
+                       retryConfiguration,
+                       (VDADecoderOutputCallback*)PlatformCallback,
+                       this,
+                       &mDecoder);
+  }
+#endif
+
   mIsHardwareAccelerated = rv == 0 ? 1 : 0; //kVDADecoderNoErr = 0
   if (rv != noErr) {
-    LOG("AppleVDADecoder: Couldn't create hardware VDA decoder, error %d", rv);
+    size_t extraSize = mExtraData->Length();
+    LOG("AppleVDADecoder: VDADecoderCreate failed: %s (%d), %dx%d, avcC %zu "
+        "bytes, profile %d compat %d level %d",
+        VDAErrorName(rv), rv, mPictureWidth, mPictureHeight, extraSize,
+        extraSize >= 4 ? (*mExtraData)[1] : 0,
+        extraSize >= 4 ? (*mExtraData)[2] : 0,
+        extraSize >= 4 ? (*mExtraData)[3] : 0);
       return MediaResult(NS_ERROR_DOM_MEDIA_FATAL_ERR,
                        RESULT_DETAIL("Couldn't create format description!"));
   }
@@ -601,7 +839,11 @@ AppleVDADecoder::CreateDecoderSpecification()
 CFDictionaryRef
 AppleVDADecoder::CreateOutputConfiguration()
 {
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+  if (mOutputIsNV12) {
+#else
   if (mUseSoftwareImages) {
+#endif
     // Output format type:
     SInt32 PixelFormatTypeValue =
       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;

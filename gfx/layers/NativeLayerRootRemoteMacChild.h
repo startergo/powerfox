@@ -37,7 +37,7 @@ class NativeLayerRootRemoteMacChild final : public NativeLayerRoot {
 
   // Publish the layer changes to the screen. Returns whether the commit was
   // successful.
-  bool CommitToScreen() override;
+  bool CommitToScreen(gfx::IntRect* aDirtyRect = nullptr) override;
 
   // Send a sync message to the parent to make sure it has seen our layer
   // commands message.

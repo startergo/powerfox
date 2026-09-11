@@ -286,7 +286,7 @@ already_AddRefed<MacIOSurface> MacIOSurfaceRecycleAllocator::Allocate(
 
   // Scan for an unused surface, and reuse that if one is available.
   for (auto& surf : mSurfaces) {
-    if (::IOSurfaceIsInUse(surf.get())) {
+    if (&::IOSurfaceIsInUse && ::IOSurfaceIsInUse(surf.get())) {
       continue;
     }
 

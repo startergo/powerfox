@@ -140,6 +140,9 @@ if CONFIG["TARGET_KERNEL"] == "Linux":
     ]
 
 if CONFIG["TARGET_OS"] == "OSX":
+    # The ARC runtime shims (formerly compiled here from arc-shim.m) come
+    # from the force-loaded compat object in LDFLAGS instead; compiling a
+    # second copy produced duplicate symbols.
     SOURCES += [
         "/third_party/zucchini/chromium/base/base_paths_apple.cc",
         "/third_party/zucchini/chromium/base/base_paths_mac.mm",
@@ -155,6 +158,7 @@ if CONFIG["TARGET_OS"] == "OSX":
 
     OS_LIBS += [
         "-framework Foundation",
+        "-lobjc",
     ]
 
 DIRS += [

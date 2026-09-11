@@ -170,11 +170,21 @@ nsMacSharingService::OpenSharingPreferences() {
       initWithDescriptorType:openSharingSubpaneDescriptorType
                         data:data];
 
-  [[NSWorkspace sharedWorkspace] openURLs:@[ prefPaneURL ]
-                  withAppBundleIdentifier:nil
-                                  options:NSWorkspaceLaunchAsync
-           additionalEventParamDescriptor:descriptor
-                        launchIdentifiers:nullptr];
+  if (@available(macOS 10.10, *)) {
+    [[NSWorkspace sharedWorkspace] openURLs:@[ prefPaneURL ]
+                    withAppBundleIdentifier:nil
+                                    options:NSWorkspaceLaunchAsync
+             additionalEventParamDescriptor:descriptor
+                          launchIdentifiers:nullptr];
+  }
+#if !defined(MAC_OS_X_VERSION_10_10) || \
+    MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_10
+  else {
+    // openURLs:withAppBundleIdentifier: is 10.10+; just open the pane without
+    // selecting the Sharing subpane.
+    [[NSWorkspace sharedWorkspace] openFile:extensionPrefPanePath];
+  }
+#endif
 
   [descriptor release];
 

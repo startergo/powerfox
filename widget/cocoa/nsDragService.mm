@@ -4,6 +4,7 @@
 
 #include "mozilla/Logging.h"
 
+#include "nsCocoaFeatures.h"
 #include "gfxContext.h"
 #include "nsArrayUtils.h"
 #include "nsDragService.h"
@@ -227,7 +228,9 @@ nsresult nsDragSession::InvokeDragSessionImpl(
 
   gUserCancelledDrag = false;
 
+  bool useLegacyDrag = !nsCocoaFeatures::OnLionOrLater();
   NSMutableArray* types = [NSMutableArray arrayWithCapacity:5];
+  NSMutableArray* pasteboardDicts = [NSMutableArray array];
   if (aTransferableArray) {
     uint32_t count = 0;
     aTransferableArray->GetLength(&count);
@@ -243,6 +246,10 @@ nsresult nsDragSession::InvokeDragSessionImpl(
           nsClipboard::PasteboardDictFromTransferable(currentTransferable);
       if (!pasteboardOutputDict) {
         return NS_ERROR_FAILURE;
+      }
+
+      if (useLegacyDrag) {
+        [pasteboardDicts addObject:pasteboardOutputDict];
       }
 
       // write everything out to the general pasteboard
@@ -263,6 +270,45 @@ nsresult nsDragSession::InvokeDragSessionImpl(
   // gets destroyed.
   mNativeDragView = [gLastDragView retain];
   mNativeDragEvent = [gLastDragMouseDownEvent retain];
+
+  if (useLegacyDrag) {
+    // Before 10.7 there is no NSDraggingSession. Write the drag pasteboard
+    // eagerly and start the drag with -dragImage:..., which must be called
+    // from within a mouseDown/mouseDragged call stack - InvokeDragSession
+    // always is.
+    NSPasteboard* dragPBoard = [NSPasteboard pasteboardWithName:NSDragPboard];
+    NSString* wildcardType =
+        [UTIHelper stringFromPboardType:kMozWildcardPboardType];
+    // declareTypes: resets the pasteboard, so every item must be written with
+    // a single declaration; merge the items so that all of their types and
+    // data survive.
+    NSMutableDictionary* allPasteboardData = [NSMutableDictionary dictionary];
+    for (NSDictionary* pasteboardOutputDict in pasteboardDicts) {
+      [allPasteboardData addEntriesFromDictionary:pasteboardOutputDict];
+    }
+    nsClipboard::WritePasteboardOutputDict(
+        dragPBoard, allPasteboardData, [NSArray arrayWithObject:wildcardType]);
+
+    NSPoint draggingPoint;
+    NSImage* image = ConstructDragImage(mSourceNode, aRegion, &draggingPoint);
+
+    OpenDragPopup();
+
+    gUserCancelledDrag = false;
+    [mNativeDragView dragImage:image
+                             at:draggingPoint
+                         offset:NSZeroSize
+                          event:mNativeDragEvent
+                     pasteboard:dragPBoard
+                         source:mNativeDragView
+                      slideBack:YES];
+    gUserCancelledDrag = false;
+
+    if (mDoingDrag) {
+      EndDragSession(false, 0);
+    }
+    return NS_OK;
+  }
 
   NSPasteboardItem* pbItem = [[NSPasteboardItem new] autorelease];
   [pbItem setDataProvider:mNativeDragView forTypes:types];
@@ -474,7 +520,7 @@ nsDragSession::DragMoved(int32_t aX, int32_t aY) {
 
   // If the image has changed, call enumerateDraggingItemsWithOptions to get
   // the item being dragged and update its image.
-  if (mDragImageChanged && mNativeDragView) {
+  if (mDragImageChanged && mNativeDragView && mNSDraggingSession) {
     mDragImageChanged = false;
 
     nsPresContext* pc = nullptr;

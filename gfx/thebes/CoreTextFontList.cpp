@@ -2,13 +2,40 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "AppleUtils.h"
+#include "mozilla/AutoCFTypeRef.h"
+#ifdef MOZ_APPLEMEDIA
+#  include "AppleUtils.h"
+#endif
 #include "CoreTextFontList.h"
 #include "gfxFontConstants.h"
 #include "gfxMacFont.h"
 #include "gfxUserFontSet.h"
 
 #include "harfbuzz/hb.h"
+
+#if !defined(MAC_OS_X_VERSION_10_8) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8
+// Missing from the pre-10.8 SDK.
+enum {
+  kLowerCaseType = 37,
+  kLowerCaseSmallCapsSelector = 1,
+};
+enum {
+  kCTFontTraitItalic = (1 << 0),
+  kCTFontTraitBold = (1 << 1),
+};
+enum {
+  kCTFontUIFontSystem = 2,
+  kCTFontUIFontUser = 3,
+};
+enum {
+  kCFURLEnumeratorDefaultBehavior = 0,
+};
+extern "C" {
+void CTFontManagerRegisterFontURLs(CFArrayRef, int, Boolean, void*)
+    __attribute__((weak_import));
+}
+#endif
 
 #include "MainThreadUtils.h"
 

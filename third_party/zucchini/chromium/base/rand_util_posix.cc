@@ -26,6 +26,17 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 
+#if BUILDFLAG(IS_MAC) && !defined(O_CLOEXEC)
+// O_CLOEXEC requires macOS 10.7; passing it on 10.6 makes open() fail.
+#define O_CLOEXEC 0
+#define URANDOM_NEEDS_CLOEXEC
+#endif
+
+#if BUILDFLAG(IS_MAC)
+extern "C" int getentropy(void* buffer, size_t length)
+    __attribute__((weak_import));
+#endif
+
 #if (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)) && !BUILDFLAG(IS_NACL)
 #if !defined(MOZ_ZUCCHINI)
 #include "third_party/lss/linux_syscall_support.h"
@@ -62,6 +73,9 @@ class URandomFd {
  public:
   URandomFd() : fd_(HANDLE_EINTR(open("/dev/urandom", kOpenFlags))) {
     CHECK(fd_ >= 0) << "Cannot open /dev/urandom";
+#if defined(URANDOM_NEEDS_CLOEXEC)
+    PCHECK(fcntl(fd_, F_SETFD, FD_CLOEXEC) == 0);
+#endif
   }
 
   ~URandomFd() { close(fd_); }
@@ -216,8 +230,10 @@ void RandBytes(void* output, size_t output_length, bool avoid_allocation) {
 #elif BUILDFLAG(IS_MAC)
   // TODO(crbug.com/995996): Enable this on iOS too, when sys/random.h arrives
   // in its SDK.
-  if (getentropy(output, output_length) == 0) {
-    return;
+  if (__builtin_available(macOS 10.12, *)) {
+    if (getentropy(output, output_length) == 0) {
+      return;
+    }
   }
 #endif
 

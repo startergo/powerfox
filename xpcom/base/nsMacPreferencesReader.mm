@@ -16,7 +16,7 @@ NS_IMPL_ISUPPORTS(nsMacPreferencesReader, nsIMacPreferencesReader)
 using namespace mozilla;
 
 static void EvaluateDict(JSONWriter* aWriter,
-                         NSDictionary<NSString*, id>* aDict);
+                         NSDictionary* aDict);
 
 static void EvaluateArray(JSONWriter* aWriter, NSArray* aArray) {
   for (id elem in aArray) {
@@ -37,7 +37,7 @@ static void EvaluateArray(JSONWriter* aWriter, NSArray* aArray) {
 }
 
 static void EvaluateDict(JSONWriter* aWriter,
-                         NSDictionary<NSString*, id>* aDict) {
+                         NSDictionary* aDict) {
   for (NSString* key in aDict) {
     id value = [aDict objectForKey:key];
     if ([value isKindOfClass:[NSString class]]) {

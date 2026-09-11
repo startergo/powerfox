@@ -23,6 +23,7 @@
 #include "mozilla/StaticPrefs_media.h"
 #include "mozilla/gfx/gfxVars.h"
 
+#if APPLE_HAVE_VT
 extern "C" {
 // Only exists from MacOS 11
 extern void VTRegisterSupplementalVideoDecoderIfAvailable(
@@ -30,6 +31,7 @@ extern void VTRegisterSupplementalVideoDecoderIfAvailable(
 extern Boolean VTIsHardwareDecodeSupported(CMVideoCodecType codecType)
     __attribute__((weak_import));
 }
+#endif
 
 namespace mozilla {
 
@@ -43,6 +45,7 @@ bool AppleDecoderModule::sIsCoreVideoAvailable = false;
 bool AppleDecoderModule::sIsVTAvailable = false;
 bool AppleDecoderModule::sIsVDAAvailable = false;
 
+#if APPLE_HAVE_VT
 static inline CMVideoCodecType GetCMVideoCodecType(const MediaCodec& aCodec) {
   switch (aCodec) {
     case MediaCodec::H264:
@@ -57,6 +60,7 @@ static inline CMVideoCodecType GetCMVideoCodecType(const MediaCodec& aCodec) {
       return static_cast<CMVideoCodecType>(0);
   }
 }
+#endif
 /* static */
 void AppleDecoderModule::Init() {
   if (sInitialized) {
@@ -64,10 +68,14 @@ void AppleDecoderModule::Init() {
   }
 
   //10.7.3 - > 10.7 need these (thanks jya)
+#if APPLE_HAVE_VT
   sIsCoreMediaAvailable = AppleCMLinker::Link();
+#endif
   sIsCoreVideoAvailable = AppleCVLinker::Link();
   sIsVDAAvailable = AppleVDALinker::Link();
+#if APPLE_HAVE_VT
   sIsVTAvailable = AppleVTLinker::Link();
+#endif
 
   // Initialize all values to false first.
   for (auto& support : sCanUseHWDecoder) {
@@ -106,16 +114,44 @@ already_AddRefed<MediaDataDecoder> AppleDecoderModule::CreateVideoDecoder(
 
   RefPtr<MediaDataDecoder> decoder;
 
-  if(__builtin_available(macOS 10.7, *)) {
+#if APPLE_HAVE_VT
+  // VideoToolbox only became the reliable path on Mavericks; through 10.8
+  // the VideoDecodeAcceleration path is used instead (UXP parity).
+  if(__builtin_available(macOS 10.9, *)) {
   if (IsVideoSupported(aParams.VideoConfig(), aParams.mOptions)) {
     decoder = new AppleVTDecoder(aParams.VideoConfig(), aParams.mImageContainer,
                                  aParams.mOptions, aParams.mKnowsCompositor,
                                  aParams.mTrackingId);
   }
-  } else {
-      decoder = new AppleVDADecoder(aParams.VideoConfig(), aParams.mImageContainer,
-          aParams.mOptions, aParams.mKnowsCompositor,
-          aParams.mTrackingId);
+  } else
+#endif
+  {
+      if (!MP4Decoder::IsH264(aParams.VideoConfig().mMimeType) ||
+          aParams.mOptions.contains(
+              CreateDecoderParams::Option::HardwareDecoderNotAllowed)) {
+        return nullptr;
+      }
+#if defined(XP_MACOSX) && defined(MOZ_LEGACY_MACOS_TARGET)
+      // The single VDA callback thread serializes the driver's
+      // slice-completion work with the UYVY to BGRA conversion and cannot
+      // sustain high frame rates; the shortfall desynchronizes the media
+      // clock and presentation freezes. Software decoding keeps those
+      // streams smooth.
+      if (aParams.mRate.mValue > 48) {
+        return nullptr;
+      }
+#endif
+      RefPtr<AppleVDADecoder> vda(
+          new AppleVDADecoder(aParams.VideoConfig(), aParams.mImageContainer,
+                              aParams.mOptions, aParams.mKnowsCompositor,
+                              aParams.mTrackingId));
+      // Probe the hardware session now: a failure here rejects decoder
+      // creation and lets PDMFactory fall through to a software decoder,
+      // which an Init()-time failure would not.
+      if (NS_FAILED(vda->InitializeSession())) {
+        return nullptr;
+      }
+      decoder = std::move(vda);
   }
   return decoder.forget();
 }
@@ -126,14 +162,18 @@ already_AddRefed<MediaDataDecoder> AppleDecoderModule::CreateAudioDecoder(
           .isEmpty()) {
     return nullptr;
   }
+#if APPLE_HAVE_VT
   RefPtr<MediaDataDecoder> decoder = new AppleATDecoder(aParams.AudioConfig());
   return decoder.forget();
+#else
+  return nullptr;
+#endif
 }
 
 DecodeSupportSet AppleDecoderModule::SupportsMimeType(
     const nsACString& aMimeType, DecoderDoctorDiagnostics* aDiagnostics) const {
-  bool checkSupport =
-      aMimeType.EqualsLiteral("audio/mp4a-latm") ||
+  bool checkSupport = (APPLE_HAVE_VT &&
+                       aMimeType.EqualsLiteral("audio/mp4a-latm")) ||
       MP4Decoder::IsH264(aMimeType) || VPXDecoder::IsVP9(aMimeType) ||
       AOMDecoder::IsAV1(aMimeType) || MP4Decoder::IsHEVC(aMimeType);
   DecodeSupportSet supportType{};
@@ -263,6 +303,12 @@ bool AppleDecoderModule::CanCreateHWDecoder(const MediaCodec& aCodec) {
     return false;
   }
 
+
+#if !APPLE_HAVE_VT
+  // Pre-10.8 SDKs: VideoDecodeAcceleration (H.264) is the only hardware
+  // path.
+  return aCodec == MediaCodec::H264 && sIsVDAAvailable;
+#else
   if (__builtin_available(macOS 10.13, *)) {
       if (!VTIsHardwareDecodeSupported) {
         return false;
@@ -315,11 +361,12 @@ bool AppleDecoderModule::CanCreateHWDecoder(const MediaCodec& aCodec) {
                 failureReason.get());
   }
   return hwSupport;
+#endif  // APPLE_HAVE_VT
 }
 
 /* static */
 bool AppleDecoderModule::RegisterSupplementalDecoder(const MediaCodec& aCodec) {
-#ifdef XP_MACOSX
+#if defined(XP_MACOSX) && APPLE_HAVE_VT
   static bool sRegisterIfAvailable = [&]() {
     if (__builtin_available(macos 11.0, *)) {
       VTRegisterSupplementalVideoDecoderIfAvailable(

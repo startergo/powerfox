@@ -8,8 +8,11 @@
 #include <pthread.h>
 #include <stdio.h>
 
-#if defined(XP_DARWIN)
+#if defined(XP_DARWIN) && __has_include(<pthread_spis.h>)
 #  include <pthread_spis.h>
+#elif defined(XP_DARWIN)
+extern "C" int pthread_mutexattr_setpolicy_np(pthread_mutexattr_t* __attr,
+                                              int __policy);
 #endif
 
 #include "mozilla/PlatformMutex.h"

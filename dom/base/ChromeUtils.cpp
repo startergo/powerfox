@@ -1205,7 +1205,9 @@ void ChromeUtils::GetLibcConstants(const GlobalObject&,
 
   aConsts.mFD_CLOEXEC.Construct(FD_CLOEXEC);
 
+#  ifdef AT_EACCESS
   aConsts.mAT_EACCESS.Construct(AT_EACCESS);
+#  endif
 
   aConsts.mO_CREAT.Construct(O_CREAT);
   aConsts.mO_NONBLOCK.Construct(O_NONBLOCK);

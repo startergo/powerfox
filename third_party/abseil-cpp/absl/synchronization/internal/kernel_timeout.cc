@@ -24,6 +24,35 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#if defined(__APPLE__) && (!defined(__MAC_OS_X_VERSION_MIN_REQUIRED) || \
+                            __MAC_OS_X_VERSION_MIN_REQUIRED < 101200)
+// clock_gettime and the clockid_t clocks require macOS 10.12.
+#include <mach/mach_time.h>
+#include <sys/time.h>
+#define CLOCK_REALTIME 0
+#define CLOCK_MONOTONIC 1
+typedef int clockid_t;
+static int clock_gettime(clockid_t clock_id, struct timespec* ts) {
+  if (clock_id == CLOCK_REALTIME) {
+    struct timeval tv;
+    if (gettimeofday(&tv, nullptr) != 0) {
+      return -1;
+    }
+    ts->tv_sec = tv.tv_sec;
+    ts->tv_nsec = tv.tv_usec * 1000;
+    return 0;
+  }
+  static const mach_timebase_info_data_t tb = [] {
+    mach_timebase_info_data_t timebase;
+    mach_timebase_info(&timebase);
+    return timebase;
+  }();
+  uint64_t now = mach_absolute_time() * tb.numer / tb.denom;
+  ts->tv_sec = now / 1000000000;
+  ts->tv_nsec = now % 1000000000;
+  return 0;
+}
+#endif
 #include <limits>
 
 #include "absl/base/attributes.h"

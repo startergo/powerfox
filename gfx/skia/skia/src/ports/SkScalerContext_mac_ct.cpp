@@ -327,7 +327,12 @@ CGRGBPixel* SkScalerContext_Mac::Offscreen::getCG(const SkScalerContext_Mac& con
     // So always make the font transform identity and place the transform on the context.
     point = CGPointApplyAffineTransform(point, context.fInvTransform);
 
-    CTFontDrawGlyphs(context.fCTFont.get(), &glyphID, &point, 1, fCG.get());
+    if (&CTFontDrawGlyphs) {
+        CTFontDrawGlyphs(context.fCTFont.get(), &glyphID, &point, 1, fCG.get());
+    } else {
+        // Requires macOS 10.7.
+        CGContextShowGlyphsAtPoint(fCG.get(), point.x, point.y, &glyphID, 1);
+    }
 
     SkASSERT(rowBytesPtr);
     *rowBytesPtr = rowBytes;

@@ -1647,7 +1647,7 @@ fn test_ops_timing_sensitive_multiple_duplex_voice_stream_params() {
                     .run_sync(|| {
                         audio_unit_get_property(
                             stm.core_stream_data.input_unit,
-                            kAUVoiceIOProperty_BypassVoiceProcessing,
+                            AUDIO_UNIT_VOICE_IO_PROPERTY_BYPASS_VOICE_PROCESSING,
                             kAudioUnitScope_Global,
                             AU_IN_BUS,
                             &mut bypass,
@@ -1664,7 +1664,7 @@ fn test_ops_timing_sensitive_multiple_duplex_voice_stream_params() {
                     .run_sync(|| {
                         audio_unit_get_property(
                             stm.core_stream_data.input_unit,
-                            kAUVoiceIOProperty_MuteOutput,
+                            AUDIO_UNIT_VOICE_IO_PROPERTY_MUTE_OUTPUT,
                             kAudioUnitScope_Global,
                             AU_IN_BUS,
                             &mut mute,
@@ -1751,7 +1751,7 @@ fn test_ops_duplex_voice_stream_set_input_mute_before_start_with_reinit() {
                 let mut mute: u32 = 0;
                 let r = audio_unit_get_property(
                     stm.core_stream_data.input_unit,
-                    kAUVoiceIOProperty_MuteOutput,
+                    AUDIO_UNIT_VOICE_IO_PROPERTY_MUTE_OUTPUT,
                     kAudioUnitScope_Global,
                     AU_IN_BUS,
                     &mut mute,
@@ -1862,7 +1862,7 @@ fn test_ops_duplex_voice_stream_set_input_processing_params_before_start_with_re
                 let mut agc: u32 = 0;
                 let r = audio_unit_get_property(
                     stm.core_stream_data.input_unit,
-                    kAUVoiceIOProperty_VoiceProcessingEnableAGC,
+                    AUDIO_UNIT_VOICE_IO_PROPERTY_VOICE_PROCESSING_ENABLE_AGC,
                     kAudioUnitScope_Global,
                     AU_IN_BUS,
                     &mut agc,
@@ -1875,7 +1875,7 @@ fn test_ops_duplex_voice_stream_set_input_processing_params_before_start_with_re
                 let mut bypass: u32 = 0;
                 let r = audio_unit_get_property(
                     stm.core_stream_data.input_unit,
-                    kAUVoiceIOProperty_BypassVoiceProcessing,
+                    AUDIO_UNIT_VOICE_IO_PROPERTY_BYPASS_VOICE_PROCESSING,
                     kAudioUnitScope_Global,
                     AU_IN_BUS,
                     &mut bypass,

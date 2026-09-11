@@ -1,0 +1,24 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+SOURCES += [
+    'cabac.c',
+    'data.c',
+    'dsp.c',
+    'filter.c',
+    'hevcdec.c',
+    'mvs.c',
+    'parse.c',
+    'pred.c',
+    'ps.c',
+    'refs.c',
+    'sei.c',
+]
+
+LOCAL_INCLUDES += [ "../" ]
+
+FINAL_LIBRARY = 'mozavcodec'
+NoVisibilityFlags()
+
+include('/media/ffvpx/ffvpxcommon.mozbuild')

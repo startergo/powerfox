@@ -182,7 +182,9 @@ nsMacDockSupport::SetBadgeImage(imgIContainer* aImage,
                                         withSize:NSMakeSize(256, 256)
                                       svgContext:&svgContext
                                      scaleFactor:0.0];
-  image.resizingMode = NSImageResizingModeStretch;
+  if ([image respondsToSelector:@selector(setResizingMode:)]) {
+    image.resizingMode = NSImageResizingModeStretch;
+  }
   mDockBadgeView.image = image;
 
   return UpdateDockTile();
@@ -258,8 +260,9 @@ nsresult nsMacDockSupport::UpdateDockTile() {
       mHasBadgeImage) {
     BuildDockTile();
 
-    if (NSApp.dockTile.contentView != mDockTileWrapperView) {
-      NSApp.dockTile.contentView = mDockTileWrapperView;
+    NSDockTile* dockTile = [NSApp dockTile];
+    if (dockTile.contentView != mDockTileWrapperView) {
+      dockTile.contentView = mDockTileWrapperView;
     }
 
     mDockBadgeView.hidden = !mHasBadgeImage;
@@ -275,10 +278,10 @@ nsresult nsMacDockSupport::UpdateDockTile() {
     } else {
       mProgressDockOverlayView.hidden = true;
     }
-    [NSApp.dockTile display];
-  } else if (NSApp.dockTile.contentView) {
-    NSApp.dockTile.contentView = nil;
-    [NSApp.dockTile display];
+    [dockTile display];
+  } else if ([NSApp dockTile].contentView) {
+    [NSApp dockTile].contentView = nil;
+    [[NSApp dockTile] display];
   }
 
   return NS_OK;
@@ -346,8 +349,10 @@ NSString* GetPathForApp(NSDictionary* aPersistantApp) {
 void RefreshDock(NSDictionary* aDockPlist) {
   [[NSUserDefaults standardUserDefaults] setPersistentDomain:aDockPlist
                                                      forName:kDockDomainName];
-  NSRunningApplication* dockApp = [[NSRunningApplication
-      runningApplicationsWithBundleIdentifier:@"com.apple.dock"] firstObject];
+  NSArray* dockApps = [NSRunningApplication
+      runningApplicationsWithBundleIdentifier:@"com.apple.dock"];
+  NSRunningApplication* dockApp =
+      [dockApps count] ? [dockApps objectAtIndex:0] : nil;
   if (!dockApp) {
     return;
   }

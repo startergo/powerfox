@@ -7,6 +7,14 @@
 #ifndef ACCESSIBLE_MAC_MOXACCESSIBLEPROTOCOL_H_
 #define ACCESSIBLE_MAC_MOXACCESSIBLEPROTOCOL_H_
 
+#ifndef _Nullable
+#define _Nullable __nullable
+#define _Nonnull __nonnull
+#define _Null_unspecified __null_unspecified
+#endif
+
+#import "SDKDeclarations.h"
+
 @protocol MOXTextMarkerSupport;
 @protocol mozAccessible;
 

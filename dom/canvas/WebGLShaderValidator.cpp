@@ -90,6 +90,9 @@ static ShShaderOutput ShaderOutput(gl::GLContext* gl) {
   }
   uint32_t version = gl->ShadingLanguageVersion();
   switch (version) {
+    case 110:
+    case 120:
+      return SH_GLSL_COMPATIBILITY_OUTPUT;
     case 150:
       return SH_GLSL_150_CORE_OUTPUT;
     case 330:

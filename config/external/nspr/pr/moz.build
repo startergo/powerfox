@@ -45,7 +45,10 @@ elif CONFIG["OS_TARGET"] == "Darwin":
     # See also IncreaseDescriptorLimits in toolkit/xre/nsAppRunner.cpp
     DEFINES["FD_SETSIZE"] = 4096
     DEFINES["_DARWIN_UNLIMITED_SELECT"] = True
-    DEFINES["HAS_CONNECTX"] = True
+    # connectx requires macOS 10.11.
+    _target = CONFIG["MACOS_DEPLOYMENT_TARGET"]
+    if not _target or tuple(int(c) for c in _target.split(".")) >= (10, 11):
+        DEFINES["HAS_CONNECTX"] = True
     DEFINES["DARWIN"] = True
     DEFINES["HAVE_BSD_FLOCK"] = True
     DEFINES["HAVE_SOCKLEN_T"] = True

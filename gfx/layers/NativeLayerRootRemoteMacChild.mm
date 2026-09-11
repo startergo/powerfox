@@ -107,7 +107,7 @@ void NativeLayerRootRemoteMacChild::PrepareForCommit() {
   // Intentionally ignored.
 }
 
-bool NativeLayerRootRemoteMacChild::CommitToScreen() {
+bool NativeLayerRootRemoteMacChild::CommitToScreen(gfx::IntRect* aDirtyRect) {
   // Prepare and send all commands to the parent actor.
 
   // Our shared command queue has all of our CreateLayer and LayerDestroyed
@@ -155,7 +155,7 @@ void NativeLayerRootRemoteMacChild::CommitForSnapshot(CALayer* aRootCALayer) {
   [CATransaction begin];
   [CATransaction setDisableActions:YES];  // disable cross-fade
 
-  NSMutableArray<CALayer*>* sublayers =
+  NSMutableArray* sublayers =
       [NSMutableArray arrayWithCapacity:mNativeLayers.Length()];
   for (const auto& layer : mNativeLayers) {
     layer->UpdateSnapshotLayer();

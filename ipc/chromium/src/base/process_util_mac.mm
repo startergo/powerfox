@@ -7,6 +7,30 @@
 #include <fcntl.h>
 #include <os/availability.h>
 #include <spawn.h>
+
+#if !defined(MAC_OS_X_VERSION_10_15) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_15
+// Requires macOS 10.15; weak-imported for the availability-guarded call.
+extern "C" int posix_spawn_file_actions_addchdir_np(
+    posix_spawn_file_actions_t* __actions, const char* __path)
+    __attribute__((weak_import));
+#endif
+
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
+// Missing from the pre-Lion SDK. The open() flags fall back to plain values;
+// the fd is closed manually in the caller's failure paths.
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 0
+#endif
+#ifndef O_DIRECTORY
+#define O_DIRECTORY 0
+#endif
+#define POSIX_SPAWN_CLOEXEC_DEFAULT 0x4000
+extern "C" int posix_spawn_file_actions_addinherit_np(
+    posix_spawn_file_actions_t* __actions, int __fd)
+    __attribute__((weak_import));
+#endif
 #include <sys/wait.h>
 #include <unistd.h>
 

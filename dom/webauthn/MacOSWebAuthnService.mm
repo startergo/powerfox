@@ -43,14 +43,14 @@ NS_ASSUME_NONNULL_BEGIN
 @interface ASCPublicKeyCredentialDescriptor : NSObject <NSSecureCoding>
 - (instancetype)initWithCredentialID:(NSData*)credentialID
                           transports:
-                              (nullable NSArray<NSString*>*)allowedTransports;
+                              (nullable NSArray*)allowedTransports;
 @end
 
 @protocol ASCPublicKeyCredentialCreationOptions
 @property(nonatomic, copy) NSData* clientDataHash;
 @property(nonatomic, nullable, copy) NSData* challenge;
 @property(nonatomic, copy)
-    NSArray<ASCPublicKeyCredentialDescriptor*>* excludedCredentials;
+    NSArray* excludedCredentials;
 @end
 
 @protocol ASCPublicKeyCredentialAssertionOptions <NSCopying>
@@ -70,13 +70,13 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface ASAuthorizationController (Secrets)
 - (id<ASCCredentialRequestContext>)
-    _requestContextWithRequests:(NSArray<ASAuthorizationRequest*>*)requests
+    _requestContextWithRequests:(NSArray*)requests
                           error:(NSError**)outError;
 @end
 
-NSArray<NSString*>* TransportsByteToTransportsArray(const uint8_t aTransports)
+NSArray* TransportsByteToTransportsArray(const uint8_t aTransports)
     API_AVAILABLE(macos(13.3)) {
-  NSMutableArray<NSString*>* transportsNS = [[NSMutableArray alloc] init];
+  NSMutableArray* transportsNS = [[NSMutableArray alloc] init];
   if ((aTransports & MOZ_WEBAUTHN_AUTHENTICATOR_TRANSPORT_ID_USB) ==
       MOZ_WEBAUTHN_AUTHENTICATOR_TRANSPORT_ID_USB) {
     [transportsNS
@@ -111,7 +111,7 @@ NSArray* CredentialListsToCredentialDescriptorArray(
     const uint8_t& credentialTransports = aCredentialListTransports[i];
     NSData* credentialIdNS = [NSData dataWithBytes:credentialId.Elements()
                                             length:credentialId.Length()];
-    NSArray<NSString*>* credentialTransportsNS =
+    NSArray* credentialTransportsNS =
         TransportsByteToTransportsArray(credentialTransports);
     NSObject* credential = [[credentialDescriptorClass alloc]
         initWithCredentialID:credentialIdNS
@@ -144,7 +144,7 @@ API_AVAILABLE(macos(13.3))
   registrationOptions.challenge = nil;
   const Class publicKeyCredentialDescriptorClass =
       NSClassFromString(@"ASCPublicKeyCredentialDescriptor");
-  NSArray<ASCPublicKeyCredentialDescriptor*>* excludedCredentials =
+  NSArray* excludedCredentials =
       CredentialListsToCredentialDescriptorArray(
           mCredentialList, mCredentialListTransports,
           publicKeyCredentialDescriptorClass);
@@ -162,7 +162,7 @@ API_AVAILABLE(macos(13.3))
 }
 
 - (id<ASCCredentialRequestContext>)
-    _requestContextWithRequests:(NSArray<ASAuthorizationRequest*>*)requests
+    _requestContextWithRequests:(NSArray*)requests
                           error:(NSError**)outError {
   id<ASCCredentialRequestContext> context =
       [super _requestContextWithRequests:requests error:outError];
@@ -270,7 +270,7 @@ class API_AVAILABLE(macos(13.3)) MacOSWebAuthnService final
   ~MacOSWebAuthnService() = default;
 
   void PerformRequests(uint64_t aTransactionId,
-                       NSArray<ASAuthorizationRequest*>* aRequests,
+                       NSArray* aRequests,
                        nsTArray<uint8_t>&& aClientDataHash,
                        nsTArray<nsTArray<uint8_t>>&& aCredentialList,
                        nsTArray<uint8_t>&& aCredentialListTransports,
@@ -297,7 +297,7 @@ nsTArray<uint8_t> NSDataToArray(NSData* data) {
 }
 
 API_AVAILABLE(macos(15.0))
-NSDictionary<NSData*, ASAuthorizationPublicKeyCredentialPRFAssertionInputValues*>* _Nullable ConstructPrfEvalByCredentialEntries(
+NSDictionary* _Nullable ConstructPrfEvalByCredentialEntries(
     const RefPtr<nsIWebAuthnSignArgs>& aArgs) {
   nsTArray<nsTArray<uint8_t>> prfEvalByCredIds;
   nsTArray<nsTArray<uint8_t>> prfEvalByCredFirsts;
@@ -316,8 +316,8 @@ NSDictionary<NSData*, ASAuthorizationPublicKeyCredentialPRFAssertionInputValues*
   }
 
   uint32_t count = prfEvalByCredIds.Length();
-  NSMutableArray<NSData*>* keys = [NSMutableArray arrayWithCapacity:count];
-  NSMutableArray<ASAuthorizationPublicKeyCredentialPRFAssertionInputValues*>*
+  NSMutableArray* keys = [NSMutableArray arrayWithCapacity:count];
+  NSMutableArray*
       objects = [NSMutableArray arrayWithCapacity:count];
   for (size_t i = 0; i < count; i++) {
     NSData* saltInput1 = [NSData dataWithBytes:prfEvalByCredFirsts[i].Elements()
@@ -954,7 +954,7 @@ MacOSWebAuthnService::MakeCredential(uint64_t aTransactionId,
 }
 
 void MacOSWebAuthnService::PerformRequests(
-    uint64_t aTransactionId, NSArray<ASAuthorizationRequest*>* aRequests,
+    uint64_t aTransactionId, NSArray* aRequests,
     nsTArray<uint8_t>&& aClientDataHash,
     nsTArray<nsTArray<uint8_t>>&& aCredentialList,
     nsTArray<uint8_t>&& aCredentialListTransports,
@@ -1081,7 +1081,7 @@ MacOSWebAuthnService::GetAssertion(uint64_t aTransactionId,
   }
   const Class securityKeyPublicKeyCredentialDescriptorClass = NSClassFromString(
       @"ASAuthorizationSecurityKeyPublicKeyCredentialDescriptor");
-  NSArray<ASAuthorizationSecurityKeyPublicKeyCredentialDescriptor*>*
+  NSArray*
       crossPlatformAllowedCredentials =
           CredentialListsToCredentialDescriptorArray(
               allowList, allowListTransports,
@@ -1379,7 +1379,7 @@ MacOSWebAuthnService::GetAutoFillEntriesForRpId(
           aCallback));
   nsString rpId(aRpId);
   auto credentialsCompletionHandler =
-      ^(NSArray<ASAuthorizationWebBrowserPlatformPublicKeyCredential*>*
+      ^(NSArray*
             credentials) {
         nsTArray<RefPtr<nsIWebAuthnAutoFillEntry>> entries;
         for (NSUInteger i = 0; i < credentials.count; i++) {

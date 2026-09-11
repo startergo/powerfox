@@ -1,5 +1,7 @@
 use super::*;
 use std::time::{SystemTime, UNIX_EPOCH};
+const AUDIO_AGGREGATE_DEVICE_PROPERTY_MAIN_SUB_DEVICE: u32 = 0x616D7374; // 'amst'
+
 
 pub const DRIFT_COMPENSATION: u32 = 1;
 
@@ -481,7 +483,7 @@ impl AggregateDevice {
     pub fn get_master_device_uid(device_id: AudioDeviceID) -> std::result::Result<String, Error> {
         debug_assert_running_serially();
         let address = AudioObjectPropertyAddress {
-            mSelector: kAudioAggregateDevicePropertyMainSubDevice,
+            mSelector: AUDIO_AGGREGATE_DEVICE_PROPERTY_MAIN_SUB_DEVICE,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMaster,
         };
@@ -516,7 +518,7 @@ impl AggregateDevice {
         );
 
         let address = AudioObjectPropertyAddress {
-            mSelector: kAudioAggregateDevicePropertyMainSubDevice,
+            mSelector: AUDIO_AGGREGATE_DEVICE_PROPERTY_MAIN_SUB_DEVICE,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMaster,
         };

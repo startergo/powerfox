@@ -128,7 +128,8 @@ bool RDDParent::Init(mozilla::ipc::UntypedEndpoint&& aEndpoint,
   return true;
 }
 
-#if defined(XP_MACOSX) && defined(MOZ_SANDBOX)
+#if defined(XP_MACOSX) && defined(MOZ_SANDBOX) && \
+    !defined(MOZ_LEGACY_MACOS_TARGET)
 extern "C" {
 void CGSShutdownServerConnections();
 };
@@ -144,10 +145,12 @@ mozilla::ipc::IPCResult RDDParent::RecvInit(
   (void)SendUpdateMediaCodecsSupported(supported);
 
 #if defined(MOZ_SANDBOX)
-#  if defined(XP_MACOSX)
+#  if defined(XP_MACOSX) && !defined(MOZ_LEGACY_MACOS_TARGET)
   // Close all current connections to the WindowServer. This ensures that the
   // Activity Monitor will not label the content process as "Not responding"
   // because it's not running a native event loop. See bug 1384336.
+  // Skipped on the 10.6 target: the RDD needs its WindowServer connection
+  // for VDA hardware video decoding.
   CGSShutdownServerConnections();
 
 #  elif defined(XP_LINUX)

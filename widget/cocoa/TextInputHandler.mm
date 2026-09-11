@@ -5033,16 +5033,22 @@ static NSTextCheckingType GetTextCheckingTypes() {
   NSTextCheckingType types = 0;
 
   if (StaticPrefs::widget_macos_automatic_text_replacement() &&
+      [NSSpellChecker
+          respondsToSelector:@selector(isAutomaticTextReplacementEnabled)] &&
       [NSSpellChecker isAutomaticTextReplacementEnabled]) {
     types |= NSTextCheckingTypeReplacement;
   }
 
   if (StaticPrefs::widget_macos_automatic_quote_substitution() &&
+      [NSSpellChecker respondsToSelector:
+                   @selector(isAutomaticQuoteSubstitutionEnabled)] &&
       [NSSpellChecker isAutomaticQuoteSubstitutionEnabled]) {
     types |= NSTextCheckingTypeQuote;
   }
 
   if (StaticPrefs::widget_macos_automatic_dash_substitution() &&
+      [NSSpellChecker
+          respondsToSelector:@selector(isAutomaticDashSubstitutionEnabled)] &&
       [NSSpellChecker isAutomaticDashSubstitutionEnabled]) {
     types |= NSTextCheckingTypeDash;
   }
@@ -5210,7 +5216,7 @@ void IMEInputHandler::OnTextSubstitution(uint32_t aStartOffset) {
   // NSTextCheckingResult.range is read only, so re-create this result object.
   NSRange candidatedRange = NSMakeRange(candidate.range.location + startFetch,
                                         candidate.range.length);
-  NSArray<NSString*>* alternativeStrings = @[];
+  NSArray* alternativeStrings = @[];
   if (@available(macOS 10.8, *)) {
     alternativeStrings = candidate.alternativeStrings;
   }
@@ -5268,11 +5274,15 @@ void IMEInputHandler::ShowTextSubstitutionPanel() {
   if (!spellchecker) {
     return;
   }
-  NSArray<NSString *> *anotherAlternativeString;
+  NSArray *anotherAlternativeString;
   if(@available(macOS 10.8, *)) {
     anotherAlternativeString = mCandidatedTextSubstitutionResult.alternativeStrings;
   } else {
     anotherAlternativeString = @[];
+  }
+  if (![spellchecker
+          respondsToSelector:@selector(showCorrectionIndicatorOfType:)]) {
+    return;
   }
   [spellchecker
       showCorrectionIndicatorOfType:NSCorrectionIndicatorTypeDefault
@@ -5331,7 +5341,10 @@ void IMEInputHandler::DismissTextSubstitutionPanel() {
   if (!spellchecker) {
     return;
   }
-  [spellchecker dismissCorrectionIndicatorForView:mView];
+  if ([spellchecker respondsToSelector:@selector(
+          dismissCorrectionIndicatorForView:)]) {
+    [spellchecker dismissCorrectionIndicatorForView:mView];
+  }
 
   if (mCandidatedTextSubstitutionResult) {
     [mCandidatedTextSubstitutionResult release];

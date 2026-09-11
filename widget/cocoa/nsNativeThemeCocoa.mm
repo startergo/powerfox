@@ -3,7 +3,18 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsNativeThemeCocoa.h"
-#include <objc/NSObjCRuntime.h>
+
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
+#import <objc/runtime.h>
+#import "SDKDeclarations.h"
+#endif
+#if __has_include(<objc/NSObjCRuntime.h>)
+#  include <objc/NSObjCRuntime.h>
+#else
+// Pre-Lion SDKs only have the Foundation variant.
+#  import <Foundation/NSObjCRuntime.h>
+#endif
 
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/Helpers.h"
@@ -55,8 +66,11 @@ extern "C" {
 CG_EXTERN void CGContextSetCTM(CGContextRef, CGAffineTransform);
 CG_EXTERN void CGContextSetBaseCTM(CGContextRef, CGAffineTransform);
 typedef CFTypeRef CUIRendererRef;
+// CoreUI is a private framework (present at runtime since 10.5) that the
+// SDK does not carry; weak-link through a link-time stub.
 void CUIDraw(CUIRendererRef r, CGRect rect, CGContextRef ctx,
-             CFDictionaryRef options, CFDictionaryRef* result);
+             CFDictionaryRef options, CFDictionaryRef* result)
+    __attribute__((weak_import));
 }
 
 // This is the window for our MOZCellDrawView. When an NSCell is drawn, some
@@ -64,6 +78,7 @@ void CUIDraw(CUIRendererRef r, CGRect rect, CGContextRef ctx,
 // the cell should draw with the active look.
 @interface MOZCellDrawWindow : NSWindow
 @property BOOL cellsShouldLookActive;
+@property(copy) NSAppearance* appearance;
 @end
 
 @implementation MOZCellDrawWindow
@@ -114,7 +129,9 @@ void CUIDraw(CUIRendererRef r, CGRect rect, CGContextRef ctx,
 
 static void DrawFocusRingForCellIfNeeded(NSCell* aCell, NSRect aWithFrame,
                                          NSView* aInView) {
-  if ([aCell showsFirstResponder]) {
+  if ([aCell showsFirstResponder] &&
+      // -drawFocusRingMaskWithFrame: requires 10.7
+      [aCell respondsToSelector:@selector(drawFocusRingMaskWithFrame:)]) {
     CGContextRef cgContext = (CGContextRef)[[NSGraphicsContext currentContext] graphicsPort];
     CGContextSaveGState(cgContext);
 
@@ -161,8 +178,12 @@ static bool FocusIsDrawnByDrawWithFrame(NSCell* aCell) {
   // -[NSCell drawWithFrame:inView:] depends on the cell type.
   // Radio buttons and checkboxes draw their own focus rings, other cell
   // types need -[NSCell drawFocusRingMaskWithFrame:inView:].
-  return
-      [aCell isKindOfClass:[RadioButtonCell class]] || [aCell isKindOfClass:[CheckboxCell class]];
+  // RadioButtonCell/CheckboxCell are AppKit private classes with no SDK
+  // declaration; resolve them at runtime. This branch only runs on 10.10+.
+  Class radioButtonClass = objc_getClass("RadioButtonCell");
+  Class checkboxClass = objc_getClass("CheckboxCell");
+  return (radioButtonClass && [aCell isKindOfClass:radioButtonClass]) ||
+         (checkboxClass && [aCell isKindOfClass:checkboxClass]);
 #endif
 
 }
@@ -2675,10 +2696,9 @@ void nsNativeThemeCocoa::RenderWidget(const WidgetInfo& aWidgetInfo,
 
   // Also set the cell draw window's appearance; this is respected by
   // NSTextFieldCell (and its subclass NSSearchFieldCell).
-  if (mCellDrawWindow) {
-    if(@available(macOS 10.9, *)) {
+  if (mCellDrawWindow &&
+      [NSWindow instancesRespondToSelector:@selector(appearance)]) {
     mCellDrawWindow.appearance = NSAppearance.currentAppearance;
-  }
   }
   const Widget widget = aWidgetInfo.Widget();
 
@@ -2849,7 +2869,7 @@ void nsNativeThemeCocoa::RenderWidget(const WidgetInfo& aWidgetInfo,
           // Fill the content with the control background color.
           if(@available(macOS 10.9, *)) {
             CGContextSetFillColorWithColor(
-                cgContext, [NSColor.controlBackgroundColor CGColor]);
+                cgContext, (CGColorRef)[NSColor.controlBackgroundColor CGColor]);
             CGContextFillRect(cgContext, macRect);
             // Draw the frame using kCUIWidgetScrollViewFrame. This is what
             // NSScrollView uses in

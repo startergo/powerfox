@@ -10,6 +10,10 @@
  */
 
 #include <assert.h>
+#if !defined(__cplusplus) && !defined(static_assert)
+// The pre-Lion SDK's assert.h predates C11.
+#define static_assert(cond, msg) _Static_assert(cond, msg)
+#endif
 #include <emmintrin.h>
 
 #include "aom/aom_integer.h"

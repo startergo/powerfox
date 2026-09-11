@@ -6,6 +6,7 @@
 
 #import <Accessibility/Accessibility.h>
 
+#import "SDKDeclarations.h"
 #import "MOXAccessibleBase.h"
 
 #import "MacSelectorMap.h"
@@ -53,8 +54,11 @@ mozilla::LogModule* GetMacAccessibilityLog() {
 }
 
 - (BOOL)hasMOXAccessibles {
-  return [self isKindOfClass:[NSArray class]] &&
-         [[(NSArray*)self firstObject] isMOXAccessible];
+  if (![self isKindOfClass:[NSArray class]]) {
+    return NO;
+  }
+  NSArray* array = (NSArray*)self;
+  return [array count] && [[array objectAtIndex:0] isMOXAccessible];
 }
 
 @end
@@ -474,7 +478,7 @@ mozilla::LogModule* GetMacAccessibilityLog() {
     return;
   }
 
-  if (userInfo) {
+  if (userInfo && &NSAccessibilityPostNotificationWithUserInfo) {
     NSAccessibilityPostNotificationWithUserInfo(
         GetObjectOrRepresentedView(self), notification, userInfo);
   } else {

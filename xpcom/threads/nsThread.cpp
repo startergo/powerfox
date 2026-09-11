@@ -83,7 +83,18 @@ using GetCurrentThreadStackLimitsFn = void(WINAPI*)(PULONG_PTR LowLimit,
 #ifdef XP_MACOSX
 #  include <mach/mach.h>
 #  include <mach/thread_policy.h>
-#  include <sys/qos.h>
+#  if __has_include(<sys/qos.h>)
+#    include <sys/qos.h>
+#  else
+typedef int qos_class_t;
+#    define QOS_CLASS_USER_INTERACTIVE 0x21
+#    define QOS_CLASS_USER_INITIATED 0x19
+#    define QOS_CLASS_DEFAULT 0x15
+#    define QOS_CLASS_UTILITY 0x11
+#    define QOS_CLASS_BACKGROUND 0x09
+extern "C" int pthread_set_qos_class_self_np(qos_class_t, int)
+    __attribute__((weak_import));
+#  endif
 
 #  include "nsCocoaFeatures.h"
 #endif

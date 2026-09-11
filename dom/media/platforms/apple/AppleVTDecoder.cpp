@@ -1,7 +1,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
+#if __has_include(<VideoToolbox/VideoToolbox.h>)
 #include "AppleVTDecoder.h"
 #include "AppleVTLinker.h"
 
@@ -857,3 +857,4 @@ uint32_t AppleVTDecoder::GetMaxRefFrames(bool aIsLowLatency) const {
 
 #undef LOG
 #undef LOGEX
+#endif  // __has_include(<VideoToolbox/VideoToolbox.h>)

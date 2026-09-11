@@ -15,6 +15,7 @@
 #include "mozilla/dom/OffscreenCanvasRenderingContext2D.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/glean/DomCanvasMetrics.h"
+#include "mozilla/StaticPrefs_webgl.h"
 #include "mozilla/webgpu/CanvasContext.h"
 #if defined(XP_MACOSX)
 #  include "nsCocoaFeatures.h"
@@ -179,9 +180,11 @@ already_AddRefed<nsISupports> CanvasRenderingContextHelper::GetOrCreateContext(
 #if defined(XP_MACOSX)
   // On 10.6, WebGL2 cannot work (GL 2.1 ceiling). Refuse before creating a
   // context so getContext() returns null without a creation-error event,
-  // letting pages fall back to WebGL1.
+  // letting pages fall back to WebGL1. webgl.force-enabled bypasses this,
+  // matching the host-side AllowWebgl2 check.
   if (aContextType == CanvasContextType::WebGL2 &&
-      !nsCocoaFeatures::OnLionOrLater() && !gfx::gfxVars::AllowWebgl2()) {
+      !nsCocoaFeatures::OnLionOrLater() && !gfx::gfxVars::AllowWebgl2() &&
+      !StaticPrefs::webgl_force_enabled()) {
     return nullptr;
   }
 #endif

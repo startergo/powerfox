@@ -2501,9 +2501,12 @@ void gfxPlatform::InitAcceleration() {
 void gfxPlatform::InitGPUProcessPrefs() {
 #if defined(XP_MACOSX)
   if (!nsCocoaFeatures::OnLionOrLater()) {
-    // The GPU process cannot create a GL context on 10.6, and its crash
-    // handling hangs the parent's synchronous launch wait in a kill-restart
-    // loop that blocks window creation entirely.
+    // The GPU process can run on 10.6 now that the bundled libc++
+    // re-exports libc++abi: its original failure was a dyld load error
+    // misread as GL context creation (verified working 2026-09-11 on a
+    // Macmini3,1 — the gpu-helper composites and pages render). Keep it
+    // disabled pending a validation pass of the cross-process
+    // presentation; the in-process compositor is the tested path.
     gfxConfig::GetFeature(Feature::GPU_PROCESS)
         .DisableByDefault(FeatureStatus::Blocked, "macOS version too old",
                           "FEATURE_FAILURE_MACOS_TOO_OLD"_ns);

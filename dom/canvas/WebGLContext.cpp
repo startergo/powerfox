@@ -1356,16 +1356,12 @@ bool WebGLContext::PushRemoteTexture(
   // CoreAnimation may scan out a swap-chain IOSurface as soon as it is
   // attached to a layer, so the producer's GL writes must be retired first.
   // On 10.6, GL_APPLE_fence is the only fence available (ARB_sync et al. are
-  // not exposed by the NVIDIA driver).
+  // not exposed by the NVIDIA driver). Query the extension through
+  // GLContext's table: calling glGetString here trips GL_INVALID_OPERATION on
+  // the 10.6 NVIDIA driver.
   static const auto sFlushForHandoff = [](gl::GLContext& gl) {
-    if (!gl.MakeCurrent()) return;
     gl.fFlush();
-    static const bool sHasAppleFence = [&]() {
-      const auto exts =
-          reinterpret_cast<const char*>(gl.fGetString(LOCAL_GL_EXTENSIONS));
-      return exts && strstr(exts, "GL_APPLE_fence");
-    }();
-    if (!sHasAppleFence) {
+    if (!gl.IsExtensionSupported(gl::GLContext::APPLE_fence)) {
       gl.fFinish();
       return;
     }

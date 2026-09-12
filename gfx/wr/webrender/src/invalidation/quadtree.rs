@@ -422,7 +422,16 @@ impl TileNode {
                             if invalidation_reason.is_none() {
                                 *invalidation_reason = Some(InvalidationReason::Content);
                             }
-                            *dirty_rect = self.rect.union(dirty_rect);
+                            // Use the changed prim's clip box intersected with the
+                            // leaf rect, not the full leaf rect: in sparse tiles
+                            // (e.g. with compositor-surface holes) the quadtree
+                            // may not split, and using the root leaf rect would
+                            // dirty the entire surface for a tiny change.
+                            let prim_rect = curr_prims[i1]
+                                .prim_clip_box
+                                .intersection(&self.rect)
+                                .unwrap_or(self.rect);
+                            *dirty_rect = prim_rect.union(dirty_rect);
                             *dirty_tracker = *dirty_tracker | 1;
                             break;
                         }

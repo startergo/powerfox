@@ -1243,15 +1243,14 @@ void InitSwapChain(gl::GLContext& gl, gl::SwapChain& swapChain,
   }
   MOZ_ASSERT(swapChain.mFactory);
 #if defined(MOZ_WIDGET_COCOA)
-  if (!nsCocoaFeatures::OnLionOrLater()) {
-    // On 10.6, per-frame IOSurface creation (the upstream async-present shape,
-    // where recycling depends on RemoteTextureMap timing) costs a VM map/unmap
-    // per surface in the NVIDIA driver: the kernel TLB flushes show up as a
-    // constant ~25-40% kernel_task on 2-core machines. A small stable pool
-    // keeps the same few surfaces mapped.
-    swapChain.EnablePool(3);
-    return;
-  }
+  // The upstream async-present shape disables pooling and relies on
+  // RemoteTextureMap recycling, which misses often enough that every present
+  // allocates a fresh IOSurface + texture wrap + FBO. Each allocation maps and
+  // unmaps GPU memory; on the 10.6 NVIDIA driver the kernel TLB flushes cost
+  // ~25-40% of a 2-core machine during WebGL animation. A small stable pool
+  // keeps the same few surfaces mapped on every macOS version.
+  swapChain.EnablePool(3);
+  return;
 #endif
   if (useAsync) {
     // RemoteTextureMap will handle recycling any surfaces, so don't rely on the

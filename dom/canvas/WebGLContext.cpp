@@ -89,15 +89,6 @@
 #  include <sys/sysctl.h>
 #endif
 
-#if defined(XP_MACOSX)
-extern "C" {
-void glGenFencesAPPLE(GLsizei n, GLuint* fences);
-void glDeleteFencesAPPLE(GLsizei n, const GLuint* fences);
-void glSetFenceAPPLE(GLuint fence);
-void glFinishFenceAPPLE(GLuint fence);
-}
-#endif
-
 #ifdef XP_WIN
 #  include "WGLLibrary.h"
 #endif
@@ -1251,6 +1242,17 @@ void InitSwapChain(gl::GLContext& gl, gl::SwapChain& swapChain,
     swapChain.mFactory = MakeUnique<gl::SurfaceFactory_Basic>(gl);
   }
   MOZ_ASSERT(swapChain.mFactory);
+#if defined(MOZ_WIDGET_COCOA)
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    // On 10.6, per-frame IOSurface creation (the upstream async-present shape,
+    // where recycling depends on RemoteTextureMap timing) costs a VM map/unmap
+    // per surface in the NVIDIA driver: the kernel TLB flushes show up as a
+    // constant ~25-40% kernel_task on 2-core machines. A small stable pool
+    // keeps the same few surfaces mapped.
+    swapChain.EnablePool(3);
+    return;
+  }
+#endif
   if (useAsync) {
     // RemoteTextureMap will handle recycling any surfaces, so don't rely on the
     // SwapChain's internal pooling.
@@ -1380,26 +1382,12 @@ bool WebGLContext::PushRemoteTexture(
   // GLContext's table: calling glGetString here trips GL_INVALID_OPERATION on
   // the 10.6 NVIDIA driver.
   static const auto sFlushForHandoff = [](gl::GLContext& gl) {
+    // Match upstream: no explicit sync for the IOSurface handoff.
+    // Correctness relies on driver-level command queue serialization,
+    // the same guarantee upstream ESR 153 depends on for all macOS
+    // versions. Per-frame blocking GL sync (glFinish, APPLE_fence)
+    // causes progressive CPU degradation on the 10.6 NVIDIA driver.
     gl.fFlush();
-    if (!gl.IsExtensionSupported(gl::GLContext::APPLE_fence)) {
-      gl.fFinish();
-      return;
-    }
-    // The 10.6 NVIDIA driver leaves a spurious GL_INVALID_OPERATION from this
-    // sequence; the trailing query consumes it. On few-core machines the
-    // producer also needs a per-frame pacing point or frames deliver
-    // unevenly: a single mid-sequence sync after glSetFenceAPPLE provides
-    // one, but would cost throughput on machines with headroom.
-    static const bool paceProducer = FewCoreMachine();
-    GLuint fence = 0;
-    glGenFencesAPPLE(1, &fence);
-    glSetFenceAPPLE(fence);
-    if (paceProducer) {
-      (void)gl.fGetError();
-    }
-    glFinishFenceAPPLE(fence);
-    glDeleteFencesAPPLE(1, &fence);
-    (void)gl.fGetError();
   };
 #endif
 

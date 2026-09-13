@@ -160,6 +160,10 @@ static const uint32_t kDefaultGlyphCacheSize = -1;
 #include "mozilla/gfx/GPUParent.h"
 #include "prsystem.h"
 
+#if defined(MOZ_WIDGET_COCOA)
+#  include <sys/sysctl.h>
+#endif
+
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/SourceSurfaceCairo.h"
 
@@ -3305,6 +3309,15 @@ void gfxPlatform::InitWebGLConfig() {
       // drop WebGL2 (it requires a 3.2 core context).
       gfxVars::SetWebglAllowCoreProfile(false);
       gfxVars::SetAllowWebgl2(false);
+      // Two cores cannot sustain a 60Hz frame pipeline; pacing to every other
+      // vsync gives uniform 30fps delivery where free-running jitters.
+      int ncpu = 0;
+      size_t len = sizeof(ncpu);
+      sysctlbyname("hw.ncpu", &ncpu, &len, nullptr, 0);
+      if (ncpu > 0 && ncpu <= 2 &&
+          !Preferences::HasUserValue("gfx.display.frame-rate-divisor")) {
+        Preferences::SetInt("gfx.display.frame-rate-divisor", 2);
+      }
     }
   }
 

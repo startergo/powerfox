@@ -8,14 +8,6 @@
 #include <sys/sysctl.h>
 #include <unistd.h>
 
-/* Matches libSystem's availability_version: 8 bytes, minor/patch are
-   16-bit. */
-typedef struct {
-  uint32_t major;
-  uint16_t minor;
-  uint16_t patch;
-} pf_tav_t;
-
 static void pf_os_version(int32_t* maj, int32_t* min, int32_t* patch) {
   static int32_t osMajor = -1, osMinor = -1, osPatch = -1;
   if (osMajor < 0) {
@@ -52,19 +44,30 @@ static void pf_os_version(int32_t* maj, int32_t* min, int32_t* patch) {
   *patch = osPatch;
 }
 
-/* Called by clang's __isPlatformVersionAtLeast (used by @available) with a
-   list of minimum versions; returns true when the running OS satisfies at
-   least one entry. The libSystem implementation is a 10.12 addition; the
-   symbol's C name carries a single leading underscore. */
-uint8_t _availability_version_check(uint32_t count, const pf_tav_t* versions) {
+/* Called by compiler-rt's ___isPlatformVersionAtLeast (the @available
+   machinery) with a list of minimum versions; returns true when the
+   running OS satisfies at least one entry. The libSystem implementation
+   is a 10.12 addition. compiler-rt packs each entry as two uint32s:
+   {platform, (major << 16) | (minor << 8) | subminor}; platform 1 is
+   macOS, platform 0 matches any platform. */
+typedef struct {
+  uint32_t platform;
+  uint32_t packed;
+} pf_av_t;
+
+uint8_t _availability_version_check(uint32_t count, const pf_av_t* versions) {
   int32_t osMajor, osMinor, osPatch;
   pf_os_version(&osMajor, &osMinor, &osPatch);
   for (uint32_t i = 0; i < count; i++) {
-    const pf_tav_t* v = &versions[i];
-    if ((uint32_t)osMajor > v->major) return 1;
-    if ((uint32_t)osMajor == v->major) {
-      if ((uint32_t)osMinor > v->minor) return 1;
-      if ((uint32_t)osMinor == v->minor && (uint32_t)osPatch >= v->patch) {
+    const pf_av_t* v = &versions[i];
+    if (v->platform != 0 && v->platform != 1) continue;
+    const uint32_t major = v->packed >> 16;
+    const uint32_t minor = (v->packed >> 8) & 0xff;
+    const uint32_t subminor = v->packed & 0xff;
+    if ((uint32_t)osMajor > major) return 1;
+    if ((uint32_t)osMajor == major) {
+      if ((uint32_t)osMinor > minor) return 1;
+      if ((uint32_t)osMinor == minor && (uint32_t)osPatch >= subminor) {
         return 1;
       }
     }
@@ -98,3 +101,39 @@ int getentropy(void* buffer, size_t length) {
 #include <dirent.h>
 /* dirfd is a 10.8 libc addition. */
 int (dirfd)(DIR* dirp) { return dirp->__dd_fd; }
+
+#include <time.h>
+#include <mach/mach_time.h>
+/* clock_gettime_nsec_np is a 10.12 addition; derive it from
+   mach_absolute_time (monotonic since boot, excluding suspend — which
+   matches CLOCK_UPTIME_RAW and is close enough for CLOCK_MONOTONIC_RAW
+   callers). */
+uint64_t clock_gettime_nsec_np(clockid_t clk_id) {
+  (void)clk_id;
+  static mach_timebase_info_data_t tb = {0, 0};
+  if (tb.denom == 0) mach_timebase_info(&tb);
+  uint64_t ticks = mach_absolute_time();
+  if (tb.numer == tb.denom) return ticks;
+  return (uint64_t)((__uint128_t)ticks * tb.numer / tb.denom);
+}
+
+/* clock_gettime is a 10.12 addition. */
+int clock_gettime(clockid_t clk_id, struct timespec* tp) {
+  if (!tp) return -1;
+  if (clk_id == CLOCK_REALTIME) {
+    struct timeval tv;
+    if (gettimeofday(&tv, NULL) != 0) return -1;
+    tp->tv_sec = tv.tv_sec;
+    tp->tv_nsec = tv.tv_usec * 1000;
+    return 0;
+  }
+  static mach_timebase_info_data_t tb = {0, 0};
+  if (tb.denom == 0) mach_timebase_info(&tb);
+  uint64_t ticks = mach_absolute_time();
+  uint64_t ns = (tb.numer == tb.denom)
+                    ? ticks
+                    : (uint64_t)((__uint128_t)ticks * tb.numer / tb.denom);
+  tp->tv_sec = (time_t)(ns / 1000000000ULL);
+  tp->tv_nsec = (long)(ns % 1000000000ULL);
+  return 0;
+}

@@ -1,0 +1,106 @@
+name: Build PowerFox 10.6
+
+# Builds the ESR153 tree for Mac OS X 10.6 Snow Leopard (x86_64,
+# cross-compiled from the arm64 runner): the 10.6 SDK (fetched from
+# phracker/MacOSX-SDKs plus runtime .o overlay), patched header overlay,
+# bundled darwin10 libc++ and an emulated-TLS Rust std (see
+# tools/legacy-macos/ in this branch).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["10.6-backporting"]
+
+jobs:
+  build:
+    name: build 10.6 x86_64
+    runs-on: macos-26
+    timeout-minutes: 300
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Fetch MacOSX10.6.sdk
+        run: |
+          set -e
+          git clone --depth 1 --filter=blob:none --sparse \
+            https://github.com/phracker/MacOSX-SDKs.git "$HOME/MacOSX-SDKs"
+          cd "$HOME/MacOSX-SDKs" && git sparse-checkout set MacOSX10.6.sdk
+          [ -d "$HOME/MacOSX-SDKs/MacOSX10.6.sdk" ] || { echo "SDK missing"; exit 1; }
+
+          # phracker's SDK omits the binary .o files (crt1.o etc.); overlay
+          # them from the public release asset on startergo/powerfox-browser.
+          curl -fsSL -o /tmp/runtime-objects.tar.gz \
+            https://github.com/startergo/powerfox-browser/releases/download/sdk-runtime-objects-10.6/MacOSX10.6.sdk-runtime-objects.tar.gz
+          tar -xzf /tmp/runtime-objects.tar.gz -C "$HOME/MacOSX-SDKs/MacOSX10.6.sdk"
+
+          # The mozconfig expects the SDK inside Xcode's platform dir.
+          SDKS=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs
+          sudo mkdir -p "$SDKS"
+          sudo ln -sfn "$HOME/MacOSX-SDKs/MacOSX10.6.sdk" "$SDKS/MacOSX10.6.sdk"
+
+      - name: Bootstrap build deps
+        run: |
+          /usr/bin/python3 ./mach bootstrap --application-choice=browser
+          brew install nasm
+
+      - name: Set up Rust (stable + rust-src for the emutls std rebuild)
+        run: |
+          rustup default stable
+          rustup component add rust-src
+          rustc --version
+
+      - name: Restore support artifacts
+        id: cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            tools/legacy-macos/dist
+            tools/legacy-macos/downloads
+            tools/legacy-macos/overlay-sdk
+          key: legacy106-${{ runner.os }}-${{ hashFiles('tools/legacy-macos/build-libcxx.sh', 'tools/legacy-macos/build-rust-std.sh', 'tools/legacy-macos/make-sdk-overlay.sh') }}
+
+      - name: Build the 10.6 support artifacts
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          tools/legacy-macos/make-sdk-overlay.sh
+          tools/legacy-macos/build-libcxx.sh
+          tools/legacy-macos/build-rust-std.sh 10.6
+
+      - name: Save support artifacts
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            tools/legacy-macos/dist
+            tools/legacy-macos/downloads
+            tools/legacy-macos/overlay-sdk
+          key: legacy106-${{ runner.os }}-${{ hashFiles('tools/legacy-macos/build-libcxx.sh', 'tools/legacy-macos/build-rust-std.sh', 'tools/legacy-macos/make-sdk-overlay.sh') }}
+
+      - name: Build
+        env:
+          MOZCONFIG: ${{ github.workspace }}/mozconfig-macos106
+        run: |
+          /usr/bin/python3 ./mach configure
+          /usr/bin/python3 ./mach build
+
+      - name: Package
+        env:
+          MOZCONFIG: ${{ github.workspace }}/mozconfig-macos106
+        run: /usr/bin/python3 ./mach package
+
+      - name: Collect artifacts
+        run: |
+          VERSION=$(cat browser/config/version.txt)
+          cp obj-x86_64-apple-darwin/dist/Nightly.app /tmp/ || true
+          find obj-* -maxdepth 3 -name "*.dmg" -exec cp {} powerfox-${VERSION}_macOS10.6.dmg \;
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          path: |
+            powerfox-*.dmg
+          if-no-files-found: error
+          retention-days: 14

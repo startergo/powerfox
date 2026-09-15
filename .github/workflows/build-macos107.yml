@@ -16,16 +16,36 @@ jobs:
     name: build 10.7-10.14 x86_64
     runs-on: macos-26
     timeout-minutes: 300
+    env:
+      SCCACHE_IDLE_TIMEOUT: 0
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
+      - name: Restore bootstrap toolchains
+        id: mozbuild
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.mozbuild
+          key: mozbuild107-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: mozbuild107-
+
       - name: Bootstrap build deps
-        run: |
-          /usr/bin/python3 ./mach bootstrap --application-choice=browser
-          brew install nasm
+        if: steps.mozbuild.outputs.cache-hit != 'true'
+        run: /usr/bin/python3 ./mach bootstrap --application-choice=browser
+
+      - name: Install nasm
+        run: brew install nasm
+
+      - name: Restore sccache
+        id: sccache
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/Library/Caches/Mozilla.sccache
+          key: sccache107-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: sccache107-
 
       - name: Set up Rust (stable + rust-src for the 10.7 std rebuild)
         run: |
@@ -72,14 +92,38 @@ jobs:
 
       - name: Build
         env:
-          MOZCONFIG: ${{ github.workspace }}/mozconfig-macos107
+          MOZCONFIG: ${{ github.workspace }}/mozconfig-ci
         run: |
+          # Base mozconfig plus CI-only sccache; the in-tree mozconfig
+          # stays usable on machines without sccache.
+          cp mozconfig-macos107 mozconfig-ci
+          echo "ac_add_options --with-ccache=$HOME/.mozbuild/sccache/sccache" >> mozconfig-ci
           /usr/bin/python3 ./mach configure
           /usr/bin/python3 ./mach build
 
+      - name: Stop sccache
+        if: always()
+        run: |
+          sleep 60
+          "$HOME/.mozbuild/sccache/sccache" --stop-server || true
+
+      - name: Save sccache
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: ~/Library/Caches/Mozilla.sccache
+          key: sccache107-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Save bootstrap toolchains
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.mozbuild
+          key: mozbuild107-${{ runner.os }}-${{ github.run_id }}
+
       - name: Package
         env:
-          MOZCONFIG: ${{ github.workspace }}/mozconfig-macos107
+          MOZCONFIG: ${{ github.workspace }}/mozconfig-ci
         run: /usr/bin/python3 ./mach package
 
       - name: Polyfill and repackage

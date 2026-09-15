@@ -33,12 +33,19 @@ jobs:
           rustup component add rust-src
           rustc --version
 
+      - name: Compute support-artifact cache key
+        id: key
+        run: |
+          RUSTV=$(rustc --version | tr ' /' '--')
+          SDKV=$(xcrun --sdk macosx --show-sdk-version)
+          echo "key=legacy107-${{ runner.os }}-${RUSTV}-sdk${SDKV}-${{ hashFiles('tools/legacy-macos/build-libcxx.sh', 'tools/legacy-macos/build-rust-std.sh') }}" >> "$GITHUB_OUTPUT"
+
       - name: Restore support artifacts
         id: cache
         uses: actions/cache/restore@v5
         with:
           path: tools/legacy-macos/dist-10.7
-          key: legacy107-${{ runner.os }}-${{ hashFiles('tools/legacy-macos/build-libcxx.sh', 'tools/legacy-macos/build-rust-std.sh') }}
+          key: ${{ steps.key.outputs.key }}
 
       - name: Place the 26.5 SDK where the mozconfig expects it
         run: |
@@ -61,7 +68,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: tools/legacy-macos/dist-10.7
-          key: legacy107-${{ runner.os }}-${{ hashFiles('tools/legacy-macos/build-libcxx.sh', 'tools/legacy-macos/build-rust-std.sh') }}
+          key: ${{ steps.key.outputs.key }}
 
       - name: Build
         env:

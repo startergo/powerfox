@@ -20,13 +20,23 @@ jobs:
     name: build 10.6 x86_64
     runs-on: macos-26
     timeout-minutes: 300
+    env:
+      SCCACHE_IDLE_TIMEOUT: 0
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
+      - name: Restore the 10.6 SDK
+        id: sdk
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/MacOSX-SDKs
+          key: sdk106-${{ env.SDK_SHA }}-${{ env.RUNTIME_OBJECTS_SHA256 }}
+
       - name: Fetch MacOSX10.6.sdk (pinned)
+        if: steps.sdk.outputs.cache-hit != 'true'
         run: |
           set -e
           mkdir -p "$HOME/MacOSX-SDKs"
@@ -47,15 +57,44 @@ jobs:
           echo "$RUNTIME_OBJECTS_SHA256  /tmp/runtime-objects.tar.gz" | shasum -a 256 -c -
           tar -xzf /tmp/runtime-objects.tar.gz -C MacOSX10.6.sdk
 
-          # The mozconfig expects the SDK inside Xcode's platform dir.
+          # Keep the sparse-checkout git dir out of the cache.
+          rm -rf .git
+
+      - name: Save the 10.6 SDK
+        if: steps.sdk.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/MacOSX-SDKs
+          key: sdk106-${{ env.SDK_SHA }}-${{ env.RUNTIME_OBJECTS_SHA256 }}
+
+      - name: Link the SDK where the mozconfig expects it
+        run: |
           SDKS=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs
           sudo mkdir -p "$SDKS"
           sudo ln -sfn "$HOME/MacOSX-SDKs/MacOSX10.6.sdk" "$SDKS/MacOSX10.6.sdk"
 
+      - name: Restore bootstrap toolchains
+        id: mozbuild
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.mozbuild
+          key: mozbuild106-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: mozbuild106-
+
       - name: Bootstrap build deps
-        run: |
-          /usr/bin/python3 ./mach bootstrap --application-choice=browser
-          brew install nasm
+        if: steps.mozbuild.outputs.cache-hit != 'true'
+        run: /usr/bin/python3 ./mach bootstrap --application-choice=browser
+
+      - name: Install nasm
+        run: brew install nasm
+
+      - name: Restore sccache
+        id: sccache
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/Library/Caches/Mozilla.sccache
+          key: sccache106-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: sccache106-
 
       - name: Set up Rust (stable + rust-src for the emutls std rebuild)
         run: |
@@ -98,14 +137,38 @@ jobs:
 
       - name: Build
         env:
-          MOZCONFIG: ${{ github.workspace }}/mozconfig-macos106
+          MOZCONFIG: ${{ github.workspace }}/mozconfig-ci
         run: |
+          # Base mozconfig plus CI-only sccache; the in-tree mozconfig
+          # stays usable on machines without sccache.
+          cp mozconfig-macos106 mozconfig-ci
+          echo "ac_add_options --with-ccache=$HOME/.mozbuild/sccache/sccache" >> mozconfig-ci
           /usr/bin/python3 ./mach configure
           /usr/bin/python3 ./mach build
 
+      - name: Stop sccache
+        if: always()
+        run: |
+          sleep 60
+          "$HOME/.mozbuild/sccache/sccache" --stop-server || true
+
+      - name: Save sccache
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: ~/Library/Caches/Mozilla.sccache
+          key: sccache106-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Save bootstrap toolchains
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.mozbuild
+          key: mozbuild106-${{ runner.os }}-${{ github.run_id }}
+
       - name: Package
         env:
-          MOZCONFIG: ${{ github.workspace }}/mozconfig-macos106
+          MOZCONFIG: ${{ github.workspace }}/mozconfig-ci
         run: /usr/bin/python3 ./mach package
 
       - name: Collect artifacts

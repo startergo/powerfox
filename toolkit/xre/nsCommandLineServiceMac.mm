@@ -112,9 +112,14 @@ void SetupMacCommandLine(int& argc, char**& argv, bool forRestart) {
   // if the parent is in the foreground.  This will be communicated in a
   // command-line argument to the child.
   if (forRestart) {
-    NSRunningApplication* frontApp =
-        [[NSWorkspace sharedWorkspace] frontmostApplication];
-    if ([frontApp isEqual:[NSRunningApplication currentApplication]]) {
+    if ([[NSWorkspace sharedWorkspace] respondsToSelector:@selector(
+            frontmostApplication)]) {
+      NSRunningApplication* frontApp =
+          [[NSWorkspace sharedWorkspace] frontmostApplication];
+      if ([frontApp isEqual:[NSRunningApplication currentApplication]]) {
+        AddToCommandLine("-foreground");
+      }
+    } else {
       AddToCommandLine("-foreground");
     }
   }

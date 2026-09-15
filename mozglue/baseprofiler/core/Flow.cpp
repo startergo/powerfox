@@ -20,6 +20,9 @@
 #else
 #  include <time.h>
 #  include <unistd.h>
+#  if defined(__APPLE__)
+#    include <mach/mach_time.h>
+#  endif
 #endif
 
 #include "mozilla/Flow.h"
@@ -54,6 +57,15 @@ struct Hasher {
 static uint64_t CurrentTime() {
 #ifdef XP_WIN
   return GetTickCount64();
+#elif defined(__APPLE__) && (!defined(__MAC_OS_X_VERSION_MIN_REQUIRED) || \
+                             __MAC_OS_X_VERSION_MIN_REQUIRED < 101200)
+  // clock_gettime and CLOCK_MONOTONIC require macOS 10.12.
+  static mach_timebase_info_data_t timebaseInfo;
+  if (timebaseInfo.denom == 0) {
+    mach_timebase_info(&timebaseInfo);
+  }
+  return mach_absolute_time() * timebaseInfo.numer / timebaseInfo.denom /
+         1000000;
 #else
   timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);

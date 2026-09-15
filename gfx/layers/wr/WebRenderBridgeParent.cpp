@@ -2601,6 +2601,23 @@ void WebRenderBridgeParent::CompositeToTarget(VsyncId aId,
   mSkippedComposite =
       wr::RenderThread::Get()->TooManyPendingFrames(mLateInit->mApi->GetId());
 
+  if (mWidget) {
+    // The built scene's output rect bounds the picture-cache tile grid and
+    // is only refreshed by display lists. If the widget resizes without a
+    // new display list (e.g. leaving fullscreen on a quiet page), frames
+    // keep the stale, larger grid and its compositor surfaces. Push the new
+    // view so the scene rebuilds and the surplus tiles are released.
+    LayoutDeviceIntSize widgetSize = mWidget->GetClientSize();
+    if (widgetSize != mLastDocumentViewSize) {
+      wr::TransactionBuilder txn(mLateInit->mApi,
+                                 /* aUseSceneBuilderThread */ true);
+      txn.SetDocumentView(
+          LayoutDeviceIntRect(LayoutDeviceIntPoint(), widgetSize));
+      mLateInit->mApi->SendTransaction(txn);
+      mLastDocumentViewSize = widgetSize;
+    }
+  }
+
   if (mSkippedComposite) {
     // Render thread is busy, try next time.
     mSkippedComposite = true;

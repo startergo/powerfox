@@ -8,6 +8,11 @@
 #import <Cocoa/Cocoa.h>
 
 #include "mozilla/EventForwards.h"
+
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
+#import "SDKDeclarations.h"
+#endif
 #include "mozilla/RefPtr.h"
 #include "mozilla/UniquePtr.h"
 #include "nsISupports.h"

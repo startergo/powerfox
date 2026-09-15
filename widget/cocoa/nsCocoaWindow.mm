@@ -4,6 +4,7 @@
 
 #include "nsCocoaWindow.h"
 
+#include <objc/runtime.h>
 #include "nsISupportsPrimitives.h"
 #include "nsArrayUtils.h"
 #include "nsComponentManagerUtils.h"
@@ -38,6 +39,7 @@
 #include "ScreenHelperCocoa.h"
 #include "TextInputHandler.h"
 #include "nsCocoaUtils.h"
+#import <IOSurface/IOSurface.h>
 #include "nsObjCExceptions.h"
 #include "nsCOMPtr.h"
 #include "nsWidgetsCID.h"
@@ -221,6 +223,18 @@ static uint32_t sUniqueKeyEventId = 0;
 
 @end
 
+// Pre-10.8, the compositor's CA tree is hosted in a layer-backed
+// PixelHostingView so CoreAnimation composites it, matching the 10.8+
+// architecture. CoreAnimation does display the IOSurface-backed layer
+// contents on 10.6 (the tiles and the in-scene video rasterize to BGRA
+// IOSurfaces); only biplanar YUV surfaces fail there. PF_LEGACY_BLIT
+// falls back to the old drawRect blit presentation for troubleshooting.
+static bool pfHostLayersPreML() {
+  static bool sHost =
+      !nsCocoaFeatures::OnMountainLionOrLater() && !getenv("PF_LEGACY_BLIT");
+  return sHost;
+}
+
 @interface ChildView (Private)
 
 // sets up our view, attaching it to its owning gecko view
@@ -238,6 +252,14 @@ static uint32_t sUniqueKeyEventId = 0;
 - (void)markLayerForDisplay;
 - (CALayer*)rootCALayer;
 - (void)updateRootCALayer;
+- (void)drawRootCALayerIntoCGContext:(CGContextRef)aContext
+                             viewSize:(NSSize)aViewSize;
+- (void)pfBlitLayer:(CALayer*)aLayer
+               into:(CGContextRef)aContext
+             origin:(CGPoint)aOrigin;
+- (CGImageRef)pfCachedImageForLayer:(CALayer*)aLayer
+                            surface:(IOSurfaceRef)aSurface;
+- (void)pfPresentFromCompositor;
 
 #ifdef ACCESSIBILITY
 - (id<mozAccessible>)accessible;
@@ -914,6 +936,36 @@ void nsCocoaWindow::HandleMainThreadCATransaction() {
   }
 
   MaybeScheduleUnsuspendAsyncCATransactions();
+}
+
+void nsCocoaWindow::PresentCompositedFrame() {
+  if (!mNativeLayerRoot || !mChildView) {
+    return;
+  }
+  // When the tree is hosted, the main-thread commit is the present:
+  // CoreAnimation composites it and there is nothing to invalidate.
+  bool hosted = pfHostLayersPreML();
+  gfx::IntRect dirty;
+  bool committed;
+  {
+    MutexAutoLock lock(mCompositingLock);
+    committed = mNativeLayerRoot->CommitToScreen(hosted ? nullptr : &dirty);
+  }
+  if (!committed || hosted) {
+    return;
+  }
+  // Unhosted pre-10.8 (PF_LEGACY_BLIT): invalidate just the changed layers'
+  // bounds so AppKit redraws a dirty region instead of the window, and let
+  // pfBlitLayer's per-layer image cache keep unchanged tiles out of the
+  // copy.
+  if (NSView* view = [mChildView pixelHostingView]) {
+    // Layer coordinates are bottom-up; NSView is flipped.
+    CGFloat height = NSHeight([view bounds]);
+    NSRect rect =
+        NSMakeRect(dirty.X(), height - dirty.YMost(), dirty.Width(),
+                   dirty.Height());
+    [view setNeedsDisplayInRect:rect];
+  }
 }
 
 void nsCocoaWindow::CreateCompositor(int aWidth, int aHeight) {
@@ -1648,6 +1700,17 @@ NSPasteboard* globalDragPboard = nil;
 // view). gLastDragView is only non-null while a mouse button is pressed, so
 // between mouseDown and mouseUp.
 NSView* gLastDragView = nil;             // [weak]
+
+
+static NSMutableArray* pfLockedSurfaces() {
+  static NSMutableArray* sLocked = nil;
+  if (!sLocked) {
+    sLocked = [[NSMutableArray alloc] init];
+  }
+  return sLocked;
+}
+
+static char pfLayerCacheKey;
 NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
 
 + (void)initialize {
@@ -1739,7 +1802,16 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
   if (!nsCocoaFeatures::OnMountainLionOrLater()) {
     mRootCALayer.geometryFlipped = YES;
   }
-  [mPixelHostingView.layer addSublayer:mRootCALayer];
+  if (nsCocoaFeatures::OnMountainLionOrLater() || pfHostLayersPreML()) {
+    [mPixelHostingView setWantsLayer:YES];
+    [mPixelHostingView.layer addSublayer:mRootCALayer];
+  }
+  // Pre-10.8 the tree used to stay unhosted, with drawRect: blitting the
+  // committed surfaces into the window (the powerfox-browser model); that
+  // burns a core during video. The tree is now hosted like on 10.8+ and
+  // CoreAnimation composites it, with updateRootCALayer re-attaching when
+  // AppKit swaps the view's backing layer. PF_LEGACY_BLIT restores the
+  // unhosted blit presentation.
 
   mLastPressureStage = 0;
 
@@ -1917,16 +1989,31 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
 - (void)markLayerForDisplay {
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
   if (!mIsUpdatingLayer) {
-    // This call will cause updateRootCALayer to be called during the upcoming
-    // main thread CoreAnimation transaction. It will also trigger a transaction
-    // if no transaction is currently pending.
     if (nsCocoaFeatures::OnMountainLionOrLater()) {
-    [mPixelHostingView.layer setNeedsDisplay];
-    } else {
-      // wantsUpdateLayer / updateLayer are only available starting in 10.8.
-      // On Lion, invalidate the view so AppKit calls drawRect:, which performs
-      // the same root-layer update from the main-thread CA transaction.
-      [mPixelHostingView setNeedsDisplay:YES];
+      [mPixelHostingView.layer setNeedsDisplay];
+      return;
+    }
+    // Pre-10.8: AppKit's wantsUpdateLayer path is unavailable and CA
+    // transactions must not run inside drawRect (they corrupt AppKit's
+    // graphics state on 10.6), so run the paint/composite outside the
+    // focus lock. The invalidation stays even when the tree is hosted:
+    // AppKit's draw cycle is what flushes the CA transaction on 10.6, and
+    // removing it measurably raised steady-state CPU during video.
+    if (!mGeckoChild) {
+      return;
+    }
+    static bool sPendingComposite = false;
+    if (!sPendingComposite) {
+      sPendingComposite = true;
+      ChildView* strongSelf = self;
+      NSView* view = mPixelHostingView;
+      dispatch_async(dispatch_get_main_queue(), ^{
+        sPendingComposite = false;
+        if (strongSelf->mGeckoChild) {
+          strongSelf->mGeckoChild->HandleMainThreadCATransaction();
+        }
+        [view setNeedsDisplay:YES];
+      });
     }
   }
 }
@@ -1938,22 +2025,295 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
   }
 }
 
+// Pre-10.8 legacy present path (PF_LEGACY_BLIT): composite the layer tree
+// into the drawRect: CGContext ourselves, following each sublayer's
+// geometry. CoreAnimation does display the IOSurface layer contents on
+// 10.6, so the hosted tree is presented natively and this path is only a
+// troubleshooting fallback.
+- (void)drawRootCALayerIntoCGContext:(CGContextRef)aContext
+                             viewSize:(NSSize)aViewSize {
+  if (!mRootCALayer || mRootCALayer.sublayers.count == 0) {
+    return;
+  }
+  CGContextSaveGState(aContext);
+  [self pfBlitLayer:mRootCALayer
+              into:aContext
+             origin:CGPointZero];
+  CGContextRestoreGState(aContext);
+  for (id surf in pfLockedSurfaces()) {
+    IOSurfaceUnlock((IOSurfaceRef)surf, kIOSurfaceLockReadOnly, nullptr);
+  }
+  [pfLockedSurfaces() removeAllObjects];
+}
+
+// Walks the unhosted layer tree depth-first, replicating the CA semantics
+// NativeLayerCA relies on: a wrapping layer bounds+masksToBounds pair is the
+// tile's clip (uninitialized surface pixels outside the display rect must
+// never be sampled), anchor-point-zero positions accumulate through the
+// hierarchy, and the content layer is placed by its transform, which folds in
+// the tile position, the clip origin compensation and the surface flip. CA
+// and the drawRect context share the same bottom-up origin. Copies are cached
+// per layer until its contents surface is swapped, so presenting a video
+// frame re-copies only the video layer instead of the whole window.
+- (void)pfBlitLayer:(CALayer*)aLayer
+               into:(CGContextRef)aContext
+             origin:(CGPoint)aOrigin {
+  static CGColorSpaceRef sColorSpace = nullptr;
+  if (!sColorSpace) {
+    sColorSpace = CGColorSpaceCreateDeviceRGB();
+  }
+  CGContextSaveGState(aContext);
+  if (aLayer.masksToBounds) {
+    CGContextClipToRect(
+        aContext,
+        CGRectMake(aOrigin.x, aOrigin.y, aLayer.bounds.size.width,
+                   aLayer.bounds.size.height));
+  }
+  // The render thread may swap sublayers and contents concurrently; snapshot
+  // and retain so fast enumeration and the pixel copy stay valid.
+  IOSurfaceRef surface = (IOSurfaceRef)[aLayer.contents retain];
+  if (surface && CFGetTypeID(surface) == IOSurfaceGetTypeID()) {
+    CGImageRef image = [self pfCachedImageForLayer:aLayer surface:surface];
+    if (image) {
+      CGContextTranslateCTM(aContext, aOrigin.x, aOrigin.y);
+      CATransform3D t = aLayer.transform;
+      if (!CATransform3DIsIdentity(t)) {
+        CGContextConcatCTM(
+            aContext,
+            CGAffineTransformMake(t.m11, t.m12, t.m21, t.m22, t.m41, t.m42));
+      }
+      // CA draws contents with row 0 at the bottom of the bounds; the
+      // surface flip, if any, is part of the transform above.
+      CGContextTranslateCTM(aContext, 0, aLayer.bounds.size.height);
+      CGContextScaleCTM(aContext, 1, -1);
+      CGContextDrawImage(
+          aContext,
+          CGRectMake(0, 0, aLayer.bounds.size.width,
+                     aLayer.bounds.size.height),
+          image);
+      bool cached = false;
+      NSMutableData* entry = objc_getAssociatedObject(aLayer, &pfLayerCacheKey);
+      if (entry.length >= sizeof(void*) * 2) {
+        const void** slots = (const void**)entry.mutableBytes;
+        cached = slots[1] == image;
+      }
+      if (!cached) {
+        CGImageRelease(image);
+      }
+    }
+  } else if (aLayer.backgroundColor) {
+    CGRect fillRect = CGRectMake(aOrigin.x, aOrigin.y,
+                                 aLayer.bounds.size.width,
+                                 aLayer.bounds.size.height);
+    CGContextSetFillColorWithColor(aContext, aLayer.backgroundColor);
+    CGContextFillRect(aContext, fillRect);
+  }
+  if (surface) {
+    CFRelease(surface);
+  }
+  for (CALayer* sub in [aLayer.sublayers copy]) {
+    [self pfBlitLayer:sub
+                 into:aContext
+               origin:CGPointMake(aOrigin.x + sub.position.x - sub.bounds.origin.x,
+                                   aOrigin.y + sub.position.y - sub.bounds.origin.y)];
+  }
+  CGContextRestoreGState(aContext);
+}
+
+- (CGImageRef)pfCachedImageForLayer:(CALayer*)aLayer surface:(IOSurfaceRef)aSurface {
+  static CGColorSpaceRef sColorSpace = nullptr;
+  if (!sColorSpace) {
+    sColorSpace = CGColorSpaceCreateDeviceRGB();
+  }
+  NSMutableData* entry = objc_getAssociatedObject(aLayer, &pfLayerCacheKey);
+  if (entry.length >= sizeof(void*) * 2) {
+    const void** slots = (const void**)entry.mutableBytes;
+    if (slots[0] == aSurface && slots[1]) {
+      return (CGImageRef)slots[1];
+    }
+  }
+  IOSurfaceLock(aSurface, kIOSurfaceLockReadOnly, nullptr);
+  [pfLockedSurfaces() addObject:(id)aSurface];
+  size_t width = IOSurfaceGetWidth(aSurface);
+  size_t height = IOSurfaceGetHeight(aSurface);
+  size_t planeCount = IOSurfaceGetPlaneCount(aSurface);
+  size_t bpr = planeCount ? IOSurfaceGetBytesPerRowOfPlane(aSurface, 0)
+                          : IOSurfaceGetBytesPerRow(aSurface);
+  void* base = planeCount ? IOSurfaceGetBaseAddressOfPlane(aSurface, 0)
+                          : IOSurfaceGetBaseAddress(aSurface);
+  // Single-planar 4-byte surfaces draw straight off the locked surface with
+  // a transient image: no per-frame copy. (Planar/packed YUV still converts
+  // through a scratch bitmap.)
+  if (planeCount == 0 && bpr >= width * 4 &&
+      (IOSurfaceGetBytesPerElement(aSurface) ?: 4) == 4) {
+    CGDataProviderRef provider =
+        CGDataProviderCreateWithData(nullptr, base, bpr * height, nullptr);
+    CGImageRef direct = CGImageCreate(
+        width, height, 8, 32, bpr, sColorSpace,
+        kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst, provider,
+        nullptr, false, kCGRenderingIntentDefault);
+    CGDataProviderRelease(provider);
+    return direct;
+  }
+  // Copy through a scratch bitmap before handing pixels to AppKit: 10.6 CG
+  // is fragile when a live IOSurface-backed provider interleaves with its
+  // own gstate machinery. Video surfaces are biplanar NV12; convert to BGRA
+  // here since CG on 10.6 cannot present them directly.
+  CGContextRef bmp = nullptr;
+  OSType pixelFormat = IOSurfaceGetPixelFormat(aSurface);
+  bool isPackedYUV =
+      planeCount == 0 && bpr < width * 4 &&
+      (pixelFormat == 'yuvs' || pixelFormat == '2vuy');
+  if (isPackedYUV) {
+    // yuvs: Y0 U Y1 V; 2vuy: U Y0 V Y1. Both are BT.601 limited range.
+    bmp = CGBitmapContextCreate(
+        nullptr, width, height, 8, width * 4, sColorSpace,
+        kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+    if (bmp) {
+      static const int16_t gu = (int16_t)(-0.344 * 4096 - 0.5);
+      static const int16_t gv = (int16_t)(-0.714 * 4096 - 0.5);
+      static const int16_t bu = (int16_t)(2.032 * 4096 + 0.5);
+      static const int16_t bv = 0;
+      static const int16_t ru = 0;
+      static const int16_t rv = (int16_t)(1.140 * 4096 + 0.5);
+      uint8_t* dst = (uint8_t*)CGBitmapContextGetData(bmp);
+      for (size_t j = 0; j < height; j++) {
+        uint32_t* row = (uint32_t*)(dst + j * width * 4);
+        const uint8_t* src = (const uint8_t*)base + j * bpr;
+        for (size_t i = 0; i < width; i += 2) {
+          uint8_t y0, y1, u8, v8;
+          if (pixelFormat == 'yuvs') {
+            y0 = src[0]; u8 = src[1]; y1 = src[2]; v8 = src[3];
+          } else {
+            u8 = src[0]; y0 = src[1]; v8 = src[2]; y1 = src[3];
+          }
+          int32_t u = u8 - 128, v = v8 - 128;
+          for (int k = 0; k < 2; k++) {
+            int32_t yy = ((k ? y1 : y0) - 16) * 4732 >> 12;
+            int32_t b = (yy + bu * u + bv * v) >> 12;
+            int32_t g = (yy - gu * u - gv * v) >> 12;
+            int32_t r = (yy + ru * u + rv * v) >> 12;
+            row[i + k] =
+                0xFF000000 | (uint32_t)PFCLAMP(b) |
+                ((uint32_t)PFCLAMP(g) << 8) | ((uint32_t)PFCLAMP(r) << 16);
+          }
+          src += 4;
+        }
+      }
+    }
+  } else if (planeCount == 2) {
+    bmp = CGBitmapContextCreate(
+        nullptr, width, height, 8, width * 4, sColorSpace,
+        kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+    if (bmp) {
+      uint8_t* dst = (uint8_t*)CGBitmapContextGetData(bmp);
+      const uint8_t* y = (const uint8_t*)base;
+      const uint8_t* uv =
+          (const uint8_t*)IOSurfaceGetBaseAddressOfPlane(aSurface, 1);
+      size_t yBpr = bpr;
+      size_t uvBpr = IOSurfaceGetBytesPerRowOfPlane(aSurface, 1);
+      // BT.601 limited-range by default; video surfaces tagged BT.709 use
+      // the 709 matrix.
+      // kb = {gu, gv, bu, bv, ru, rv} in 1.12 fixed point; NV12 UV order is
+      // Cb then Cr. Y is limited range 16..235.
+      const int16_t* kb = pfYUV601Table();
+      for (size_t j = 0; j < height; j++) {
+        uint32_t* row = (uint32_t*)(dst + j * width * 4);
+        const uint8_t* yRow = y + j * yBpr;
+        const uint8_t* uvRow = uv + (j / 2) * uvBpr;
+        for (size_t i = 0; i < width; i++) {
+          int32_t yy = (yRow[i] - 16) * 4732 >> 12;
+          int32_t u = uvRow[i & ~1] - 128;
+          int32_t v = uvRow[(i & ~1) + 1] - 128;
+          int32_t b = (yy + kb[2] * u + kb[3] * v) >> 12;
+          int32_t g = (yy - kb[0] * u - kb[1] * v) >> 12;
+          int32_t r = (yy + kb[4] * u + kb[5] * v) >> 12;
+          row[i] = 0xFF000000 | (uint32_t)PFCLAMP(b) |
+                   ((uint32_t)PFCLAMP(g) << 8) |
+                   ((uint32_t)PFCLAMP(r) << 16);
+        }
+      }
+    }
+  } else {
+    bmp = CGBitmapContextCreate(
+        nullptr, width, height, 8, bpr, sColorSpace,
+        kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+    if (bmp) {
+      memcpy(CGBitmapContextGetData(bmp), base, bpr * height);
+    }
+  }
+  CGImageRef image = nullptr;
+  if (bmp) {
+    image = CGBitmapContextCreateImage(bmp);
+    CGContextRelease(bmp);
+  }
+  if (!image) {
+    return nullptr;
+  }
+  if (entry.length < sizeof(void*) * 2) {
+    entry = [NSMutableData dataWithLength:sizeof(void*) * 2];
+    objc_setAssociatedObject(aLayer, &pfLayerCacheKey, entry,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }
+  void** slots = (void**)entry.mutableBytes;
+  if (slots[1]) {
+    CGImageRelease((CGImageRef)slots[1]);
+  }
+  slots[0] = (void*)aSurface;
+  slots[1] = image;
+  return image;
+}
+
+
+static inline int PFCLAMP(int x) {
+  return x < 0 ? 0 : (x > 255 ? 255 : x);
+}
+
+// YUV conversion coefficients as fixed-point 1.13 (KBins): {gu,gv, bu, bv,
+// ru, rv} arranged for direct use in pfCachedImageForLayer.
+static const int16_t* pfYUV601Table() {
+  static const int16_t k601[6] = {
+      (int16_t)((-0.344 * 4096) + 0.5), (int16_t)((-0.714 * 4096) + 0.5),
+      (int16_t)((2.032 * 4096) + 0.5),  0,
+      0,                                (int16_t)((1.140 * 4096) + 0.5)};
+  return k601;
+}
+
+- (void)pfPresentFromCompositor {
+  if (mGeckoChild) {
+    mGeckoChild->PresentCompositedFrame();
+  }
+}
+
 - (void)updateRootCALayer {
   if (NS_IsMainThread() && mGeckoChild) {
-    MOZ_RELEASE_ASSERT(!mIsUpdatingLayer, "Re-entrant layer display?");
+    // Pre-10.8 AppKit can call drawRect: re-entrantly from the display
+    // machinery; the outer invocation performs the update.
+    if (mIsUpdatingLayer) {
+      return;
+    }
     mIsUpdatingLayer = YES;
 
     if (!nsCocoaFeatures::OnMountainLionOrLater()) {
-      // Lion culls the contents of a zero-sized container layer even when the
-      // layer does not mask its sublayers. Modern Core Animation permits the
-      // zero-sized container used by NativeLayerRootCA. Give that container
-      // the hosting view's bounds on Lion so its committed sublayers reach the
-      // WindowServer. This is part of the current main-thread CA transaction.
-      [CATransaction begin];
-      [CATransaction setDisableActions:YES];
-      mRootCALayer.position = NSZeroPoint;
-      mRootCALayer.bounds = mPixelHostingView.bounds;
-      [CATransaction commit];
+      // Pre-10.8: the layer tree is unhosted and drawRect blits its
+      // surfaces. Real invalidations arrive through markLayerForDisplay,
+      // which runs the paint/composite outside of drawRect and then calls
+      // setNeedsDisplay; rescheduling from here would spin a permanent
+      // redraw loop whose unbounded CATransaction commits eventually wedge
+      // 10.6's window server connection (CAViewEndDraw blocks forever).
+      if (pfHostLayersPreML() &&
+          mRootCALayer.superlayer != mPixelHostingView.layer) {
+        // AppKit can swap a layer-backed view's backing layer (10.6 does it
+        // across fullscreen style changes); re-attach the tree or every
+        // commit lands in the detached layer and the view stays grey.
+        [mPixelHostingView.layer addSublayer:mRootCALayer];
+      }
+      if (!CGRectEqualToRect(mRootCALayer.bounds,
+                             [mPixelHostingView bounds])) {
+        mRootCALayer.bounds = [mPixelHostingView bounds];
+      }
+      mIsUpdatingLayer = NO;
+      return;
     }
 
     mGeckoChild->HandleMainThreadCATransaction();
@@ -2844,7 +3204,9 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
     return;
   }
 
-  NSEventPhase phase = [theEvent phase];
+  NSEventPhase phase = [theEvent respondsToSelector:@selector(phase)]
+                           ? [theEvent phase]
+                           : NSEventPhaseNone;
   // Fire eWheelOperationStart/End events when 2 fingers touch/release the
   // touchpad.
   if (phase & NSEventPhaseMayBegin) {
@@ -2876,6 +3238,7 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
       PixelCastJustification::LayoutDeviceIsScreenForUntransformedEvent);
 
   bool usePreciseDeltas =
+      [theEvent respondsToSelector:@selector(hasPreciseScrollingDeltas)] &&
       [theEvent hasPreciseScrollingDeltas] &&
       Preferences::GetBool("mousewheel.enable_pixel_scrolling", true);
   bool hasPhaseInformation = nsCocoaUtils::EventHasPhaseInformation(theEvent);
@@ -3003,6 +3366,7 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
   [self convertCocoaMouseEvent:aMouseEvent toGeckoEvent:outWheelEvent];
 
   bool usePreciseDeltas =
+      [aMouseEvent respondsToSelector:@selector(hasPreciseScrollingDeltas)] &&
       [aMouseEvent hasPreciseScrollingDeltas] &&
       Preferences::GetBool("mousewheel.enable_pixel_scrolling", true);
 
@@ -3403,7 +3767,8 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
   if ([theEvent keyCode] == kVK_ANSI_F &&
       ([theEvent modifierFlags] &
        NSEventModifierFlagDeviceIndependentFlagsMask) ==
-          NSEventModifierFlagFunction) {
+          NSEventModifierFlagFunction &&
+      [[self window] respondsToSelector:@selector(toggleFullScreen:)]) {
     [[self window] toggleFullScreen:nil];
     return;
   }
@@ -4121,6 +4486,79 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
   NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
 
+// NSDraggingSource, image-flavored callbacks. AppKit only sends these for
+// drags started with -dragImage:..., the pre-10.7 path in nsDragSession.
+- (NSDragOperation)draggingSourceOperationMaskForLocal:(BOOL)isLocal {
+  return UINT_MAX;
+}
+
+- (void)draggedImage:(NSImage*)anImage movedTo:(NSPoint)aPoint {
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
+
+  nsCOMPtr<nsIDragService> dragService = mDragService;
+  if (!dragService) {
+    dragService = do_GetService(kDragServiceContractID);
+  }
+  if (dragService && mGeckoChild) {
+    RefPtr<nsIDragSession> dragSession;
+    dragService->GetCurrentSession(mGeckoChild, getter_AddRefs(dragSession));
+    if (dragSession) {
+      NSPoint pnt = [NSEvent mouseLocation];
+      FlipCocoaScreenCoordinate(pnt);
+      LayoutDeviceIntPoint devPoint = mGeckoChild->CocoaPointsToDevPixels(pnt);
+      dragSession->DragMoved(devPoint.x, devPoint.y);
+    }
+  }
+
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
+}
+
+- (void)draggedImage:(NSImage*)anImage
+             endedAt:(NSPoint)aPoint
+           operation:(NSDragOperation)aOperation {
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
+
+  NSEvent* currentEvent = [NSApp currentEvent];
+  gUserCancelledDrag = ([currentEvent type] == NSEventTypeKeyDown &&
+                        [currentEvent keyCode] == kVK_Escape);
+
+  if (!mDragService) {
+    CallGetService(kDragServiceContractID, &mDragService);
+    NS_ASSERTION(mDragService, "Couldn't get a drag service - big problem!");
+  }
+
+  nsCOMPtr<nsIDragSession> session =
+      mDragService ? mDragService->GetCurrentSession(mGeckoChild) : nullptr;
+  if (session) {
+    NSPoint pnt = [NSEvent mouseLocation];
+    NSPoint locationInWindow =
+        nsCocoaUtils::ConvertPointFromScreen([self window], pnt);
+    FlipCocoaScreenCoordinate(pnt);
+    LayoutDeviceIntPoint pt = [self convertWindowCoordinates:locationInWindow];
+    session->SetDragEndPoint(pt.x, pt.y);
+
+    if (aOperation == NSDragOperationNone) {
+      if (RefPtr dataTransfer = session->GetDataTransfer()) {
+        dataTransfer->SetDropEffectInt(nsIDragService::DRAGDROP_ACTION_NONE);
+      }
+    }
+
+    session->EndDragSession(true,
+                            nsCocoaUtils::ModifiersForEvent(currentEvent));
+  }
+
+  session = nullptr;
+  NS_IF_RELEASE(mDragService);
+
+  [globalDragPboard release];
+  globalDragPboard = nil;
+  [gLastDragMouseDownEvent release];
+  gLastDragMouseDownEvent = nil;
+  mPerformedDrag = YES;
+
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
+}
+
 static NSURL* GetPasteLocation(NSPasteboard* aPasteboard, bool aUseFallback) {
   // First, try to get the paste location from the low level pasteboard.
   PasteboardRef pboardRef = nullptr;
@@ -4775,8 +5213,11 @@ nsresult nsCocoaWindow::RestoreHiDPIMode() {
     return nil;
   }
 
-  self.wantsLayer = YES;
-  self.layerContentsRedrawPolicy = NSViewLayerContentsRedrawDuringViewResize;
+  if (nsCocoaFeatures::OnMountainLionOrLater() || pfHostLayersPreML()) {
+    self.wantsLayer = YES;
+    self.layerContentsRedrawPolicy =
+        NSViewLayerContentsRedrawDuringViewResize;
+  }
   return self;
 }
 
@@ -4784,12 +5225,27 @@ nsresult nsCocoaWindow::RestoreHiDPIMode() {
   return YES;
 }
 
+- (void)viewDidMoveToWindow {
+  [(ChildView*)[self superview] updateRootCALayer];
+}
+
+- (void)setFrameSize:(NSSize)aSize {
+  [super setFrameSize:aSize];
+  [(ChildView*)[self superview] updateRootCALayer];
+}
+
 - (NSView*)hitTest:(NSPoint)aPoint {
   return nil;
 }
 
 - (void)drawRect:(NSRect)aRect {
-  [(ChildView*)[self superview] updateRootCALayer];
+  ChildView* child = (ChildView*)[self superview];
+  [child updateRootCALayer];
+  if (!nsCocoaFeatures::OnMountainLionOrLater() && !pfHostLayersPreML()) {
+    CGContextRef ctx =
+        (CGContextRef)[[NSGraphicsContext currentContext] graphicsPort];
+    [child drawRootCALayerIntoCGContext:ctx viewSize:[self bounds].size];
+  }
 }
 
 - (BOOL)wantsUpdateLayer {
@@ -5135,6 +5591,27 @@ nsresult nsCocoaWindow::Create(nsIWidget* aParent, const DesktopIntRect& aRect,
 
   mNativeLayerRoot =
       NativeLayerRootCA::CreateForCALayer(mChildView.rootCALayer);
+  if (!nsCocoaFeatures::OnMountainLionOrLater()) {
+    // The layer tree is unhosted pre-10.8 and drawRect blits it; committing
+    // it from the render thread deadlocks 10.6's window backing store
+    // machinery (CAViewEndDraw never returns), so confine commits to the
+    // main thread. Deferred commits wake the main thread so rendered frames
+    // are applied and blitted even without a pending gecko invalidation.
+    mNativeLayerRoot->KeepCommitsOnMainThread();
+    // Retain the view rather than the widget: the view does not own the
+    // layer root, so this cannot form a reference cycle if the widget is
+    // released without Destroy(). The view's weak widget pointer is nilled
+    // during teardown, making a late callback a no-op.
+    ChildView* callbackView = mChildView;
+    mNativeLayerRoot->SetCommitDeferredCallback([callbackView]() {
+      // dispatch_async to the main queue from this thread does not wake the
+      // main thread on 10.6, where it sits in the classic event loop; use a
+      // runloop-perform, which does.
+      [callbackView performSelectorOnMainThread:@selector(pfPresentFromCompositor)
+                                      withObject:nil
+                                   waitUntilDone:NO];
+    });
+  }
   mNativeLayerRoot->SetBackingScale(BackingScaleFactor());
 
   // Link mChildView into the native NSView hierarchy only after
@@ -5297,9 +5774,11 @@ nsresult nsCocoaWindow::CreateNativeWindow(const NSRect& aRect,
 
   // Make sure that window titles don't leak to disk in private browsing mode
   // due to macOS' resume feature.
-  mWindow.restorable = !aIsPrivateBrowsing;
-  if (aIsPrivateBrowsing) {
-    [mWindow disableSnapshotRestoration];
+  if ([mWindow respondsToSelector:@selector(setRestorable:)]) {
+    mWindow.restorable = !aIsPrivateBrowsing;
+    if (aIsPrivateBrowsing) {
+      [mWindow disableSnapshotRestoration];
+    }
   }
 
   // setup our notification delegate. Note that setDelegate: does NOT retain.
@@ -5364,7 +5843,8 @@ nsresult nsCocoaWindow::CreateNativeWindow(const NSRect& aRect,
   // `macnativefullscreen` attribute.
   if ((mWindowType == WindowType::TopLevel ||
        mWindowType == WindowType::Dialog) &&
-      (features & NSWindowStyleMaskTitled)) {
+      (features & NSWindowStyleMaskTitled) &&
+      nsCocoaFeatures::OnLionOrLater()) {
     NSWindowCollectionBehavior fsBehavior =
         (features & NSWindowStyleMaskResizable)
             ? (NSWindowCollectionBehaviorFullScreenPrimary |
@@ -5378,7 +5858,7 @@ nsresult nsCocoaWindow::CreateNativeWindow(const NSRect& aRect,
 
   // Make the window use CoreAnimation from the start, so that we don't
   // switch from a non-CA window to a CA-window in the middle.
-  mWindow.contentView.wantsLayer = YES;
+  [mWindow.contentView setWantsLayer:YES];
   if (!nsCocoaFeatures::OnMavericksOrLater() &&
       windowClass == [ToolbarWindow class]) {
     [[[mWindow contentView] superview] setWantsLayer:YES];
@@ -5414,6 +5894,13 @@ void nsCocoaWindow::Destroy() {
   // If we don't hide here we run into problems with panels, this is not ideal.
   // (Bug 891424)
   Show(false);
+
+  if (mNativeLayerRoot) {
+    // The deferred-commit callback (which is only set pre-10.8) captures a
+    // strong reference to this window, keeping it and the layer root alive;
+    // clear it so both can be destroyed. Deferred commits become no-ops.
+    mNativeLayerRoot->SetCommitDeferredCallback(nullptr);
+  }
 
   {
     // Make sure that no composition is in progress while disconnecting
@@ -5626,8 +6113,8 @@ void nsCocoaWindow::Show(bool aState) {
     // If we had set the activationPolicy to accessory, then right now we won't
     // have a dock icon. Make sure that we undo that and show a dock icon now
     // that we're going to show a window.
-    if (NSApp.activationPolicy != NSApplicationActivationPolicyRegular) {
-      NSApp.activationPolicy = NSApplicationActivationPolicyRegular;
+    if ([NSApp activationPolicy] != NSApplicationActivationPolicyRegular) {
+      [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
       PR_SetEnv("MOZ_APP_NO_DOCK=");
     }
 
@@ -5659,7 +6146,7 @@ void nsCocoaWindow::Show(bool aState) {
       // NSException.  These errors shouldn't be fatal.  So we need to wrap
       // calls to ...orderFront: in TRY blocks.  See bmo bug 470864.
       NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
-      mWindow.contentView.needsDisplay = YES;
+      [mWindow.contentView setNeedsDisplay:YES];
       if (!nativeParentWindow || mPopupLevel != PopupLevel::Parent) {
         [mWindow orderFront:nil];
       }
@@ -5836,7 +6323,9 @@ bool nsCocoaWindow::ShouldUseOffMainThreadCompositing() {
 bool nsCocoaWindow::ShouldUseNSPopover() const {
   // Use NSPopover for panel popups when the preference is enabled
   // But not for detached popups - they should use traditional window logic
-  return mWindowType == WindowType::Popup && mPopupType == PopupType::Panel &&
+  // NSPopover requires 10.7
+  return nsCocoaFeatures::OnLionOrLater() &&
+         mWindowType == WindowType::Popup && mPopupType == PopupType::Panel &&
          mozilla::StaticPrefs::widget_macos_native_popovers();
 }
 
@@ -6110,7 +6599,7 @@ int32_t nsCocoaWindow::GetWorkspaceID() {
 
   CGSConnection cid = _CGSDefaultConnection();
   // Fetch all spaces that this window belongs to (in order).
-  NSArray<NSNumber*>* spaceIDs = CFBridgingRelease(CopySpacesForWindows(
+  NSArray* spaceIDs = CFBridgingRelease(CopySpacesForWindows(
       cid, kCGSAllSpacesMask,
       (__bridge CFArrayRef) @[ @([mWindow windowNumber]) ]));
   if ([spaceIDs count]) {
@@ -6183,9 +6672,8 @@ void nsCocoaWindow::MoveVisibleWindowToWorkspace(int32_t workspaceID) {
   // When we found the space we're looking for, we can bail out of the loop
   // early, which this local variable is used for.
   BOOL found = false;
-  for (NSDictionary<NSString*, id>* spacesInfo in displaySpacesInfo) {
-    NSArray<NSNumber*>* sids =
-        [spacesInfo[CGSSpacesKey] valueForKey:CGSSpaceIDKey];
+  for (NSDictionary* spacesInfo in displaySpacesInfo) {
+    NSArray* sids = [[spacesInfo objectForKey:CGSSpacesKey] valueForKey:CGSSpaceIDKey];
     for (NSNumber* sid in sids) {
       // If we found our space in the list, we're good to go and can jump out of
       // this loop.
@@ -6246,7 +6734,7 @@ void nsCocoaWindow::HideWindowChrome(bool aShouldHide) {
 
   // Remove the views in the old window's content view.
   // The NSArray is autoreleased and retains its NSViews.
-  NSArray<NSView*>* contentViewContents = [mWindow contentViewContents];
+  NSArray* contentViewContents = [mWindow contentViewContents];
   for (NSView* view in contentViewContents) {
     [view removeFromSuperviewWithoutNeedingDisplay];
   }
@@ -6256,7 +6744,9 @@ void nsCocoaWindow::HideWindowChrome(bool aShouldHide) {
 
   // Recreate the window with the right border style.
   NSRect frameRect = mWindow.frame;
-  BOOL isPrivateWindow = !mWindow.restorable;
+  BOOL isPrivateWindow =
+      [mWindow respondsToSelector:@selector(restorable)] &&
+      !mWindow.restorable;
   DestroyNativeWindow();
   nsresult rv = CreateNativeWindow(
       frameRect, aShouldHide ? BorderStyle::None : mBorderStyle, true,
@@ -7254,7 +7744,7 @@ void nsCocoaWindow::CaptureRollupEvents(bool aDoCapture) {
   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   if (aDoCapture) {
-    if (!NSApp.isActive) {
+    if (![NSApp isActive]) {
       // We need to capture mouse event if we aren't
       // the active application. We only set this up when needed
       // because they cause spurious mouse event after crash
@@ -7340,12 +7830,12 @@ void nsCocoaWindow::SetColorScheme(const Maybe<ColorScheme>& aScheme) {
     return;
   }
   // 10.7 complains if we don't have this check.
-  if (@available(macOS 10.9, *)) {
-  NSAppearance* appearance =
-      aScheme ? NSAppearanceForColorScheme(*aScheme) : nil;
-  if (mWindow.appearance != appearance) {
-    mWindow.appearance = appearance;
-  }
+  if ([NSWindow instancesRespondToSelector:@selector(appearance)]) {
+    NSAppearance* appearance =
+        aScheme ? NSAppearanceForColorScheme(*aScheme) : nil;
+    if (mWindow.appearance != appearance) {
+      mWindow.appearance = appearance;
+    }
   }
   NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
@@ -7456,6 +7946,9 @@ bool nsCocoaWindow::GetSupportsNativeFullscreen() {
 
 void nsCocoaWindow::SetSupportsNativeFullscreen(
     bool aSupportsNativeFullscreen) {
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return;
+  }
   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   if (mWindow) {
@@ -7499,22 +7992,25 @@ void nsCocoaWindow::SetHideTitlebarSeparator(bool aHide) {
   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   if (@available(macOS 11.0, *)) {
-    mWindow.titlebarSeparatorStyle = aHide ? NSTitlebarSeparatorStyleNone
+    if ([NSWindow instancesRespondToSelector:@selector(setTitlebarSeparatorStyle:)]) {
+      mWindow.titlebarSeparatorStyle = aHide ? NSTitlebarSeparatorStyleNone
                                            : NSTitlebarSeparatorStyleAutomatic;
+    }
   }
 
   NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
 
 bool nsCocoaWindow::IsMacTitlebarDirectionRTL() {
-  bool leftToRight = false;
-  if (@available(macOS 10.12, *)) {
-    leftToRight = mWindow.windowTitlebarLayoutDirection ==
-                        NSUserInterfaceLayoutDirectionRightToLeft;
-  } else {
-    leftToRight = false;
+  if (!mWindow) {
+    return false;
   }
-  return mWindow && leftToRight;
+  if (![NSWindow instancesRespondToSelector:@selector(
+          windowTitlebarLayoutDirection)]) {
+    return false;
+  }
+  return mWindow.windowTitlebarLayoutDirection ==
+         NSUserInterfaceLayoutDirectionRightToLeft;
 }
 
 void nsCocoaWindow::SetCustomTitlebar(bool aState) {
@@ -7594,7 +8090,7 @@ already_AddRefed<nsIWidget> nsIWidget::CreateChildWindow() {
 + (void)paintMenubarForWindow:(NSWindow*)aWindow {
   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
-  if (!NSApp.active) {
+  if (![NSApp isActive]) {
     // Early exit if the app isn't active. This is because we can't safely
     // set the NSApp.mainMenu property in such a case. We early exit so we
     // also don't invoke any side effects.
@@ -7619,7 +8115,7 @@ already_AddRefed<nsIWidget> nsIWidget::CreateChildWindow() {
       return;
     }
 
-    NSMenu* mainMenu = NSApp.mainMenu;
+    NSMenu* mainMenu = [NSApp mainMenu];
     NS_ASSERTION(
         mainMenu.numberOfItems > 0,
         "Main menu does not have any items, something is terribly wrong!");
@@ -7637,7 +8133,7 @@ already_AddRefed<nsIWidget> nsIWidget::CreateChildWindow() {
     [firstMenuItem release];
 
     // set our new menu bar as the main menu
-    NSApp.mainMenu = newMenuBar;
+    [NSApp setMainMenu:newMenuBar];
     [newMenuBar release];
   }
 
@@ -7836,7 +8332,7 @@ LayoutDeviceIntPoint nsCocoaWindow::GetNativeLockedPoint() {
   // for some reason they are, which causes bug 1069658.  The following code
   // works around this Apple bug or design flaw.
   NSWindow* window = notification.object;
-  NSView* frameView = window.contentView.superview;
+  NSView* frameView = [(NSView*)window.contentView superview];
   NSView* titlebarView = nil;
   NSView* titlebarContainerView = nil;
   if ([frameView respondsToSelector:@selector(titlebarView)]) {
@@ -7858,7 +8354,9 @@ LayoutDeviceIntPoint nsCocoaWindow::GetNativeLockedPoint() {
       // mode, disable titlebar separators for full screen windows of the
       // ToolbarWindow class. The drawing bug was filed as FB9056136. See bug
       // 1700211 and bug 1912338 for more details.
-      window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
+      if ([NSWindow instancesRespondToSelector:@selector(setTitlebarSeparatorStyle:)]) {
+        window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
+      }
     }
   }
 
@@ -7921,7 +8419,7 @@ LayoutDeviceIntPoint nsCocoaWindow::GetNativeLockedPoint() {
 
   // [NSApp _isRunningAppModal] will return true if we're running an OS dialog
   // app modally. If one of those is up then we want it to retain its menu bar.
-  if (NSApp._isRunningAppModal) {
+  if ([NSApp _isRunningAppModal]) {
     return;
   }
   NSWindow* window = aNotification.object;
@@ -8113,9 +8611,10 @@ LayoutDeviceIntPoint nsCocoaWindow::GetNativeLockedPoint() {
       // making them invisible.
       return NSMakePoint(buttonsRect.origin.x, win.frame.size.height);
     }
-    if (@available(macOS 10.12, *))
-    if (win.windowTitlebarLayoutDirection ==
-        NSUserInterfaceLayoutDirectionRightToLeft) {
+    if ([NSWindow instancesRespondToSelector:@selector(
+            windowTitlebarLayoutDirection)] &&
+        win.windowTitlebarLayoutDirection ==
+            NSUserInterfaceLayoutDirectionRightToLeft) {
       // We're in RTL mode, which means that the close button is the rightmost
       // button of the three window buttons. and buttonsRect.origin is the
         // bottom left corner of the green (zoom) button. The close button is
@@ -8357,7 +8856,8 @@ static NSImage* GetMenuMaskImage() {
       if (aStyle == WindowShadow::Menu) {
         // Menus on macOS 26 use glass instead of vibrancy.
         auto* effectView =
-            [[NSGlassEffectView alloc] initWithFrame:self.contentView.frame];
+            [[NSGlassEffectView alloc]
+                initWithFrame:[(NSView*)self.contentView frame]];
         effectView.cornerRadius = 12.0f;
         return effectView;
       }
@@ -8365,7 +8865,7 @@ static NSImage* GetMenuMaskImage() {
     if (aStyle == WindowShadow::Menu || aStyle == WindowShadow::Tooltip) {
       const bool isMenu = aStyle == WindowShadow::Menu;
       auto* effectView =
-          [[NSVisualEffectView alloc] initWithFrame:self.contentView.frame];
+          [[NSVisualEffectView alloc] initWithFrame:[(NSView*)self.contentView frame]];
 
       // Tooltip and menu windows are never "key", so we need to tell the
       // vibrancy effect to look active regardless of window state.
@@ -8386,7 +8886,7 @@ static NSImage* GetMenuMaskImage() {
       }
       return effectView;
     }
-    return [[NSView alloc] initWithFrame:self.contentView.frame];
+    return [[NSView alloc] initWithFrame:[(NSView*)self.contentView frame]];
   }();
 
   wrapper.wantsLayer = YES;
@@ -8548,8 +9048,8 @@ static const NSString* kStateCollectionBehavior = @"collectionBehavior";
   return contentView.superview ? contentView.superview : contentView;
 }
 
-- (NSArray<NSView*>*)contentViewContents {
-  return [[self.contentView.subviews copy] autorelease];
+- (NSArray*)contentViewContents {
+  return [[[(NSView*)self.contentView subviews] copy] autorelease];
 }
 
 - (ChildView*)mainChildView {
@@ -8619,7 +9119,7 @@ static const NSString* kStateCollectionBehavior = @"collectionBehavior";
 
 // Possibly move the titlebar buttons.
 - (void)reflowTitlebarElements {
-  NSView* frameView = self.contentView.superview;
+  NSView* frameView = [(NSView*)self.contentView superview];
   if ([frameView respondsToSelector:@selector(_tileTitlebarAndRedisplay:)]) {
     [frameView _tileTitlebarAndRedisplay:NO];
   }
@@ -8655,7 +9155,9 @@ static const NSString* kStateCollectionBehavior = @"collectionBehavior";
 }
 
 - (void)setTitlebarSeparatorStyle:(NSTitlebarSeparatorStyle)aStyle {
-  [super setTitlebarSeparatorStyle:aStyle];
+  if ([NSWindow instancesRespondToSelector:@selector(setTitlebarSeparatorStyle:)]) {
+      [super setTitlebarSeparatorStyle:aStyle];
+    }
   [self updateTitlebarTransparency];
 }
 
@@ -8790,7 +9292,8 @@ static const NSString* kStateCollectionBehavior = @"collectionBehavior";
     // that are not of the ToolbarWindow class, such as the floating full
     // screen toolbar window. The drawing bug was filed as FB9056136. See bug
     // 1700211 and bug 1912338 for more details.
-    if (@available(macOS 11.0, *)) {
+    if ([NSWindow instancesRespondToSelector:@selector(
+            setTitlebarSeparatorStyle:)]) {
       aWindow.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
     }
   }
@@ -8928,7 +9431,9 @@ static bool MaybeDropEventForModalWindow(NSEvent* aEvent, id aDelegate) {
     [self updateTitlebarGradientViewPresence];
 
     if (@available(macOS 11.0, *)) {
-      self.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
+      if ([NSWindow instancesRespondToSelector:@selector(setTitlebarSeparatorStyle:)]) {
+        self.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
+      }
     }
 
     if (@available(macOS 10.11, *)) {
@@ -8942,8 +9447,11 @@ static bool MaybeDropEventForModalWindow(NSEvent* aEvent, id aDelegate) {
                                     context:nil];
       // Adding this accessory view controller allows us to shift the toolbar
       // down when the user mouses to the top of the screen in fullscreen.
-    [(NSWindow*)self
-        addTitlebarAccessoryViewController:mFullscreenTitlebarTracker];
+    if ([NSWindow instancesRespondToSelector:@selector(
+            addTitlebarAccessoryViewController:)]) {
+      [(NSWindow*)self
+          addTitlebarAccessoryViewController:mFullscreenTitlebarTracker];
+    }
   }
   }
   return self;
@@ -8960,8 +9468,8 @@ static bool MaybeDropEventForModalWindow(NSEvent* aEvent, id aDelegate) {
   [super dealloc];
 }
 
-- (NSArray<NSView*>*)contentViewContents {
-  NSMutableArray<NSView*>* contents =
+- (NSArray*)contentViewContents {
+  NSMutableArray* contents =
       [[[self contentView] subviews] mutableCopy];
   if (mTitlebarGradientView) {
     [contents removeObject:mTitlebarGradientView];
@@ -9040,7 +9548,7 @@ static bool MaybeDropEventForModalWindow(NSEvent* aEvent, id aDelegate) {
 
 - (void)observeValueForKeyPath:(NSString*)keyPath
                       ofObject:(id)object
-                        change:(NSDictionary<NSKeyValueChangeKey, id>*)change
+                        change:(NSDictionary*)change
                        context:(void*)context {
   if ([keyPath isEqualToString:@"revealAmount"]) {
     [[self mainChildView] ensureNextCompositeIsAtomicWithMainThreadPaint];
@@ -9103,7 +9611,7 @@ static CGFloat DefaultTitlebarHeight() {
   // if the menubar is shown or is in the process of being shown, and 0
   // otherwise. Since we are multiplying the menubar height by aShownAmount, we
   // always want the full height.
-  CGFloat menuBarHeight = NSApp.mainMenu.menuBarHeight;
+  CGFloat menuBarHeight = [[NSApp mainMenu] menuBarHeight];
   if (menuBarHeight > 0.0f) {
     mMenuBarHeight = menuBarHeight;
   }
@@ -9394,7 +9902,12 @@ static const NSUInteger kWindowShadowOptionsTooltipMojaveOrLater = 4;
   mUsePopover = YES;
 
   if (!mPopover) {
-    mPopover = [[NSPopover alloc] init];
+    Class popoverClass = objc_getClass("NSPopover");
+    if (!popoverClass) {
+      mUsePopover = NO;
+      return;
+    }
+    mPopover = [[popoverClass alloc] init];
 
     // Use NSPopoverBehaviorApplicationDefined to prevent auto-closing
     // when other popovers are opened, and to respect the disable_autohide

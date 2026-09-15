@@ -5,7 +5,15 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #import "MacUtils.h"
+#import "SDKDeclarations.h"
 #include "mozAccessible.h"
+
+static id AXColorAttributeValue(NSColor* aColor) {
+  if ([aColor respondsToSelector:@selector(CGColor)]) {
+    return (__bridge id)[aColor CGColor];
+  }
+  return aColor;
+}
 
 #include "LocalAccessible.h"
 #include "DocAccessible.h"
@@ -100,13 +108,13 @@ NSDictionary* StringAttributesFromAccAttributes(AccAttributes* aAttributes,
     if (iter.Name() == nsGkAtoms::background_color) {
       if (Maybe<Color> value = iter.Value<Color>()) {
         NSColor* color = ColorFromColor(*value);
-        [attrDict setObject:(__bridge id)color.CGColor
+        [attrDict setObject:AXColorAttributeValue(color)
                      forKey:@"AXBackgroundColor"];
       }
     } else if (iter.Name() == nsGkAtoms::color) {
       if (Maybe<Color> value = iter.Value<Color>()) {
         NSColor* color = ColorFromColor(*value);
-        [attrDict setObject:(__bridge id)color.CGColor
+        [attrDict setObject:AXColorAttributeValue(color)
                      forKey:@"AXForegroundColor"];
       }
     } else if (iter.Name() == nsGkAtoms::font_size) {
@@ -123,7 +131,7 @@ NSDictionary* StringAttributesFromAccAttributes(AccAttributes* aAttributes,
       [attrDict setObject:@1 forKey:@"AXUnderline"];
       if (Maybe<Color> value = iter.Value<Color>()) {
         NSColor* color = ColorFromColor(*value);
-        [attrDict setObject:(__bridge id)color.CGColor
+        [attrDict setObject:AXColorAttributeValue(color)
                      forKey:@"AXUnderlineColor"];
       }
     } else if (iter.Name() == nsGkAtoms::invalid) {

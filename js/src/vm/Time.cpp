@@ -10,6 +10,7 @@
 #  define _REENTRANT 1
 #endif
 #include <string.h>
+#include <sys/time.h>
 #include <time.h>
 
 #include "jstypes.h"
@@ -27,10 +28,19 @@ int64_t js::PRMJ_Now() {
   // latter.
 
   timespec ts;
+#if defined(__APPLE__) && (!defined(__MAC_OS_X_VERSION_MIN_REQUIRED) || \
+                            __MAC_OS_X_VERSION_MIN_REQUIRED < 101200)
+  // clock_gettime and the clockid_t clocks require macOS 10.12.
+  struct timeval tv;
+  MOZ_ALWAYS_TRUE(gettimeofday(&tv, nullptr) == 0);
+  return int64_t(tv.tv_sec) * PRMJ_USEC_PER_SEC +
+         int64_t(tv.tv_usec);
+#else
   MOZ_ALWAYS_TRUE(clock_gettime(CLOCK_REALTIME, &ts) == 0);
 
   return int64_t(ts.tv_sec) * PRMJ_USEC_PER_SEC +
          int64_t(ts.tv_nsec / PRMJ_NSEC_PER_USEC);
+#endif
 }
 
 #elif defined(XP_WIN)

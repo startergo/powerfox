@@ -37,6 +37,13 @@ use cocoa::{
     NSView_NSConstraintBasedLayoutInstallingConstraints, NSView_NSConstraintBasedLayoutLayering,
     PNSObject,
 };
+#[cfg(pfx_pre_10_7_sdk)]
+use cocoa::{
+    INSMutableParagraphStyle, NSApplication_PFXLayoutCompat, NSColor_PFXColorCompat,
+    NSRunLoop_PFXCompat, NSTextContainer_PFXCompat, NSView_PFXLayoutCompat,
+    NSWindow_PFXKeyNavCompat,
+};
+
 use std::str::FromStr;
 
 use once_cell::sync::Lazy;
@@ -52,6 +59,8 @@ const NSLayoutPriorityDefaultHigh: cocoa::NSLayoutPriority = 750.0;
 
 const MACOS_KERNEL_MAJOR_VERSION_LION: u32 = 11;
 const MACOS_KERNEL_MAJOR_VERSION_MAVERICKS: u32 = 13;
+#[cfg(pfx_pre_10_7_sdk)]
+const MACOS_KERNEL_MAJOR_VERSION_YOSEMITE: u32 = 14;
 const MACOS_KERNEL_MAJOR_VERSION_EL_CAPITAN: u32 = 15;
 const MACOS_KERNEL_MAJOR_VERSION_SIERRA: u32 = 16;
 
@@ -198,8 +207,9 @@ fn enqueue<F: Fn() + 'static>(f: F) {
                     cocoa::NSDefaultRunLoopMode.0,
                     cocoa::NSModalPanelRunLoopMode.0,
                 ];
-                RunloopModes(
-                    cocoa::NSArray(<cocoa::NSArray as NSArray_NSArrayCreation<
+                #[cfg(not(pfx_pre_10_7_sdk))]
+                let modes = cocoa::NSArray(
+                    <cocoa::NSArray as NSArray_NSArrayCreation<
                         cocoa::NSRunLoopMode,
                     >>::arrayWithObjects_count_(
                         objects.as_slice().as_ptr() as *const *mut _,
@@ -208,8 +218,20 @@ fn enqueue<F: Fn() + 'static>(f: F) {
                             .len()
                             .try_into()
                             .expect("usize can't fit in u64"),
-                    )),
-                )
+                    ),
+                );
+                #[cfg(pfx_pre_10_7_sdk)]
+                let modes = cocoa::NSArray(
+                    <cocoa::NSArray as NSArray_NSArrayCreation>::arrayWithObjects_count_(
+                        objects.as_slice().as_ptr() as *const *mut _,
+                        objects
+                            .as_slice()
+                            .len()
+                            .try_into()
+                            .expect("usize can't fit in u64"),
+                    ),
+                );
+                RunloopModes(modes)
             }
         }
     }
@@ -335,11 +357,12 @@ objc_class! {
                         style.horizontal_size_request.unwrap_or(800),
                         style.vertical_size_request.unwrap_or(500),
                     ),
-                    cocoa::NSWindowStyleMaskTitled
+                    (cocoa::NSWindowStyleMaskTitled
                         | cocoa::NSWindowStyleMaskClosable
                         | cocoa::NSWindowStyleMaskResizable
-                        | cocoa::NSWindowStyleMaskMiniaturizable,
-                    cocoa::NSBackingStoreBuffered,
+                        | cocoa::NSWindowStyleMaskMiniaturizable)
+                        .into(),
+                    cocoa::NSBackingStoreBuffered.into(),
                     runtime::NO,
                 ).is_null() {
                     return std::ptr::null_mut();
@@ -391,7 +414,7 @@ objc_class! {
                     // Send a dummy event to ensure the stop is witnessed. This is necessary because
                     // we may be closing as a result of an `invoke()` rather than another event.
                     let event = cocoa::NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2_(
-                        cocoa::NSEventTypeApplicationDefined,
+                        cocoa::NSEventTypeApplicationDefined.into(),
                         Default::default(),
                         Default::default(),
                         Default::default(),
@@ -574,9 +597,22 @@ impl IntoNSLayoutAnchor for cocoa::NSLayoutYAxisAnchor {
     }
 }
 
+#[cfg(not(pfx_pre_10_7_sdk))]
 unsafe fn constraint_equal<T, O>(anchor: T, to: O, margin: u32)
 where
     T: INSLayoutAnchor<()> + std::ops::Deref,
+    T::Target: Message + Sized,
+    O: IntoNSLayoutAnchor,
+{
+    anchor
+        .constraintEqualToAnchor_constant_(to.into_layout_anchor(), margin as f64)
+        .setActive_(runtime::YES);
+}
+
+#[cfg(pfx_pre_10_7_sdk)]
+unsafe fn constraint_equal<T, O>(anchor: T, to: O, margin: u32)
+where
+    T: INSLayoutAnchor + std::ops::Deref,
     T::Target: Message + Sized,
     O: IntoNSLayoutAnchor,
 {
@@ -654,7 +690,7 @@ impl WindowRenderer {
                 // constraints set up relative to the parent (they can't be set relative to the
                 // window).
                 let content_parent: StrongRef<cocoa::NSBox> = msg_send![class!(NSBox), new];
-                content_parent.setTitlePosition_(cocoa::NSNoTitle);
+                content_parent.setTitlePosition_(cocoa::NSNoTitle.into());
                 content_parent.setTransparent_(runtime::YES);
                 content_parent.setContentViewMargins_(cocoa::NSSize {
                     width: 8.0,
@@ -680,7 +716,7 @@ impl WindowRenderer {
                 impl ShowChild {
                     pub fn show(&self, parent: cocoa::NSWindow, child: cocoa::NSWindow) {
                         unsafe {
-                            parent.addChildWindow_ordered_(child, cocoa::NSWindowAbove);
+                            parent.addChildWindow_ordered_(child, cocoa::NSWindowAbove.into());
                             child.makeKeyAndOrderFront_(parent.0);
                             if self.modal {
                                 // Run the modal from the main nsapp.run() loop to prevent binding
@@ -799,11 +835,11 @@ impl ViewRenderer {
         unsafe {
             view.setContentHuggingPriority_forOrientation_(
                 NSLayoutPriorityDefaultHigh,
-                cocoa::NSLayoutConstraintOrientationHorizontal,
+                cocoa::NSLayoutConstraintOrientationHorizontal.into(),
             );
             view.setContentHuggingPriority_forOrientation_(
                 NSLayoutPriorityDefaultHigh,
-                cocoa::NSLayoutConstraintOrientationVertical,
+                cocoa::NSLayoutConstraintOrientationVertical.into(),
             );
         }
 
@@ -811,15 +847,15 @@ impl ViewRenderer {
         // Set layout and writing direction based on RTL.
         unsafe {
             view.setUserInterfaceLayoutDirection_(if self.rtl {
-                cocoa::NSUserInterfaceLayoutDirectionRightToLeft
+                cocoa::NSUserInterfaceLayoutDirectionRightToLeft.into()
             } else {
-                cocoa::NSUserInterfaceLayoutDirectionLeftToRight
+                cocoa::NSUserInterfaceLayoutDirectionLeftToRight.into()
             });
             if let Ok(control) = cocoa::NSControl::try_from(view) {
                 control.setBaseWritingDirection_(if self.rtl {
-                    cocoa::NSWritingDirectionRightToLeft
+                    cocoa::NSWritingDirectionRightToLeft.into()
                 } else {
-                    cocoa::NSWritingDirectionLeftToRight
+                    cocoa::NSWritingDirectionLeftToRight.into()
                 });
             }
         }
@@ -852,7 +888,7 @@ impl ViewRenderer {
                         // Without the autoresizing mask set, Text within Scroll doesn't display
                         // properly (it shrinks to 0-width, likely due to some specific interaction
                         // of NSScrollView with autolayout).
-                        view.setAutoresizingMask_(cocoa::NSViewWidthSizable);
+                        view.setAutoresizingMask_(cocoa::NSViewWidthSizable.into());
                     }
                     Alignment::Start => {
                         constraint_equal(la, pla, style.margin.start);
@@ -894,7 +930,7 @@ impl ViewRenderer {
                         constraint_equal(ba, pba, style.margin.bottom);
                         // Set the autoresizing mask to be consistent with the horizontal settings
                         // (see the comment there as to why it's necessary).
-                        view.setAutoresizingMask_(cocoa::NSViewHeightSizable);
+                        view.setAutoresizingMask_(cocoa::NSViewHeightSizable.into());
                     }
                     Alignment::Start => {
                         constraint_equal(ta, pta, style.margin.top);
@@ -999,14 +1035,14 @@ fn render_element(
             unsafe {
                 sv.init();
                 if macos_kernel_major_version() >= Ok(MACOS_KERNEL_MAJOR_VERSION_MAVERICKS) {
-                    std::mem::transmute::<cocoa::NSView, cocoa::NSStackView>(sv).setOrientation_(cocoa::NSUserInterfaceLayoutOrientationVertical);
-                    std::mem::transmute::<cocoa::NSView, cocoa::NSStackView>(sv).setAlignment_(cocoa::NSLayoutAttributeLeading);
+                    std::mem::transmute::<cocoa::NSView, cocoa::NSStackView>(sv).setOrientation_(cocoa::NSUserInterfaceLayoutOrientationVertical.into());
+                    std::mem::transmute::<cocoa::NSView, cocoa::NSStackView>(sv).setAlignment_(cocoa::NSLayoutAttributeLeading.into());
                     std::mem::transmute::<cocoa::NSView, cocoa::NSStackView>(sv).setSpacing_(spacing as _);
                 if style.vertical_alignment != Alignment::Fill {
                     // Make sure the vbox stays as small as its content.
                         std::mem::transmute::<cocoa::NSView, cocoa::NSStackView>(sv).setHuggingPriority_forOrientation_(
                         NSLayoutPriorityDefaultHigh,
-                        cocoa::NSLayoutConstraintOrientationVertical,
+                        cocoa::NSLayoutConstraintOrientationVertical.into(),
                     );
                 }
             }
@@ -1019,13 +1055,18 @@ fn render_element(
                 };
              if macos_kernel_major_version() >= Ok(MACOS_KERNEL_MAJOR_VERSION_MAVERICKS) {
                 let parent: cocoa::NSStackView = parent.try_into().unwrap();
-                unsafe { parent.addView_inGravity_(child, gravity) };
+                unsafe { parent.addView_inGravity_(child, gravity as _) };
              } else {
                 let parent: cocoa::NSSplitView = parent.try_into().unwrap();
                 unsafe {
                     // it's uglier with subtreeifneeded on lion because textcontainer setSize
                     // isn't valid, so we only call it on 10.8 for now
                     if macos_kernel_major_version() > Ok(MACOS_KERNEL_MAJOR_VERSION_LION) {
+                        // The category trait is only implemented for NSView, not subclasses.
+                        #[cfg(pfx_pre_10_7_sdk)]
+                        std::mem::transmute::<cocoa::NSSplitView, cocoa::NSView>(parent)
+                            .layoutSubtreeIfNeeded();
+                        #[cfg(not(pfx_pre_10_7_sdk))]
                         parent.layoutSubtreeIfNeeded();
                     }
                     parent.addSubview_(child)
@@ -1055,14 +1096,14 @@ fn render_element(
             unsafe {
                 sv.init();
                 if macos_kernel_major_version() >= Ok(MACOS_KERNEL_MAJOR_VERSION_MAVERICKS) {
-                    std::mem::transmute::<cocoa::NSView, cocoa::NSStackView>(sv).setOrientation_(cocoa::NSUserInterfaceLayoutOrientationHorizontal);
-                    std::mem::transmute::<cocoa::NSView, cocoa::NSStackView>(sv).setAlignment_(cocoa::NSLayoutAttributeTop);
+                    std::mem::transmute::<cocoa::NSView, cocoa::NSStackView>(sv).setOrientation_(cocoa::NSUserInterfaceLayoutOrientationHorizontal.into());
+                    std::mem::transmute::<cocoa::NSView, cocoa::NSStackView>(sv).setAlignment_(cocoa::NSLayoutAttributeTop.into());
                     std::mem::transmute::<cocoa::NSView, cocoa::NSStackView>(sv).setSpacing_(spacing as _);
                     if style.vertical_alignment != Alignment::Fill {
                         // Make sure the vbox stays as small as its content.
                         std::mem::transmute::<cocoa::NSView, cocoa::NSStackView>(sv).setHuggingPriority_forOrientation_(
                         NSLayoutPriorityDefaultHigh,
-                        cocoa::NSLayoutConstraintOrientationHorizontal,
+                        cocoa::NSLayoutConstraintOrientationHorizontal.into(),
                     );
                 }
             }
@@ -1075,13 +1116,18 @@ fn render_element(
                 };
              if macos_kernel_major_version() >= Ok(MACOS_KERNEL_MAJOR_VERSION_MAVERICKS) {
                 let parent: cocoa::NSStackView = parent.try_into().unwrap();
-                unsafe { parent.addView_inGravity_(child, gravity) };
+                unsafe { parent.addView_inGravity_(child, gravity as _) };
              } else {
                 let parent: cocoa::NSSplitView = parent.try_into().unwrap();
                 unsafe {
                     // it's uglier with subtreeifneeded on lion because textcontainer setSize
                     // isn't valid, so we only call it on 10.8 for now
                     if macos_kernel_major_version() > Ok(MACOS_KERNEL_MAJOR_VERSION_LION) {
+                        // The category trait is only implemented for NSView, not subclasses.
+                        #[cfg(pfx_pre_10_7_sdk)]
+                        std::mem::transmute::<cocoa::NSSplitView, cocoa::NSView>(parent)
+                            .layoutSubtreeIfNeeded();
+                        #[cfg(not(pfx_pre_10_7_sdk))]
                         parent.layoutSubtreeIfNeeded();
                     }
                     parent.addSubview_(child)
@@ -1182,7 +1228,7 @@ fn render_element(
             unsafe {
                 sv.init();
                 sv.setHasVerticalScroller_(runtime::YES);
-                sv.setBorderType_(cocoa::NSBezelBorder);
+                sv.setBorderType_(cocoa::NSBezelBorder.into());
                 sv.setDrawsBackground_(runtime::YES);
             }
             if let Some(content) = content {
@@ -1206,7 +1252,7 @@ fn render_element(
                 if rtl {
                     let ps = StrongRef::new(cocoa::NSMutableParagraphStyle::alloc());
                     ps.init();
-                    ps.setAlignment_(cocoa::NSTextAlignmentRight);
+                    ps.setAlignment_(cocoa::NSTextAlignmentRight.into());
                     // We don't `use cocoa::NSTextView_NSSharing` because it has some methods which
                     // conflict with others that make it inconvenient.
                     cocoa::NSTextView_NSSharing::setDefaultParagraphStyle_(&*tv, (*ps).into());
@@ -1224,12 +1270,30 @@ fn render_element(
                 if let Some(placeholder) = placeholder {
                     // It's unclear why dictionaryWithObject_forKey_ takes `u64` rather than `id`
                     // arguments.
+                    #[cfg(not(pfx_pre_10_7_sdk))]
                     let attrs = cocoa::NSDictionary(
                         <cocoa::NSDictionary as NSDictionary_NSDictionaryCreation<
                             cocoa::NSAttributedStringKey,
                             cocoa::id,
                         >>::dictionaryWithObject_forKey_(
                             std::mem::transmute(cocoa::NSColor::placeholderTextColor().0),
+                            std::mem::transmute(cocoa::NSForegroundColorAttributeName.0),
+                        ),
+                    );
+                    // The pre-10.7 SDK bindings generate the trait without generics and
+                    // dictionaryWithObject_forKey_ takes `id` arguments.
+                    // NSColor.placeholderTextColor is 10.10+; sending it to NSColor on
+                    // an older runtime aborts with an unrecognized selector.
+                    #[cfg(pfx_pre_10_7_sdk)]
+                    let attrs = cocoa::NSDictionary(
+                        <cocoa::NSDictionary as NSDictionary_NSDictionaryCreation>::dictionaryWithObject_forKey_(
+                            std::mem::transmute(if macos_kernel_major_version()
+                                >= Ok(MACOS_KERNEL_MAJOR_VERSION_YOSEMITE)
+                            {
+                                cocoa::NSColor::placeholderTextColor().0
+                            } else {
+                                cocoa::NSColor::disabledControlTextColor().0
+                            }),
                             std::mem::transmute(cocoa::NSForegroundColorAttributeName.0),
                         ),
                     );

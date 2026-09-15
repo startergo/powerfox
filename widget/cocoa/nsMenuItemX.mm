@@ -367,7 +367,7 @@ void nsMenuItemX::SetKeyEquiv() {
 void nsMenuItemX::SetBadge() {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
 
-  if (@available(macOS 14.0, *)) {
+  if ([mNativeMenuItem respondsToSelector:@selector(setBadge:)]) {
     nsAutoString badgeValue;
     if (!mContent->AsElement()->GetAttr(nsGkAtoms::badge, badgeValue)) {
       mNativeMenuItem.badge = nullptr;

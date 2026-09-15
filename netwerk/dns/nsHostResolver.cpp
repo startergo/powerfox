@@ -51,6 +51,10 @@
 #  include "mozilla/WindowsVersion.h"
 #endif  // XP_WIN
 
+#if defined(XP_MACOSX)
+#  include "nsCocoaFeatures.h"
+#endif
+
 #ifdef MOZ_WIDGET_ANDROID
 #  include "mozilla/jni/Utils.h"
 #endif
@@ -906,6 +910,14 @@ bool nsHostResolver::TRRServiceEnabledForRecord(nsHostRecord* aRec) {
   MOZ_ASSERT(aRec, "Record must not be empty");
   MOZ_ASSERT(aRec->mEffectiveTRRMode != nsIRequest::TRR_DEFAULT_MODE,
              "effective TRR mode must be computed before this call");
+#if defined(XP_MACOSX)
+  // DoH hangs on 10.6 (see TRRService::Enabled) - this includes custom
+  // servers, which the check below would otherwise always allow.
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    aRec->RecordReason(TRRSkippedReason::TRR_MODE_NOT_ENABLED);
+    return false;
+  }
+#endif
   if (!TRRService::Get()) {
     aRec->RecordReason(TRRSkippedReason::TRR_NO_GSERVICE);
     return false;

@@ -9,6 +9,34 @@
 #include "nsDirectoryServiceDefs.h"
 #include "nsIFile.h"
 
+#if !defined(__MAC_OS_X_VERSION_MAX_ALLOWED) || \
+    __MAC_OS_X_VERSION_MAX_ALLOWED < 150000
+// frameResizeCursorFromPosition requires macOS 15; declared so the
+// availability-guarded calls compile with SDKs that predate it. It resolves
+// to nil pre-15, where the fallback resize cursors are used.
+typedef NSUInteger NSCursorFrameResizePosition;
+enum {
+  NSCursorFrameResizePositionTop = (1 << 0),
+  NSCursorFrameResizePositionLeft = (1 << 1),
+  NSCursorFrameResizePositionBottom = (1 << 2),
+  NSCursorFrameResizePositionRight = (1 << 3),
+  NSCursorFrameResizePositionTopLeft =
+      (NSCursorFrameResizePositionTop | NSCursorFrameResizePositionLeft),
+  NSCursorFrameResizePositionTopRight =
+      (NSCursorFrameResizePositionTop | NSCursorFrameResizePositionRight),
+  NSCursorFrameResizePositionBottomLeft =
+      (NSCursorFrameResizePositionBottom | NSCursorFrameResizePositionLeft),
+  NSCursorFrameResizePositionBottomRight =
+      (NSCursorFrameResizePositionBottom | NSCursorFrameResizePositionRight),
+};
+@interface NSCursor (PowerFoxFrameResizeCompat)
++ (NSCursor*)frameResizeCursorFromPosition:(NSCursorFrameResizePosition)position
+                              inDirections:(NSUInteger)directions;
+@end
+#define NSCursorFrameResizeDirectionsOutward (1ULL << 1)
+#define NSCursorFrameResizeDirectionsAll 3ULL
+#endif
+
 static MOZDynamicCursor* gInstance;
 static CGFloat sCurrentCursorScaleFactor = 0.0f;
 constinit static nsIWidget::Cursor sCurrentCursor;
@@ -91,7 +119,10 @@ static constexpr nsCursor kCustomCursor = eCursorCount;
       return [NSCursor cursorWithImageNamed:@"zoomOut"
                                     hotSpot:NSMakePoint(10, 10)];
     case eCursor_vertical_text:
-      return [NSCursor IBeamCursorForVerticalLayout];
+      if ([NSCursor respondsToSelector:@selector(IBeamCursorForVerticalLayout)]) {
+        return [NSCursor IBeamCursorForVerticalLayout];
+      }
+      return [NSCursor IBeamCursor];
     case eCursor_all_scroll:
       return [NSCursor openHandCursor];
     case eCursor_not_allowed:

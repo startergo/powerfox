@@ -12,6 +12,9 @@
 #include "nsINetworkLinkService.h"
 #include "nsIObserverService.h"
 #include "nsIOService.h"
+#if defined(XP_MACOSX)
+#  include "nsCocoaFeatures.h"
+#endif
 #include "nsNetUtil.h"
 #include "nsStandardURL.h"
 #include "DNSServiceBase.h"
@@ -249,6 +252,13 @@ void TRRService::SetDetectedTrrURI(const nsACString& aURI) {
 }
 
 bool TRRService::Enabled(nsIRequest::TRRMode aRequestMode) {
+#if defined(XP_MACOSX)
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    // The DoH request hangs on 10.6 and stalls name resolution for every
+    // host TRR would handle.
+    return false;
+  }
+#endif
   if (mMode == nsIDNSService::MODE_TRROFF ||
       aRequestMode == nsIRequest::TRR_DISABLED_MODE) {
     LOG(("TRR service not enabled - off or disabled"));

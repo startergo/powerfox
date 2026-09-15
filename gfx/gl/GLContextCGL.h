@@ -8,6 +8,7 @@
 #include "GLContext.h"
 
 #include "OpenGL/OpenGL.h"
+#include <OpenGL/CGLIOSurface.h>
 
 #ifdef __OBJC__
 #  include <AppKit/NSOpenGL.h>

@@ -43,7 +43,9 @@ NativeLayerMacSurfaceHandler::~NativeLayerMacSurfaceHandler() {
     mInProgressLockedIOSurface = nullptr;
   }
   if (mInProgressSurface) {
-    IOSurfaceDecrementUseCount(mInProgressSurface->mSurface.get());
+    if (&::IOSurfaceDecrementUseCount) {
+      ::IOSurfaceDecrementUseCount(mInProgressSurface->mSurface.get());
+    }
     mSurfacePoolHandle->ReturnSurfaceToPool(mInProgressSurface->mSurface);
   }
   if (mFrontSurface) {
@@ -77,7 +79,9 @@ bool NativeLayerMacSurfaceHandler::NextSurface() {
   }
 
   mInProgressSurface = std::move(surf);
-  IOSurfaceIncrementUseCount(mInProgressSurface->mSurface.get());
+  if (&::IOSurfaceIncrementUseCount) {
+    ::IOSurfaceIncrementUseCount(mInProgressSurface->mSurface.get());
+  }
   return true;
 }
 
@@ -133,7 +137,8 @@ NativeLayerMacSurfaceHandler::GetUnusedSurfaceAndCleanUp() {
 
   // Separate mSurfaces into used and unused surfaces.
   for (auto& surf : mSurfaces) {
-    if (IOSurfaceIsInUse(surf.mEntry.mSurface.get())) {
+    if (&::IOSurfaceIsInUse &&
+        ::IOSurfaceIsInUse(surf.mEntry.mSurface.get())) {
       surf.mCheckCount++;
       if (surf.mCheckCount < 10) {
         usedSurfaces.push_back(std::move(surf));
@@ -260,7 +265,9 @@ bool NativeLayerMacSurfaceHandler::NotifySurfaceReady() {
   }
 
   MOZ_RELEASE_ASSERT(mInProgressUpdateRegion);
-  IOSurfaceDecrementUseCount(mInProgressSurface->mSurface.get());
+  if (&::IOSurfaceDecrementUseCount) {
+    ::IOSurfaceDecrementUseCount(mInProgressSurface->mSurface.get());
+  }
   mFrontSurface = std::move(mInProgressSurface);
   mFrontSurface->mInvalidRegion.SubOut(mInProgressUpdateRegion.extract());
 

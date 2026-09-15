@@ -214,8 +214,20 @@ if CONFIG["MOZ_WEBRTC"]:
         ]
 
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
+    if CONFIG["MOZ_LEGACY_MACOS_TARGET"]:
+        # Pre-10.7 target: the public Accessibility framework is 10.13+ (on
+        # older systems the AX APIs live in HIServices and the weak
+        # references resolve to null), AVFoundation/CoreMedia/CoreUI/
+        # CoreSymbolication are absent from the old SDK and resolve through
+        # link-time stubs with real install names, and post-10.6 symbols are
+        # left to dyld (null on 10.6, the real frameworks on newer systems)
+        # instead of failing on stub dylibs that lack them.
+        OS_LIBS += ["-Wl,-undefined,dynamic_lookup"]
+        fw = "-weak_framework "
+    else:
+        fw = "-framework "
     OS_LIBS += [
-        "-framework Accessibility",
+        fw + "Accessibility",
         "-framework Foundation",
         "-framework CoreFoundation",
         "-framework CoreLocation",
@@ -234,13 +246,12 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
         "-framework AppKit",
         "-framework CoreMIDI",
         "-framework SystemConfiguration",
-        "-framework AVFoundation",
-        "-framework CoreMedia",
-        "-framework IOKit",
+        fw + "AVFoundation",
+        fw + "CoreMedia",
         "-weak_framework ScreenCaptureKit",
         "-F%s" % CONFIG["MACOS_PRIVATE_FRAMEWORKS_DIR"],
-        "-framework CoreUI",
-        "-framework CoreSymbolication",
+        fw + "CoreUI",
+        fw + "CoreSymbolication",
         "cups",
     ]
     USE_LIBS += [

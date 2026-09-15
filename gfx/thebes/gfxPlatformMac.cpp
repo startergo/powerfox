@@ -14,7 +14,9 @@
 #include "gfxUserFontSet.h"
 #include "gfxConfig.h"
 
-#include "AppleUtils.h"
+#ifdef MOZ_APPLEMEDIA
+#  include "AppleUtils.h"
+#endif
 #include "CFTypeRefPtr.h"
 #include "nsTArray.h"
 #include "mozilla/Preferences.h"

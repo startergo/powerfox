@@ -4399,6 +4399,8 @@ int XREMain::XRE_mainInit(bool* aExitFlag,
 #ifdef XP_MACOSX
     // To avoid taking focus when running in headless mode immediately
     // transition Firefox to a background application.
+#  if defined(MAC_OS_X_VERSION_10_7) && \
+      MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_7
     ProcessSerialNumber psn = {0, kCurrentProcess};
     OSStatus transformStatus =
         TransformProcessType(&psn, kProcessTransformToBackgroundApplication);
@@ -4406,6 +4408,9 @@ int XREMain::XRE_mainInit(bool* aExitFlag,
       NS_ERROR("Failed to make process a background application.");
       return 1;
     }
+#  else
+    // kProcessTransformToBackgroundApplication requires macOS 10.7.
+#  endif
 #endif
   }
 

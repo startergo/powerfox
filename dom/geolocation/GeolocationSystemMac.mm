@@ -8,6 +8,24 @@
 #include <CoreLocation/CLLocationManager.h>
 #include <CoreLocation/CLLocationManagerDelegate.h>
 
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
+// The pre-Lion SDK's CoreLocation has no authorization API.
+typedef NSInteger CLAuthorizationStatus;
+enum {
+  kCLAuthorizationStatusNotDetermined = 0,
+  kCLAuthorizationStatusRestricted = 1,
+  kCLAuthorizationStatusDenied = 2,
+  kCLAuthorizationStatusAuthorizedAlways = 3,
+  kCLAuthorizationStatusAuthorized = 3,
+  kCLAuthorizationStatusAuthorizedWhenInUse = 4,
+};
+
+@interface CLLocationManager (CLLocationManager10_15)
+@property(readonly) CLAuthorizationStatus authorizationStatus;
+@end
+#endif
+
 #include "GeolocationSystem.h"
 #include "mozilla/Components.h"
 #include "mozilla/StaticPrefs_geo.h"
@@ -295,7 +313,7 @@ RequestLocationPermissionFromUser(BrowsingContext* aBrowsingContext,
 }
 
 - (void)locationManager:(CLLocationManager*)aManager
-     didUpdateLocations:(NSArray<CLLocation*>*)aLocations {
+     didUpdateLocations:(NSArray*)aLocations {
   // Assume the system has processed the permissions dialog by now.
   [aManager stopUpdatingLocation];
 }

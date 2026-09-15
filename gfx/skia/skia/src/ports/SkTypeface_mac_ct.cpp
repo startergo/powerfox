@@ -1271,6 +1271,10 @@ static SkUniqueCFRef<CTFontRef> ctfont_from_skdata(sk_sp<SkData> data, int ttcIn
 
     SkUniqueCFRef<CFDataRef> cfData(cfdata_from_skdata(std::move(data)));
 
+    if (!&CTFontManagerCreateFontDescriptorFromData) {
+        // Requires macOS 10.13.
+        return nullptr;
+    }
     SkUniqueCFRef<CTFontDescriptorRef> desc(
             CTFontManagerCreateFontDescriptorFromData(cfData.get()));
     if (!desc) {

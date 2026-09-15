@@ -27,6 +27,7 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreServices/CoreServices.h>
+#include <Security/Security.h>
 #if defined(__aarch64__)
 #  include <dlfcn.h>
 #endif

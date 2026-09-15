@@ -131,7 +131,7 @@ bool nsMenuUtilsX::NodeIsHiddenOrCollapsed(nsIContent* aContent) {
 NSMenuItem* nsMenuUtilsX::NativeMenuItemWithLocation(NSMenu* aRootMenu,
                                                      NSString* aLocationString,
                                                      bool aIsMenuBar) {
-  NSArray<NSString*>* indexes =
+  NSArray* indexes =
       [aLocationString componentsSeparatedByString:@"|"];
   unsigned int pathLength = indexes.count;
   if (pathLength == 0) {
@@ -140,7 +140,7 @@ NSMenuItem* nsMenuUtilsX::NativeMenuItemWithLocation(NSMenu* aRootMenu,
 
   NSMenu* currentSubmenu = aRootMenu;
   for (unsigned int depth = 0; depth < pathLength; depth++) {
-    NSInteger targetIndex = [indexes objectAtIndex:depth].integerValue;
+    NSInteger targetIndex = [[indexes objectAtIndex:depth] integerValue];
     if (aIsMenuBar && depth == 0) {
       // We remove the application menu from consideration for the top-level
       // menu.

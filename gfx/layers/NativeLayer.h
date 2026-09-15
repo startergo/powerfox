@@ -73,7 +73,7 @@ class NativeLayerRoot {
 
   // Publish the layer changes to the screen. Returns whether the commit was
   // successful.
-  virtual bool CommitToScreen() = 0;
+  virtual bool CommitToScreen(gfx::IntRect* aDirtyRect = nullptr) = 0;
 
   // When called on a remote instance, synchronously wait until the other side
   // has processed any previous commits.

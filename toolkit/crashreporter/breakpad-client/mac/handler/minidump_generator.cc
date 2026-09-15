@@ -30,6 +30,31 @@
 #include <algorithm>
 #include <cstdio>
 
+#if defined(__APPLE__) && !defined(EXC_CORPSE_NOTIFY)
+// Missing from the pre-Lion SDK's mach headers.
+#define EXC_RESOURCE 15
+#define EXC_GUARD 18
+#define EXC_CORPSE_NOTIFY 13
+#define EXC_MASK_RESOURCE (1 << EXC_RESOURCE)
+#define EXC_MASK_GUARD (1 << EXC_GUARD)
+#define THREAD_EXTENDED_INFO 5
+#define THREAD_EXTENDED_INFO_COUNT \
+  (sizeof(thread_extended_info_data_t) / sizeof(natural_t))
+#include <sys/sysctl.h>
+struct powerfox_thread_extended_info {
+  uint64_t pth_user_time;
+  uint64_t pth_system_time;
+  int32_t pth_cpu_usage;
+  int32_t pth_policy;
+  int32_t pth_run_state;
+  int32_t pth_flags;
+  int32_t pth_suspend_count;
+  int32_t pth_sleep_time;
+  char pth_name[64];
+};
+typedef struct powerfox_thread_extended_info thread_extended_info_data_t;
+#endif
+
 #include <mach/host_info.h>
 #include <mach/machine.h>
 #include <mach/vm_statistics.h>
@@ -2153,8 +2178,6 @@ bool MinidumpGenerator::WriteThreadNamesStream(
   thread_names_stream->stream_type = MD_THREAD_NAMES_STREAM;
   thread_names_stream->location = list.location();
 
-  list.get()->number_of_thread_names = non_generator_thread_count;
-
   MDRawThreadName thread_name;
   int thread_idx = 0;
 
@@ -2168,6 +2191,11 @@ bool MinidumpGenerator::WriteThreadNamesStream(
       }
     }
   }
+
+  // THREAD_EXTENDED_INFO is unavailable before OS X 10.9, so on older systems
+  // no names are collected; only report the entries that were actually
+  // written. (Returning false here would discard the entire minidump.)
+  list.get()->number_of_thread_names = thread_idx;
 
   return true;
 }

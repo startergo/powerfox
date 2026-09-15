@@ -3,6 +3,14 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <AppKit/AppKit.h>
+
+#if !defined(MAC_OS_X_VERSION_10_12) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_12
+// The NSAlertStyle spellings were introduced later.
+#define NSAlertStyleInformational NSInformationalAlertStyle
+#define NSAlertStyleWarning NSWarningAlertStyle
+#define NSAlertStyleCritical NSCriticalAlertStyle
+#endif
 #include <ApplicationServices/ApplicationServices.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreServices/CoreServices.h>
@@ -432,7 +440,8 @@ bool MaybeInstallAndRelaunch() {
     // issue with novice mac users. Still, look it up correctly:
     NSArray* applicationsDirs = NSSearchPathForDirectoriesInDomains(
         NSApplicationDirectory, NSLocalDomainMask, YES);
-    NSString* applicationsDir = applicationsDirs[0];
+    NSString* applicationsDir =
+        [applicationsDirs count] ? [applicationsDirs objectAtIndex:0] : nil;
 
     // Sanity check dir exists
     NSFileManager* fileManager = [NSFileManager defaultManager];

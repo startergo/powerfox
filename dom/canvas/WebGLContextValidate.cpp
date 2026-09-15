@@ -507,9 +507,16 @@ bool WebGLContext::InitAndValidateGL(FailureReason* const out_failReason) {
     gl->fEnable(LOCAL_GL_TEXTURE_CUBE_MAP_SEAMLESS);
   }
 
-  if (!gl->IsGLES() && gl->ShadingLanguageVersion() < 150) {
-    const nsPrintfCString reason("GL_SHADING_LANGUAGE_VERSION: %u < 150!",
-                                 gl->ShadingLanguageVersion());
+  uint32_t minGLSLVersion = 150;
+#ifdef XP_MACOSX
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    // 10.6 only offers GL 2.1 / GLSL 1.20, which WebGL 1 targets directly.
+    minGLSLVersion = 120;
+  }
+#endif
+  if (!gl->IsGLES() && gl->ShadingLanguageVersion() < minGLSLVersion) {
+    const nsPrintfCString reason("GL_SHADING_LANGUAGE_VERSION: %u < %u!",
+                                 gl->ShadingLanguageVersion(), minGLSLVersion);
     *out_failReason = {"FEATURE_FAILURE_WEBGL_GLSL_VERSION", reason};
     return false;
   }

@@ -96,7 +96,7 @@ class TextInputHandler;
 // exclude its MOZTitlebarView from the array that is returned here.
 // In the vast majority of cases, the array will only have a single element:
 // this window's mainChildView.
-- (NSArray<NSView*>*)contentViewContents;
+- (NSArray*)contentViewContents;
 
 - (ChildView*)mainChildView;
 
@@ -407,6 +407,7 @@ class nsCocoaWindow final : public nsIWidget {
 
   void PaintWindowInContentLayer();
   void HandleMainThreadCATransaction();
+  void PresentCompositedFrame();
 
 #ifdef ACCESSIBILITY
   already_AddRefed<mozilla::a11y::LocalAccessible> GetWindowAccessible();

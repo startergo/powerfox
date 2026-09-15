@@ -68,15 +68,23 @@ inline void DrawNativeGreyColorInRect(CGContextRef context, ColorName name, CGRe
 @end
 #endif
 
+inline NSColor* sRGBNSColor(CGFloat red, CGFloat green, CGFloat blue,
+                            CGFloat alpha) {
+  if (nsCocoaFeatures::OnLionOrLater()) {
+    return [NSColor colorWithSRGBRed:red green:green blue:blue alpha:alpha];
+  }
+  return [NSColor colorWithCalibratedRed:red green:green blue:blue alpha:alpha];
+}
+
 inline NSColor* ControlAccentColor() {
-  if (@available(macOS 10.14, *)) {
+  if ([NSColor respondsToSelector:@selector(controlAccentColor)]) {
     return [NSColor controlAccentColor];
   }
 
   // Pre-10.14, use hardcoded colors.
   return [NSColor currentControlTint] == NSGraphiteControlTint
-             ? [NSColor colorWithSRGBRed:0.635 green:0.635 blue:0.655 alpha:1.0]
-             : [NSColor colorWithSRGBRed:0.247 green:0.584 blue:0.965 alpha:1.0];
+             ? sRGBNSColor(0.635, 0.635, 0.655, 1.0)
+             : sRGBNSColor(0.247, 0.584, 0.965, 1.0);
 }
 
 inline NSAppearance* NSAppearanceForColorScheme(mozilla::ColorScheme aScheme) {

@@ -1,0 +1,59 @@
+# Example mozconfig for building PowerFox for Mac OS X 10.6 Snow Leopard
+# (x86_64, cross-compiled from an arm64 host).
+#
+# Prerequisites:
+#   - The MacOSX10.6 SDK installed in Xcode (or adjust the paths below):
+#     /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk
+#   - Xcode's clang (LLVM >= 19, per the build system requirement).
+#   - A patched header overlay and a darwin10 C++ runtime to bundle, built once with:
+#     tools/legacy-macos/make-sdk-overlay.sh
+#     tools/legacy-macos/build-libcxx.sh
+#
+# Note: Rust components link against a Rust std built for a newer deployment
+# target. Building locally with the host rustc produces a binary suitable for
+# compile verification; shipping a 10.6 build requires a Rust toolchain whose
+# std supports 10.6.
+
+ac_add_options --enable-application=browser
+
+ac_add_options --target=x86_64-apple-darwin
+ac_add_options --enable-macos-target=10.6
+ac_add_options --enable-linker=ld-classic
+ac_add_options --with-macos-sdk=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk
+# The wasm sandboxing needs a wasm-capable toolchain (mach bootstrap).
+ac_add_options --without-wasm-sandboxed-libraries
+# WebRTC's camera capture needs AVFoundation (10.7+).
+ac_add_options --disable-webrtc
+# Lets the NSPR subconfigure know the deployment floor (connectx etc.).
+export MACOSX_DEPLOYMENT_TARGET=10.6
+
+# The patched-header overlay and the host SDK's libc++ headers must be part
+# of the compiler command line itself so configure-time probes see them
+# (the 10.6 SDK ships no libc++ headers of its own). The -F flags let
+# <CoreGraphics/...>, <CoreText/...> and friends resolve inside the
+# ApplicationServices and CoreServices sub-frameworks, where they live on
+# pre-Lion systems.
+SDK10_6=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk
+export CC="/usr/bin/clang -isystem$topsrcdir/tools/legacy-macos/overlay-sdk -F$topsrcdir/tools/legacy-macos/overlay-sdk/frameworks -isystem/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/c++/v1 -F$SDK10_6/System/Library/Frameworks/ApplicationServices.framework/Frameworks -F$SDK10_6/System/Library/Frameworks/CoreServices.framework/Frameworks"
+export CXX="/usr/bin/clang++ -isystem$topsrcdir/tools/legacy-macos/overlay-sdk -F$topsrcdir/tools/legacy-macos/overlay-sdk/frameworks -isystem/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/c++/v1 -F$SDK10_6/System/Library/Frameworks/ApplicationServices.framework/Frameworks -F$SDK10_6/System/Library/Frameworks/CoreServices.framework/Frameworks"
+
+# Bundle the darwin10 libc++ built by tools/legacy-macos/build-libcxx.sh.
+# Link-time -lc++ resolves to the libc++.1.dylib inside the 10.6 SDK; this
+# directory only feeds packaging (browser/installer/Makefile.in).
+export LEGACY_CXX_RUNTIME_DIR=$topsrcdir/tools/legacy-macos/dist/lib
+
+# Symbols missing from the 10.6 libSystem (arc4random_buf, availability
+# checks, ARC runtime shims). force_load is position-independent.
+export LDFLAGS="-Wl,-force_load,$topsrcdir/tools/legacy-macos/dist/lib/compat-10.6.o -Wl,-lobjc -Wl,-framework,CoreFoundation -Wl,-framework,ApplicationServices -Wl,-rpath,@executable_path/."
+# GNU ar (homebrew binutils) writes members ld-classic rejects with
+# "not 8-byte aligned"; use Apple's tools.
+export AR=/usr/bin/ar
+export RANLIB=/usr/bin/ranlib
+# The prebuilt Rust std uses native TLS, which dyld on 10.6 cannot load.
+# Rebuild std with emulated TLS (requires: rustup component add rust-src).
+export RUSTFLAGS="-Ztls-model=emulated --cfg=pfx_pre_10_7_sdk"
+export RUSTC="$topsrcdir/tools/legacy-macos/rustc-emutls"
+# Let the stable toolchain accept the -Z flags above (and -Zbuild-std in the
+# objdir cargo config).
+mk_add_options RUSTC_BOOTSTRAP=1
+ac_add_options --disable-install-strip

@@ -31,6 +31,11 @@ class nsClipboard final : public nsBaseClipboard {
   // Helper methods, used also by nsDragService
   static NSDictionary* PasteboardDictFromTransferable(
       nsITransferable* aTransferable);
+  // Writes a dict from PasteboardDictFromTransferable to aPasteboard. The
+  // types in aExtraTypes are declared but receive no data.
+  static void WritePasteboardOutputDict(NSPasteboard* aPasteboard,
+                                        NSDictionary* aDict,
+                                        NSArray* aExtraTypes = nil);
   // aPasteboardType is being retained and needs to be released by the caller.
   static bool IsStringType(const nsACString& aMIMEType,
                            NSString** aPasteboardType);

@@ -32,6 +32,9 @@ ScopedCFType<CFStringRef> MozillaStringToCFString(const nsACString& stringIn) {
 
 nsresult KeychainSecret::StoreSecret(const nsACString& aSecret,
                                      const nsACString& aLabel) {
+  if (!kSecClassGenericPassword) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   // This creates a CFDictionary of the form:
   // { class: generic password,
   //   account: the given label,
@@ -54,7 +57,8 @@ nsresult KeychainSecret::StoreSecret(const nsACString& aSecret,
             ("DeleteSecret before StoreSecret failed"));
     return rv;
   }
-  const CFStringRef keys[] = {kSecClass, kSecAttrAccount, kSecValueData};
+  const CFStringRef keys[] = {(CFStringRef)kSecClass, (CFStringRef)kSecAttrAccount,
+                               (CFStringRef)kSecValueData};
   ScopedCFType<CFStringRef> label(MozillaStringToCFString(aLabel));
   if (!label) {
     MOZ_LOG(gKeychainSecretLog, LogLevel::Debug,
@@ -90,11 +94,14 @@ nsresult KeychainSecret::StoreSecret(const nsACString& aSecret,
 }
 
 nsresult KeychainSecret::DeleteSecret(const nsACString& aLabel) {
+  if (!kSecClassGenericPassword) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   // To delete a secret, we create a CFDictionary of the form:
   // { class: generic password,
   //   account: the given label }
   // and then call SecItemDelete.
-  const CFStringRef keys[] = {kSecClass, kSecAttrAccount};
+  const CFStringRef keys[] = {(CFStringRef)kSecClass, (CFStringRef)kSecAttrAccount};
   ScopedCFType<CFStringRef> label(MozillaStringToCFString(aLabel));
   if (!label) {
     MOZ_LOG(gKeychainSecretLog, LogLevel::Debug,
@@ -124,6 +131,9 @@ nsresult KeychainSecret::DeleteSecret(const nsACString& aLabel) {
 
 nsresult KeychainSecret::RetrieveSecret(const nsACString& aLabel,
                                         /* out */ nsACString& aSecret) {
+  if (!kSecClassGenericPassword) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   // To retrieve a secret, we create a CFDictionary of the form:
   // { class: generic password,
   //   account: the given label,
@@ -133,8 +143,10 @@ nsresult KeychainSecret::RetrieveSecret(const nsACString& aLabel,
   // This searches for and returns the attributes and data for the secret
   // matching the given label. We then extract the data (i.e. the secret) and
   // return it.
-  const CFStringRef keys[] = {kSecClass, kSecAttrAccount, kSecMatchLimit,
-                              kSecReturnAttributes, kSecReturnData};
+  const CFStringRef keys[] = {(CFStringRef)kSecClass, (CFStringRef)kSecAttrAccount,
+                              (CFStringRef)kSecMatchLimit,
+                              (CFStringRef)kSecReturnAttributes,
+                              (CFStringRef)kSecReturnData};
   ScopedCFType<CFStringRef> label(MozillaStringToCFString(aLabel));
   if (!label) {
     MOZ_LOG(gKeychainSecretLog, LogLevel::Debug,

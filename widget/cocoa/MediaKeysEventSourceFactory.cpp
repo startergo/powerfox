@@ -5,18 +5,28 @@
 #include "MediaKeysEventSourceFactory.h"
 
 #include "MediaHardwareKeysEventSourceMac.h"
-#include "MediaHardwareKeysEventSourceMacMediaCenter.h"
+// Match the moz.build gate for MediaHardwareKeysEventSourceMacMediaCenter.mm
+// (deployment target >= 10.12.2), not the SDK's MAX_ALLOWED: with old-SDK
+// builds the implementation is not compiled at all.
+#if defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && \
+    __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 101202 && \
+    (!defined(MAC_OS_X_VERSION_10_12_2) || \
+     MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_12_2)
+#  include "MediaHardwareKeysEventSourceMacMediaCenter.h"
+#  define HAVE_MEDIACENTER 1
+#endif
 #include "nsCocoaFeatures.h"
 
 namespace mozilla {
 namespace widget {
 
 mozilla::dom::MediaControlKeySource* CreateMediaControlKeySource() {
+#if defined(HAVE_MEDIACENTER)
   if (nsCocoaFeatures::IsAtLeastVersion(10, 12, 2)) {
-  return new MediaHardwareKeysEventSourceMacMediaCenter();
-  } else {
-    return new MediaHardwareKeysEventSourceMac();
+    return new MediaHardwareKeysEventSourceMacMediaCenter();
   }
+#endif
+  return new MediaHardwareKeysEventSourceMac();
 }
 
 }  // namespace widget

@@ -62,7 +62,7 @@ auto TextRecognition::DoFindText(gfx::DataSourceSurface& aSurface,
               VNRecognizeTextRequest* textRecognitionRequest = [[VNRecognizeTextRequest alloc]
                   initWithCompletionHandler:^(VNRequest* _Nonnull request,
                                                     NSError* _Nullable error) {
-                    NSArray<VNRecognizedTextObservation*>* observations = request.results;
+                    NSArray* observations = request.results;
 
                     [observations
                         enumerateObjectsUsingBlock:^(VNRecognizedTextObservation* _Nonnull obj,

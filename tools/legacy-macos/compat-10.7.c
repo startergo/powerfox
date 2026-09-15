@@ -137,3 +137,60 @@ int clock_gettime(clockid_t clk_id, struct timespec* tp) {
   tp->tv_nsec = (long)(ns % 1000000000ULL);
   return 0;
 }
+
+#include <sys/dirent.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+/* The $INODE64 symbol variants (64-bit-inode struct stat/readdir) are
+   10.10 libSystem additions. On 10.9 the default stat family already
+   uses 64-bit inodes when built with a modern SDK (_DARWIN_FEATURE_64_
+   BIT_INODE), so forward each variant to its plain counterpart. The
+   SDK headers #define stat to stat$INODE64 etc., which would mangle
+   these definitions; undef first. */
+#undef stat
+#undef fstat
+#undef lstat
+#undef fstatat
+#undef opendir
+#undef fdopendir
+#undef readdir
+#undef readdir_r
+
+/* The SDK headers attach __asm("_fstat$INODE64")-style names to the
+   plain declarations, so redeclaring them here would silently inherit
+   the $INODE64 name and recurse. Route through distinct identifiers
+   with explicit asm labels bound to the real symbols. */
+int pf_stat(const char*, struct stat*) __asm("_stat");
+int pf_fstat(int, struct stat*) __asm("_fstat");
+int pf_lstat(const char*, struct stat*) __asm("_lstat");
+int pf_fstatat(int, const char*, struct stat*, int) __asm("_fstatat");
+DIR* pf_opendir(const char*) __asm("_opendir");
+DIR* pf_fdopendir(int) __asm("_fdopendir");
+struct dirent* pf_readdir(DIR*) __asm("_readdir");
+int pf_readdir_r(DIR*, struct dirent*, struct dirent**) __asm("_readdir_r");
+
+int stat$INODE64(const char* path, struct stat* st) {
+  return pf_stat(path, st);
+}
+int fstat$INODE64(int fd, struct stat* st) { return pf_fstat(fd, st); }
+int lstat$INODE64(const char* path, struct stat* st) {
+  return pf_lstat(path, st);
+}
+int fstatat$INODE64(int fd, const char* path, struct stat* st, int flag) {
+  return pf_fstatat(fd, path, st, flag);
+}
+DIR* opendir$INODE64(const char* name) { return pf_opendir(name); }
+DIR* fdopendir$INODE64(int fd) { return pf_fdopendir(fd); }
+struct dirent* readdir$INODE64(DIR* dir) { return pf_readdir(dir); }
+int readdir_r$INODE64(DIR* dir, struct dirent* entry, struct dirent** result) {
+  return pf_readdir_r(dir, entry, result);
+}
+
+#include <dispatch/dispatch.h>
+/* dispatch_queue_create_with_target$V2 is a 10.12 variant; the plain
+   symbol exists on 10.9. */
+dispatch_queue_t dispatch_queue_create_with_target$V2(
+    const char* label, dispatch_queue_attr_t attr, dispatch_queue_t target) {
+  return dispatch_queue_create_with_target(label, attr, target);
+}

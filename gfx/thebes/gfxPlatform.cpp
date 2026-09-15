@@ -3267,13 +3267,18 @@ void gfxPlatform::InitWebGLConfig() {
       gfxVars::SetWebglAllowCoreProfile(false);
     }
     // Two cores cannot sustain a 60Hz frame pipeline; pacing to every other
-    // vsync gives uniform 30fps delivery where free-running jitters.
-    int ncpu = 0;
-    size_t len = sizeof(ncpu);
-    sysctlbyname("hw.ncpu", &ncpu, &len, nullptr, 0);
-    if (ncpu > 0 && ncpu <= 2 &&
-        !Preferences::HasUserValue("gfx.display.frame-rate-divisor")) {
-      Preferences::SetInt("gfx.display.frame-rate-divisor", 2);
+    // vsync gives uniform 30fps delivery where free-running jitters. Only
+    // the pre-10.8 unhosted-CALayer presentation needs this; with the
+    // hosted layer tree, skipping vsync dispatch livelocks the display
+    // link arm/disarm cycle on mostly-idle pages (232k msg/s storm).
+    if (!nsCocoaFeatures::IsAtLeastVersion(10, 8)) {
+      int ncpu = 0;
+      size_t len = sizeof(ncpu);
+      sysctlbyname("hw.ncpu", &ncpu, &len, nullptr, 0);
+      if (ncpu > 0 && ncpu <= 2 &&
+          !Preferences::HasUserValue("gfx.display.frame-rate-divisor")) {
+        Preferences::SetInt("gfx.display.frame-rate-divisor", 2);
+      }
     }
   }
 

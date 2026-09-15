@@ -1,0 +1,18 @@
+#!/bin/sh
+# Rust std built with -Zbuild-std (see build-rust-std.sh) floors below
+# rustc's 10.12 minimum; rustc clamps the deployment target, which then
+# conflicts with -Wl,-macosx_version_min,10.7 from the C toolchain and makes
+# clang drop crt1.o ("entry point (start) undefined"). A trailing link arg
+# overrides rustc's -mmacosx-version-min. Only for the cross target: the
+# arm64 host needs a newer minimum.
+export RUSTC_BOOTSTRAP=1
+case " $* " in
+    *" --target x86_64-apple-darwin"* | *" --target=x86_64-apple-darwin"*)
+        set -- "$@" -Clink-arg=-mmacosx-version-min=10.7
+        SYSROOT="$(cd "$(dirname "$0")" && pwd)/dist/rust-sysroot-10.7"
+        if [ -d "$SYSROOT/lib/rustlib/x86_64-apple-darwin/lib" ]; then
+            set -- "$@" --sysroot="$SYSROOT"
+        fi
+        ;;
+esac
+exec "$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc" "$@"

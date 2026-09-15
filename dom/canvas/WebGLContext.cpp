@@ -88,7 +88,6 @@
 #  include "nsCocoaFeatures.h"
 #endif
 
-
 #ifdef XP_WIN
 #  include "WGLLibrary.h"
 #endif
@@ -1223,6 +1222,16 @@ void InitSwapChain(gl::GLContext& gl, gl::SwapChain& swapChain,
     swapChain.mFactory = MakeUnique<gl::SurfaceFactory_Basic>(gl);
   }
   MOZ_ASSERT(swapChain.mFactory);
+#if defined(MOZ_WIDGET_COCOA)
+  // The upstream async-present shape disables pooling and relies on
+  // RemoteTextureMap recycling, which misses often enough that every present
+  // allocates a fresh IOSurface + texture wrap + FBO. Each allocation maps and
+  // unmaps GPU memory; on the 10.6 NVIDIA driver the kernel TLB flushes cost
+  // ~25-40% of a 2-core machine during WebGL animation. A small stable pool
+  // keeps the same few surfaces mapped on every macOS version.
+  swapChain.EnablePool(3);
+  return;
+#endif
   if (useAsync) {
     // RemoteTextureMap will handle recycling any surfaces, so don't rely on the
     // SwapChain's internal pooling.
@@ -1344,6 +1353,16 @@ bool WebGLContext::PushRemoteTexture(
     std::shared_ptr<gl::SharedSurface> surf,
     const webgl::SwapChainOptions& options,
     layers::RemoteTextureOwnerClient* ownerClient) {
+#if defined(XP_MACOSX)
+  static const auto sFlushForHandoff = [](gl::GLContext& gl) {
+    // Match upstream: no explicit sync for the IOSurface handoff.
+    // Correctness relies on driver-level command queue serialization,
+    // the same guarantee upstream ESR 153 depends on for all macOS
+    // versions. Per-frame blocking GL sync (glFinish, APPLE_fence)
+    // causes progressive CPU degradation on the 10.6 NVIDIA driver.
+    gl.fFlush();
+  };
+#endif
   const auto onFailure = [&]() -> bool {
     GenerateWarning("Remote texture creation failed.");
     LoseContext();

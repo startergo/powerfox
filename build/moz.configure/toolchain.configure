@@ -213,6 +213,8 @@ with only_when(target_is_osx):
     def macos_target(value, _):
         return value[0]
 
+    set_config("MACOS_DEPLOYMENT_TARGET", macos_target)
+
     @depends(macos_target)
     def legacy_macos_target(value):
         version = tuple(int(component) for component in value.split("."))
@@ -261,7 +263,7 @@ with only_when(host_is_osx | target_is_osx):
     )
 
     def mac_sdk_min_version():
-        return "26.5"
+        return "10.6"
 
     @depends(
         "--with-macos-sdk",
@@ -1188,6 +1190,7 @@ def sysroot(host_or_target, target_sysroot=None):
     @depends(
         sysroot_input,
         host_or_target,
+        target,
         macos_sdk,
         ios_sdk,
         bootstrap_path(
@@ -1196,12 +1199,15 @@ def sysroot(host_or_target, target_sysroot=None):
         ),
     )
     @imports("os")
-    def sysroot(sysroot_input, host_or_target, macos_sdk, ios_sdk, path):
+    def sysroot(sysroot_input, host_or_target, target, macos_sdk, ios_sdk, path):
         version = None
         if sysroot_input:
             path = sysroot_input[0]
         elif host_or_target.os == "OSX" and macos_sdk:
-            path = macos_sdk
+            if host_or_target is target or host_or_target.cpu == target.cpu:
+                path = macos_sdk
+            # else: cross macOS build. The target SDK predates the host
+            # architecture, so the host keeps its default SDK.
         elif host_or_target.os == "iOS" and ios_sdk:
             path = ios_sdk
         if path:
@@ -1366,6 +1372,7 @@ def compiler(
         multiarch_dir,
         winsysroot,
         host,
+        target,
     )
     @checking("whether %s can be used" % what, lambda x: bool(x))
     @imports(_from="mozshellutil", _import="quote")
@@ -1384,6 +1391,7 @@ def compiler(
         multiarch_dir,
         winsysroot,
         host,
+        target,
     ):
         wrapper = list(compiler_wrapper or ())
         flags = []
@@ -1408,7 +1416,24 @@ def compiler(
         )
 
         if host_or_target.os == "OSX" and macos_target:
-            flags.append("-mmacosx-version-min=%s" % macos_target)
+            if host_or_target is target or host_or_target.cpu == target.cpu:
+                if tuple(int(c) for c in macos_target.split(".")) < (10, 7):
+                    # No clang accepts C++ thread_local for a pre-10.7
+                    # deployment target, and 10.6's dyld has no TLS support
+                    # anyway. Compile at a 10.7 floor with emulated TLS, and
+                    # stamp the requested minimum into the linked images.
+                    flags.append("-mmacosx-version-min=10.7")
+                    flags.append("-femulated-tls")
+                    flags.append("-Wno-unused-command-line-argument")
+                    flags.append("-Wl,-macosx_version_min,%s" % macos_target)
+                    # Pre-Lion SDKs define AssertMacros' lowercase macros
+                    # (check, require, verify, ...), which collide with
+                    # identifiers in C++ code.
+                    flags.append(
+                        "-D__ASSERT_MACROS_DEFINE_VERSIONS_WITHOUT_UNDERSCORES=0"
+                    )
+                else:
+                    flags.append("-mmacosx-version-min=%s" % macos_target)
         if host_or_target.os == "iOS" and ios_target:
             flags.append("-mios-version-min=%s" % ios_target)
 
@@ -1904,6 +1929,11 @@ def select_linker_tmpl(host_or_target):
 
         if result is None:
             result = try_linker(None)
+
+        if result is None and target.kernel == "Darwin":
+            # The default ld on recent Xcode is the new linker, which does
+            # not respond to the probes above; ld-classic does.
+            result = try_linker("ld-classic")
 
         if result is None:
             die("Failed to find an adequate linker")

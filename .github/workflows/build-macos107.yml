@@ -1,0 +1,148 @@
+name: Build PowerFox 10.7+
+
+# Builds the ESR153 tree for macOS 10.7 Lion through 10.14 Mojave
+# (x86_64, cross-compiled from the arm64 runner) with the Momiji-parity
+# recipe: SDK 26.5 with a 10.7 deployment floor, ld-classic, bundled
+# libc++, and a post-build libMacportsLegacySystem.B.dylib polyfill
+# (tools/legacy-macos/polyfill-10.7.sh).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["10.7-backporting"]
+
+jobs:
+  build:
+    name: build 10.7-10.14 x86_64
+    runs-on: macos-26
+    timeout-minutes: 300
+    env:
+      SCCACHE_IDLE_TIMEOUT: 0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Restore bootstrap toolchains
+        id: mozbuild
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.mozbuild
+          key: mozbuild107-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: mozbuild107-
+
+      - name: Bootstrap build deps
+        if: steps.mozbuild.outputs.cache-hit != 'true'
+        run: /usr/bin/python3 ./mach bootstrap --application-choice=browser
+
+      - name: Install nasm
+        run: brew install nasm
+
+      - name: Restore sccache
+        id: sccache
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/Library/Caches/Mozilla.sccache
+          key: sccache107-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: sccache107-
+
+      - name: Set up Rust (stable + rust-src for the 10.7 std rebuild)
+        run: |
+          rustup default stable
+          rustup component add rust-src
+          rustc --version
+
+      - name: Compute support-artifact cache key
+        id: key
+        run: |
+          RUSTV=$(rustc --version | tr ' /' '--')
+          SDKV=$(xcrun --sdk macosx --show-sdk-version)
+          echo "key=legacy107-${{ runner.os }}-${RUSTV}-sdk${SDKV}-${{ hashFiles('tools/legacy-macos/build-libcxx.sh', 'tools/legacy-macos/build-rust-std.sh') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore support artifacts
+        id: cache
+        uses: actions/cache/restore@v5
+        with:
+          path: tools/legacy-macos/dist-10.7
+          key: ${{ steps.key.outputs.key }}
+
+      - name: Place the 26.5 SDK where the mozconfig expects it
+        run: |
+          SDKS=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs
+          if [ ! -d "$SDKS/MacOSX26.5.sdk" ]; then
+            sudo mkdir -p "$SDKS"
+            sudo ln -s "$(xcrun --sdk macosx --show-sdk-path)" "$SDKS/MacOSX26.5.sdk"
+          fi
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: Build libc++ bundle and Rust std for the 10.7 floor
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          SDK=$(xcrun --sdk macosx --show-sdk-path)
+          tools/legacy-macos/build-libcxx.sh "$SDK" 10.7
+          tools/legacy-macos/build-rust-std.sh 10.7
+
+      - name: Save support artifacts
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: tools/legacy-macos/dist-10.7
+          key: ${{ steps.key.outputs.key }}
+
+      - name: Build
+        env:
+          MOZCONFIG: ${{ github.workspace }}/mozconfig-ci
+        run: |
+          # Base mozconfig plus CI-only sccache; the in-tree mozconfig
+          # stays usable on machines without sccache.
+          cp mozconfig-macos107 mozconfig-ci
+          echo "ac_add_options --with-ccache=$HOME/.mozbuild/sccache/sccache" >> mozconfig-ci
+          /usr/bin/python3 ./mach configure
+          /usr/bin/python3 ./mach build
+
+      - name: Stop sccache
+        if: always()
+        run: |
+          sleep 60
+          "$HOME/.mozbuild/sccache/sccache" --stop-server || true
+
+      - name: Save sccache
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: ~/Library/Caches/Mozilla.sccache
+          key: sccache107-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Save bootstrap toolchains
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.mozbuild
+          key: mozbuild107-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Package
+        env:
+          MOZCONFIG: ${{ github.workspace }}/mozconfig-ci
+        run: /usr/bin/python3 ./mach package
+
+      - name: Polyfill and repackage
+        run: |
+          VERSION=$(cat browser/config/version.txt)
+          DIST=obj-x86_64-mac107/dist
+          tools/legacy-macos/polyfill-10.7.sh "$DIST/Nightly.app"
+          # mach package's dmg predates the polyfill; rebuild it.
+          rm -f "powerfox-${VERSION}_macOS10.7-10.14.dmg"
+          hdiutil create -volname Nightly -srcfolder "$DIST/Nightly.app" \
+            -fs HFS+ -format UDBZ -imagekey zlib-level=9 \
+            "powerfox-${VERSION}_macOS10.7-10.14.dmg"
+          zip -qry "powerfox-${VERSION}_macOS10.7-10.14.zip" "$DIST/Nightly.app"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          path: |
+            powerfox-*.zip
+            powerfox-*.dmg
+          if-no-files-found: error
+          retention-days: 14

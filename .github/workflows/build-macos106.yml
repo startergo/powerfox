@@ -151,10 +151,17 @@ jobs:
         env:
           MOZCONFIG: ${{ github.workspace }}/mozconfig-ci
         run: |
-          # Base mozconfig plus CI-only sccache; the in-tree mozconfig
-          # stays usable on machines without sccache.
+          # Base mozconfig plus CI-only sccache for the C/C++ compilers
+          # only: bootstrap's sccache 0.15 mis-caches rustc rlibs, which
+          # then fail downstream with E0463 once restored. Fresh Rust
+          # compiles are reliable and cheap, and the C/C++ cache entries
+          # stay valid under the direct CC/CXX wrapper.
           cp mozconfig-macos106 mozconfig-ci
-          echo "ac_add_options --with-ccache=$HOME/.mozbuild/sccache/sccache" >> mozconfig-ci
+          SCC="$HOME/.mozbuild/sccache/sccache"
+          sed -i '' \
+            -e "s|^export CC=\"/usr/bin/clang |export CC=\"$SCC /usr/bin/clang |" \
+            -e "s|^export CXX=\"/usr/bin/clang++ |export CXX=\"$SCC /usr/bin/clang++ |" \
+            mozconfig-ci
           /usr/bin/python3 ./mach configure
           /usr/bin/python3 ./mach build
 

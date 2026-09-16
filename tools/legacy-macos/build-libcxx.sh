@@ -111,5 +111,30 @@ cp -R "$LIBCXX_SRC/include/" "$DIST/include/"
 cp "$LIBCXXABI_SRC/include/cxxabi.h" "$DIST/include/"
 cp "$LIBCXXABI_SRC/include/__cxxabi_config.h" "$DIST/include/"
 
+echo "=== Building SDK link stubs ==="
+# The CI SDK (phracker's plus the runtime-object overlay) ships no libc++
+# stub dylibs, so -lc++ fails at link time. Emit stub dylibs exporting the
+# same symbols under the system install names, like the genuine SDK's own
+# stubs; the CI copies them into the SDK's usr/lib.
+gen_stub() {
+  local out="$1" install="$2"; shift 2
+  local asm="$out.s"
+  {
+    echo '.text'
+    for sym in $(for lib in "$@"; do nm -gU "$lib" | awk '{print $3}'; done | sort -u); do
+      printf '.globl %s\n%s:\n  ret\n' "$sym" "$sym"
+    done
+  } > "$asm"
+  $CC $TARGET_FLAGS -o "$out" -dynamiclib \
+    -Wl,-install_name,"$install" -Wl,-compatibility_version,1 \
+    -Wl,-current_version,5.0.1 \
+    -x assembler "$asm"
+  rm -f "$asm"
+}
+gen_stub "$DIST/lib/libc++.dylib" /usr/lib/libc++.1.dylib \
+  "$DIST/lib/libc++.1.0.dylib" "$DIST/lib/libc++abi.1.0.dylib"
+gen_stub "$DIST/lib/libc++abi.dylib" /usr/lib/libc++abi.dylib \
+  "$DIST/lib/libc++abi.1.0.dylib"
+
 echo "=== Done ==="
 ls -lh "$DIST/lib/"

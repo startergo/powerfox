@@ -198,10 +198,15 @@ jobs:
       - name: Collect artifacts
         run: |
           VERSION=$(cat browser/config/version.txt)
-          cp "obj-x86_64-apple-darwin/dist/firefox-${VERSION}.en-US.mac.dmg" \
+          # mach package stages much of the bundle as absolute symlinks into
+          # the objdir, and its dmg carries them too; materialize a
+          # self-contained app and build both artifacts from it.
+          rm -rf Nightly.app
+          cp -RL obj-x86_64-apple-darwin/dist/Nightly.app Nightly.app
+          hdiutil create -volname Nightly -srcfolder Nightly.app \
+            -fs HFS+ -format UDBZ -imagekey zlib-level=9 \
             "powerfox-${VERSION}_macOS10.6.dmg"
-          cd obj-x86_64-apple-darwin/dist
-          zip -qry "$GITHUB_WORKSPACE/powerfox-${VERSION}_macOS10.6.zip" Nightly.app
+          zip -qr "powerfox-${VERSION}_macOS10.6.zip" Nightly.app
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7

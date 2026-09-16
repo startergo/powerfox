@@ -34,15 +34,23 @@ LC_ALL=C sed -e 's@#include <Security/SecBase.h>@#include <Security/SecBase.h>\n
   > "$OVERLAY/Security/Security.h"
 cat >> "$OVERLAY/Security/Security.h" <<'SECEOF'
 
+typedef struct __SecAccessControl* SecAccessControlRef;
+
 #if !defined(MAC_OS_X_VERSION_10_7) || \
     MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
 // 10.7+ Security symbols absent from the 10.6 SDK.
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern const CFStringRef kSecClassGenericPassword __attribute__((weak_import));
 extern const CFStringRef kSecClassCertificate __attribute__((weak_import));
 extern CFDictionaryRef SecPolicyCopyProperties(SecPolicyRef policy)
     __attribute__((weak_import));
 extern const CFStringRef kSecPolicyOid __attribute__((weak_import));
 extern const CFStringRef kSecPolicyAppleSSL __attribute__((weak_import));
+#ifdef __cplusplus
+}
+#endif
 #endif
 SECEOF
 echo "Wrote $OVERLAY/Security/Security.h"
@@ -58,13 +66,28 @@ cat > "$OVERLAY/Accessibility/Accessibility.h" <<'EOF'
 EOF
 echo "Wrote $OVERLAY/Accessibility/Accessibility.h"
 
-# objc.h: the (BOOL) casts make @YES/@NO unparseable as boxed expressions.
+# objc.h: the (BOOL) casts make @YES/@NO unparseable as boxed expressions,
+# and nil expands to __DARWIN_NULL (__null), which is ambiguous for C++
+# smart pointer assignments; modern SDKs use nullptr.
 mkdir -p "$OVERLAY/objc"
 LC_ALL=C sed -e 's/#define YES             (BOOL)1/#define YES 1/; s/#define NO              (BOOL)0/#define NO 0/' \
   "$SDKROOT/usr/include/objc/objc.h" > "$OVERLAY/objc/objc.h"
-# nil expands to __DARWIN_NULL (__null), which is ambiguous for C++ smart
-# pointer assignments; modern SDKs use nullptr.
-printf '\n#ifdef __cplusplus\n#undef nil\n#define nil nullptr\n#endif\n' >> "$OVERLAY/objc/objc.h"
+LC_ALL=C awk '
+  /^#define nil __DARWIN_NULL/ { seen_nil = 1 }
+  seen_nil && !done && /^#ifndef __OBJC_GC__/ {
+    print "/* PowerFox: the 10.6 SDK expands nil to __DARWIN_NULL (__null), which makes"
+    print "   C++ smart-pointer assignments ambiguous. Modern SDKs define nil as"
+    print "   nullptr; do the same here, in C++ only. */"
+    print "#ifdef __cplusplus"
+    print "#undef nil"
+    print "#define nil nullptr"
+    print "#endif"
+    print ""
+    done = 1
+  }
+  { print }
+' "$OVERLAY/objc/objc.h" > "$OVERLAY/objc/objc.h.new"
+mv "$OVERLAY/objc/objc.h.new" "$OVERLAY/objc/objc.h"
 echo "Wrote $OVERLAY/objc/objc.h"
 
 # string.h: a shim ahead of the SDK's own header, appending declarations
@@ -352,4 +375,6 @@ stub_framework CoreUI \
   /System/Library/PrivateFrameworks/CoreUI.framework/CoreUI
 stub_framework CoreSymbolication \
   /System/Library/PrivateFrameworks/CoreSymbolication.framework/CoreSymbolication
+stub_framework VideoToolbox \
+  /System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox
 

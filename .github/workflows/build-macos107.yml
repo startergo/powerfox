@@ -39,19 +39,16 @@ jobs:
       - name: Install nasm
         run: brew install nasm
 
-      - name: Restore sccache
-        id: sccache
-        uses: actions/cache/restore@v5
-        with:
-          path: ~/Library/Caches/Mozilla.sccache
-          key: sccache107-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: sccache107-
-
       - name: Set up Rust (stable + rust-src for the 10.7 std rebuild)
         run: |
           rustup default stable
           rustup component add rust-src
           rustc --version
+          # rust-objcopy resolves libLLVM through @rpath paths that miss on
+          # this layout; without this mach's debug-info stripping of rlibs
+          # aborts (harmless, but fattens the artifacts).
+          ln -sf "$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/lib/libLLVM.dylib" \
+             "$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/aarch64-apple-darwin/lib/"
 
       - name: Compute support-artifact cache key
         id: key
@@ -66,6 +63,17 @@ jobs:
         with:
           path: tools/legacy-macos/dist-10.7
           key: ${{ steps.key.outputs.key }}
+
+      # sccache does not hash the custom Rust std's contents, so cached
+      # rlibs from an older std pass a rebuild by (E0463 metadata
+      # mismatches). Key the cache on the support artifacts, which include
+      # the std, and restore exact matches only.
+      - name: Restore sccache
+        id: sccache
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/Library/Caches/Mozilla.sccache
+          key: sccache107-${{ runner.os }}-${{ steps.key.outputs.key }}
 
       - name: Place the 26.5 SDK where the mozconfig expects it
         run: |
@@ -112,7 +120,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: ~/Library/Caches/Mozilla.sccache
-          key: sccache107-${{ runner.os }}-${{ github.run_id }}
+          key: sccache107-${{ runner.os }}-${{ steps.key.outputs.key }}
 
       - name: Save bootstrap toolchains
         if: always()

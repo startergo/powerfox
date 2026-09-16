@@ -137,14 +137,18 @@ jobs:
       - name: Polyfill and repackage
         run: |
           VERSION=$(cat browser/config/version.txt)
-          DIST=obj-x86_64-mac107/dist
-          tools/legacy-macos/polyfill-10.7.sh "$DIST/Nightly.app"
+          # mach package stages much of the bundle as absolute symlinks into
+          # the objdir; materialize them into a self-contained app (also so
+          # the polyfill's -type f find sees every executable).
+          rm -rf Nightly.app
+          cp -RL obj-x86_64-mac107/dist/Nightly.app Nightly.app
+          tools/legacy-macos/polyfill-10.7.sh Nightly.app
           # mach package's dmg predates the polyfill; rebuild it.
           rm -f "powerfox-${VERSION}_macOS10.7-10.14.dmg"
-          hdiutil create -volname Nightly -srcfolder "$DIST/Nightly.app" \
+          hdiutil create -volname Nightly -srcfolder Nightly.app \
             -fs HFS+ -format UDBZ -imagekey zlib-level=9 \
             "powerfox-${VERSION}_macOS10.7-10.14.dmg"
-          zip -qry "powerfox-${VERSION}_macOS10.7-10.14.zip" "$DIST/Nightly.app"
+          zip -qr "powerfox-${VERSION}_macOS10.7-10.14.zip" Nightly.app
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7

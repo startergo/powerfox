@@ -146,6 +146,18 @@ jobs:
           /usr/bin/python3 ./mach configure
           /usr/bin/python3 ./mach build
 
+      # make's output-sync swallows the linker's stderr on failure; retry
+      # the failed target directly so the command and error are visible.
+      - name: Reveal the link failure
+        if: failure()
+        run: |
+          xcodebuild -version
+          xcrun --find ld-classic
+          MAKE="$HOME/.mozbuild/mozmake/mozmake"
+          [ -x "$MAKE" ] || MAKE=make
+          cd obj-x86_64-apple-darwin/toolkit/mozapps/macos-frameworks/ChannelPrefs
+          "$MAKE" ../../../../dist/bin/ChannelPrefs || true
+
       - name: Stop sccache
         if: always()
         run: |

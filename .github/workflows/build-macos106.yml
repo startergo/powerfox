@@ -88,14 +88,6 @@ jobs:
       - name: Install nasm
         run: brew install nasm
 
-      - name: Restore sccache
-        id: sccache
-        uses: actions/cache/restore@v5
-        with:
-          path: ~/Library/Caches/Mozilla.sccache
-          key: sccache106-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: sccache106-
-
       - name: Set up Rust (stable + rust-src for the emutls std rebuild)
         run: |
           rustup default stable
@@ -117,6 +109,17 @@ jobs:
             tools/legacy-macos/downloads
             tools/legacy-macos/overlay-sdk
           key: ${{ steps.key.outputs.key }}
+
+      # sccache does not hash the custom Rust std's contents, so cached
+      # rlibs from an older std pass a rebuild by (E0463 metadata
+      # mismatches). Key the cache on the support artifacts, which include
+      # the std, and restore exact matches only.
+      - name: Restore sccache
+        id: sccache
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/Library/Caches/Mozilla.sccache
+          key: sccache106-${{ runner.os }}-${{ steps.key.outputs.key }}
 
       - name: Build the 10.6 support artifacts
         if: steps.cache.outputs.cache-hit != 'true'
@@ -178,7 +181,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: ~/Library/Caches/Mozilla.sccache
-          key: sccache106-${{ runner.os }}-${{ github.run_id }}
+          key: sccache106-${{ runner.os }}-${{ steps.key.outputs.key }}
 
       - name: Save bootstrap toolchains
         if: always()

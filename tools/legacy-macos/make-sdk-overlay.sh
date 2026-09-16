@@ -97,7 +97,7 @@ cat > "$OVERLAY/assert.h" <<'EOF'
 EOF
 echo "Wrote $OVERLAY/assert.h"
 
-# cups/cups.h: a shim ahead of the SDK's header, declaring the CUPS 1.6
+# cups/cups.h: a shim ahead of the SDK's header, declaring the CUPS 1.7
 # destination API missing from pre-10.8 SDKs. The functions are resolved
 # at runtime by nsCUPSShim and are absent on those systems.
 mkdir -p "$OVERLAY/cups"
@@ -147,7 +147,7 @@ enum { CUPS_MEDIA_FLAGS_DEFAULT = 0, CUPS_MEDIA_FLAGS_BORDERLESS = 1,
 #define CUPS_ORIENTATION "orientation-requested"
 #define CUPS_PRINT_QUALITY "print-quality"
 #define CUPS_RESOLUTION "printer-resolution"
-enum { IPP_OP_GET_PRINTER_ATTRIBUTES = 0x000B };
+#define IPP_OP_GET_PRINTER_ATTRIBUTES ((ipp_op_t)0x000B)
 extern int cupsCheckDestSupported(http_t* http, cups_dest_t* dest,
                                   cups_dinfo_t* info, const char* option,
                                   const char* value);
@@ -177,13 +177,12 @@ extern cups_dest_t* cupsFindDestDefault(http_t* http, cups_dest_t* dests,
                                         int num_dests);
 extern const char* cupsLocalizeDestMedia(http_t* http, cups_dest_t* dest,
                                          cups_dinfo_t* info, unsigned flags,
-                                         cups_size_t* size, char* buffer,
-                                         size_t bufsize);
+                                         cups_size_t* size);
 extern int httpAddrPort(const http_addr_t* addr);
 extern http_addr_t* httpGetAddress(http_t* http);
 extern int ippGetCount(ipp_attribute_t* attr);
 extern const char* ippGetString(ipp_attribute_t* attr, int element,
-                                const char* language);
+                                const char** language);
 extern int cupsEnumDests(unsigned mgmt, int msec, int* cancel,
                          cups_ptype_t type, cups_ptype_t mask,
                          cups_dest_cb_t cb, void* user_data);

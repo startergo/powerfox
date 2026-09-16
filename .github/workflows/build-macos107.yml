@@ -44,11 +44,11 @@ jobs:
           rustup default stable
           rustup component add rust-src
           rustc --version
-          # rust-objcopy resolves libLLVM through @rpath paths that miss on
-          # this layout; without this mach's debug-info stripping of rlibs
-          # aborts (harmless, but fattens the artifacts).
-          ln -sf "$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/lib/libLLVM.dylib" \
-             "$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/aarch64-apple-darwin/lib/"
+          # Do NOT make rust-objcopy work here (e.g. by symlinking
+          # libLLVM.dylib into its @rpath): mach strips rlibs with it after
+          # each crate build, and the stripped rlibs then fail downstream
+          # with E0463. The broken binary's SIGABRT is load-bearing; rlibs
+          # just keep their debug info.
 
       - name: Compute support-artifact cache key
         id: key

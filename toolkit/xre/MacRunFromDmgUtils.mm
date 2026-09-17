@@ -426,7 +426,8 @@ bool MaybeInstallAndRelaunch() {
     bool isTranslocated = false;
     if (!isFromDmg) {
       NSString* bundlePath = [[NSBundle mainBundle] bundlePath];
-      if ([bundlePath containsString:@"/AppTranslocation/"]) {
+      if ([bundlePath rangeOfString:@"/AppTranslocation/"].location !=
+          NSNotFound) {
         isTranslocated = true;
       }
     }

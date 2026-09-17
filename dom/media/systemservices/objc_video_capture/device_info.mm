@@ -20,6 +20,7 @@
 #include "device_info_objc.h"
 #include "modules/video_capture/video_capture_impl.h"
 #include "mozilla/StaticPrefs_media.h"
+#include "nsCocoaFeatures.h"
 #include "objc_video_capture/device_info_avfoundation.h"
 #include "rtc_base/logging.h"
 
@@ -27,30 +28,42 @@ using namespace mozilla;
 using namespace webrtc;
 using namespace videocapturemodule;
 
-MOZ_RUNINIT static NSArray* camera_presets = @[
-  AVCaptureSessionPreset352x288, AVCaptureSessionPreset640x480,
-  AVCaptureSessionPreset1280x720
-];
-
 #define IOS_UNSUPPORTED()                                        \
   RTC_LOG(LS_ERROR) << __FUNCTION__                              \
                     << " is not supported on the iOS platform."; \
   return -1;
 
 VideoCaptureModule::DeviceInfo* VideoCaptureImpl::CreateDeviceInfo() {
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_7
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return new DeviceInfoIos();
+  }
+#endif
   if (StaticPrefs::media_getusermedia_camera_macavf_enabled_AtStartup()) {
     return new DeviceInfoAvFoundation();
   }
   return new DeviceInfoIos();
 }
 
-DeviceInfoIos::DeviceInfoIos() { this->Init(); }
+DeviceInfoIos::DeviceInfoIos() : _captureInfo(nil) { this->Init(); }
 
 DeviceInfoIos::~DeviceInfoIos() { [_captureInfo registerOwner:nil]; }
 
 int32_t DeviceInfoIos::Init() {
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_7
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return 0;
+  }
+#endif
   _captureInfo = [[DeviceInfoIosObjC alloc] init];
   [_captureInfo registerOwner:this];
+
+  NSArray* camera_presets = @[
+    AVCaptureSessionPreset352x288, AVCaptureSessionPreset640x480,
+    AVCaptureSessionPreset1280x720
+  ];
 
   // Fill in all device capabilities.
   int deviceCount = [DeviceInfoIosObjC captureDeviceCount];
@@ -85,6 +98,12 @@ int32_t DeviceInfoIos::Init() {
 }
 
 uint32_t DeviceInfoIos::NumberOfDevices() {
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_7
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return 0;
+  }
+#endif
   return [DeviceInfoIosObjC captureDeviceCount];
 }
 

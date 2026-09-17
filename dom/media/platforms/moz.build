@@ -108,7 +108,11 @@ if CONFIG["MOZ_APPLEMEDIA"]:
     ]
     OS_LIBS += [
         "-framework AudioToolbox",
-        "-framework CoreMedia",
+        (
+            "-weak_framework CoreMedia"
+            if CONFIG["MOZ_COREMEDIA_IN_PRIVATE_FRAMEWORKS"]
+            else "-framework CoreMedia"
+        ),
         "-framework VideoToolbox",
         "-framework VideoDecodeAcceleration",
         # For some unknown reason, the documented method of using weak_import

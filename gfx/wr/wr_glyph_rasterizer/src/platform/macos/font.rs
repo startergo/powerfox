@@ -29,7 +29,31 @@ use crate::rasterizer::{FontInstance, FontTransform, GlyphKey};
 use crate::rasterizer::{GlyphFormat, GlyphRasterError, GlyphRasterResult, RasterizedGlyph};
 use crate::types::FastHashMap;
 use std::collections::hash_map::Entry;
+use std::os::raw::{c_char, c_int, c_void};
 use std::sync::Arc;
+use std::sync::OnceLock;
+
+extern "C" {
+    fn dlopen(path: *const c_char, mode: c_int) -> *mut c_void;
+    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+}
+
+fn draw_glyphs(ct_font: &CTFont, glyphs: &[CGGlyph], positions: &[CGPoint], context: CGContext) {
+    static HAS_CT_FONT_DRAW_GLYPHS: OnceLock<bool> = OnceLock::new();
+    if *HAS_CT_FONT_DRAW_GLYPHS.get_or_init(|| unsafe {
+        let handle = dlopen(std::ptr::null(), 1);
+        !handle.is_null() && !dlsym(handle, b"CTFontDrawGlyphs\0".as_ptr() as *const c_char).is_null()
+    }) {
+        ct_font.draw_glyphs(glyphs, positions, context);
+    } else {
+        let cg_font = ct_font.copy_to_CGFont();
+        context.save();
+        context.set_font(&cg_font);
+        context.set_font_size(ct_font.pt_size());
+        context.show_glyphs_at_positions(glyphs, positions);
+        context.restore();
+    }
+}
 
 const INITIAL_CG_CONTEXT_SIDE_LENGTH: u32 = 32;
 
@@ -105,8 +129,8 @@ fn determine_font_smoothing_mode() -> Option<FontRenderMode> {
         let ct_font = core_text::font::new_from_name("Lucida Grande", 12.).unwrap();
         let point = CGPoint { x: 0., y: 0. };
         let glyph = 'X' as CGGlyph;
-        ct_font.draw_glyphs(&[glyph], &[point], smooth_context.clone());
-        ct_font.draw_glyphs(&[glyph], &[point], gray_context.clone());
+        draw_glyphs(&ct_font, &[glyph], &[point], smooth_context.clone());
+        draw_glyphs(&ct_font, &[glyph], &[point], gray_context.clone());
     });
 
     let mut mode = None;
@@ -797,7 +821,7 @@ impl FontContext {
                 cg_context.set_text_matrix(&CG_AFFINE_TRANSFORM_IDENTITY);
             }
 
-            ct_font.draw_glyphs(&[glyph], &[draw_origin], cg_context.clone());
+            draw_glyphs(&ct_font, &[glyph], &[draw_origin], cg_context.clone());
 
             // We'd like to render all the strikes in a single ct_font.draw_glyphs call,
             // passing an array of glyph IDs and an array of origins, but unfortunately
@@ -810,7 +834,7 @@ impl FontContext {
                     x: draw_origin.x + i as f64 * pixel_step,
                     y: draw_origin.y,
                 };
-                ct_font.draw_glyphs(&[glyph], &[origin], cg_context.clone());
+                draw_glyphs(&ct_font, &[glyph], &[origin], cg_context.clone());
             }
         }
 
@@ -986,4 +1010,3 @@ enum GlyphType {
     Vector,
     Bitmap,
 }
-

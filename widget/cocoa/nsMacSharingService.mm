@@ -155,6 +155,10 @@ NS_IMETHODIMP
 nsMacSharingService::OpenSharingPreferences() {
   NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
 
+  if (!nsCocoaFeatures::OnYosemiteOrLater()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
   NSURL* prefPaneURL = [NSURL fileURLWithPath:extensionPrefPanePath
                                   isDirectory:YES];
   NSDictionary* args = @{

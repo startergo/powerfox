@@ -1448,6 +1448,7 @@ class GeneratedFile(ContextDerived):
                     ".m",
                     ".mm",
                     ".def",
+                    ".tbd",
                     ".plist",
                     ".s",
                     ".S",

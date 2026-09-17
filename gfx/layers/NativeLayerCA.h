@@ -122,9 +122,9 @@ class NativeLayerRootCA final : public NativeLayerRoot {
 
   virtual NativeLayerRootCA* AsNativeLayerRootCA() override { return this; }
 
-  // Can be called on any thread at any point. Returns whether comitting was
-  // successful. Will return false if called off the main thread while
-  // off-main-thread commits are suspended.
+  // Can be called on any thread at any point. On Snow Leopard, off-main-thread
+  // requests are coalesced onto the main thread. Returns false if called off
+  // the main thread while off-main-thread commits are suspended.
   bool CommitToScreen() override;
 
   void CommitOffscreen(CALayer* aRootCALayer);
@@ -232,6 +232,9 @@ class NativeLayerRootCA final : public NativeLayerRoot {
   // indicates that CommitToScreen() needs to be called at the next available
   // opportunity.
   bool mCommitPending = false;
+
+  // Snow Leopard does not reliably present off-main-thread layer commits.
+  bool mMainThreadCommitScheduled = false;
 
   // Updated by the layer's view's window to match the fullscreen state
   // of that window.

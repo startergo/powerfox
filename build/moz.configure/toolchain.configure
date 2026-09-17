@@ -224,6 +224,28 @@ with only_when(target_is_osx):
     set_config("MOZ_LEGACY_MACOS", legacy_macos_target)
     set_define("MOZ_LEGACY_MACOS", legacy_macos_target)
 
+    @depends(macos_target)
+    def macos_coretext_in_application_services(value):
+        version = tuple(int(component) for component in value.split("."))
+        if version < (10, 8):
+            return True
+
+    set_config(
+        "MOZ_CORETEXT_IN_APPLICATION_SERVICES",
+        macos_coretext_in_application_services,
+    )
+
+    @depends(macos_target)
+    def macos_coremedia_in_private_frameworks(value):
+        version = tuple(int(component) for component in value.split("."))
+        if version < (10, 7):
+            return True
+
+    set_config(
+        "MOZ_COREMEDIA_IN_PRIVATE_FRAMEWORKS",
+        macos_coremedia_in_private_frameworks,
+    )
+
 
 @imports("plistlib")
 @imports(_from="__builtin__", _import="open")

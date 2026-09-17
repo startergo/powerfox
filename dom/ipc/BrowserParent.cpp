@@ -1073,6 +1073,20 @@ mozilla::ipc::IPCResult BrowserParent::RecvSetDimensions(
   nsCOMPtr<nsIBaseWindow> treeOwnerAsWin = do_QueryInterface(treeOwner);
   NS_ENSURE_TRUE(treeOwnerAsWin, IPC_OK());
 
+  if (nsCOMPtr<nsIDragService> dragService =
+          do_GetService("@mozilla.org/widget/dragservice;1")) {
+    RefPtr<nsIWidget> widget = GetTopLevelWidget();
+    if (RefPtr<nsIDragSession> session =
+            dragService->GetCurrentSession(widget)) {
+      session->EndDragSession(false, 0);
+    }
+  }
+
+  if (nsPresContext* presContext =
+          mFrameElement->OwnerDoc()->GetPresContext()) {
+    presContext->EventStateManager()->StopTrackingDragGesture(true);
+  }
+
   // `BrowserChild` only sends the values to actually be changed, see more
   // details in `BrowserChild::SetDimensions()`.
   // Note that `BrowserChild::SetDimensions()` may be called before receiving
@@ -2180,7 +2194,7 @@ void BrowserParent::SendRealKeyEvent(WidgetKeyboardEvent& aEvent) {
   // NOTE: If you call `InitAllEditCommands()` for the other messages too,
   //       you also need to update
   //       TextEventDispatcher::DispatchKeyboardEventInternal().
-  if (aEvent.mMessage == eKeyPress) {
+  if (aEvent.mMessage == eKeyPress || aEvent.mMessage == eKeyDown) {
     // If current input context is editable, the edit commands are initialized
     // by TextEventDispatcher::DispatchKeyboardEventInternal().  Otherwise,
     // we need to do it here (they are not necessary for the parent process,
@@ -4000,8 +4014,29 @@ mozilla::ipc::IPCResult BrowserParent::RecvInvokeDragSession(
     const CookieJarSettingsArgs& aCookieJarSettingsArgs,
     const MaybeDiscarded<WindowContext>& aSourceWindowContext,
     const MaybeDiscarded<WindowContext>& aSourceTopWindowContext) {
-  PresShell* presShell = mFrameElement->OwnerDoc()->GetPresShell();
-  if (!presShell) {
+  nsCOMPtr<nsIDragService> dragService =
+      do_GetService("@mozilla.org/widget/dragservice;1");
+  nsPresContext* presContext = mFrameElement->OwnerDoc()->GetPresContext();
+  const bool isValidRemoteDrag = [&]() {
+    if (!dragService || !presContext) {
+      return false;
+    }
+
+    if (dragService->GetIsSuppressed()) {
+      return false;
+    }
+
+    BrowserParent* dragTopLevelRemoteTarget =
+        presContext->EventStateManager()
+            ->GetTrackingDragGestureTopLevelRemoteTarget();
+    if (NS_WARN_IF(dragTopLevelRemoteTarget != TopLevelBrowserParent())) {
+      return false;
+    }
+
+    return true;
+  }();
+
+  if (!isValidRemoteDrag) {
     (void)SendEndDragSession(true, true, LayoutDeviceIntPoint(), 0,
                              nsIDragService::DRAGDROP_ACTION_NONE);
     // Continue sending input events with input priority when stopping the dnd
@@ -4039,15 +4074,10 @@ mozilla::ipc::IPCResult BrowserParent::RecvInvokeDragSession(
     }
   }
 
-  nsCOMPtr<nsIDragService> dragService =
-      do_GetService("@mozilla.org/widget/dragservice;1");
-  if (dragService) {
-    dragService->MaybeAddBrowser(this);
-  }
+  dragService->MaybeAddBrowser(this);
 
-  presShell->GetPresContext()
-      ->EventStateManager()
-      ->BeginTrackingRemoteDragGesture(mFrameElement, dragStartData);
+  presContext->EventStateManager()->BeginTrackingRemoteDragGesture(
+      mFrameElement, dragStartData);
 
   nsCOMPtr<nsIObserverService> os = services::GetObserverService();
   os->NotifyObservers(nullptr, "content-invoked-drag", nullptr);
@@ -4340,9 +4370,8 @@ mozilla::ipc::IPCResult BrowserParent::RecvIsWindowSupportingWebVR(
   return IPC_OK();
 }
 
-static BrowserParent* GetTopLevelBrowserParent(BrowserParent* aBrowserParent) {
-  MOZ_ASSERT(aBrowserParent);
-  BrowserParent* parent = aBrowserParent;
+BrowserParent* BrowserParent::TopLevelBrowserParent() {
+  BrowserParent* parent = this;
   while (BrowserBridgeParent* bridge = parent->GetBrowserBridgeParent()) {
     parent = bridge->Manager();
   }
@@ -4351,7 +4380,7 @@ static BrowserParent* GetTopLevelBrowserParent(BrowserParent* aBrowserParent) {
 
 mozilla::ipc::IPCResult BrowserParent::RecvRequestPointerLock(
     RequestPointerLockResolver&& aResolve) {
-  if (sTopLevelWebFocus != GetTopLevelBrowserParent(this)) {
+  if (sTopLevelWebFocus != TopLevelBrowserParent()) {
     aResolve("PointerLockDeniedNotFocused"_ns);
     return IPC_OK();
   }

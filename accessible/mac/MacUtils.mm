@@ -80,6 +80,20 @@ static NSColor* ColorFromColor(const Color& aColor) {
                                    alpha:1.0];
 }
 
+static void SetColorAttribute(NSMutableDictionary* aAttributes,
+                              NSString* aKey, const Color& aColor) {
+  if (nsCocoaFeatures::OnMountainLionOrLater()) {
+    [aAttributes setObject:(__bridge id)[ColorFromColor(aColor) CGColor]
+                 forKey:aKey];
+    return;
+  }
+  CGColorRef color = CGColorCreateGenericRGB(NS_GET_R(aColor.mValue) / 255.0,
+                                             NS_GET_G(aColor.mValue) / 255.0,
+                                             NS_GET_B(aColor.mValue) / 255.0, 1.0);
+  [aAttributes setObject:(__bridge id)color forKey:aKey];
+  CGColorRelease(color);
+}
+
 NSDictionary* StringAttributesFromAccAttributes(AccAttributes* aAttributes,
                                                 Accessible* aContainer) {
   if (!aAttributes) {
@@ -99,15 +113,11 @@ NSDictionary* StringAttributesFromAccAttributes(AccAttributes* aAttributes,
   for (auto iter : *aAttributes) {
     if (iter.Name() == nsGkAtoms::background_color) {
       if (Maybe<Color> value = iter.Value<Color>()) {
-        NSColor* color = ColorFromColor(*value);
-        [attrDict setObject:(__bridge id)color.CGColor
-                     forKey:@"AXBackgroundColor"];
+        SetColorAttribute(attrDict, @"AXBackgroundColor", *value);
       }
     } else if (iter.Name() == nsGkAtoms::color) {
       if (Maybe<Color> value = iter.Value<Color>()) {
-        NSColor* color = ColorFromColor(*value);
-        [attrDict setObject:(__bridge id)color.CGColor
-                     forKey:@"AXForegroundColor"];
+        SetColorAttribute(attrDict, @"AXForegroundColor", *value);
       }
     } else if (iter.Name() == nsGkAtoms::font_size) {
       if (Maybe<FontSize> pointSize = iter.Value<FontSize>()) {
@@ -122,9 +132,7 @@ NSDictionary* StringAttributesFromAccAttributes(AccAttributes* aAttributes,
     } else if (iter.Name() == nsGkAtoms::textUnderlineColor) {
       [attrDict setObject:@1 forKey:@"AXUnderline"];
       if (Maybe<Color> value = iter.Value<Color>()) {
-        NSColor* color = ColorFromColor(*value);
-        [attrDict setObject:(__bridge id)color.CGColor
-                     forKey:@"AXUnderlineColor"];
+        SetColorAttribute(attrDict, @"AXUnderlineColor", *value);
       }
     } else if (iter.Name() == nsGkAtoms::invalid) {
       // XXX: There is currently no attribute for grammar

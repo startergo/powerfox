@@ -437,7 +437,6 @@ impl TileNode {
                                 .unwrap_or(self.rect);
                             *dirty_rect = prim_rect.union(dirty_rect);
                             *dirty_tracker = *dirty_tracker | 1;
-                            break;
                         }
                     }
                 } else {

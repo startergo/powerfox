@@ -192,9 +192,10 @@ jobs:
           key: sccache106-${{ runner.os }}-${{ steps.key.outputs.key }}
 
       - name: Save bootstrap toolchains
-        # Never cache a partial ~/.mozbuild from a failed bootstrap: a rerun
-        # of this run restores that exact key and skips bootstrap forever.
-        if: always() && steps.bootstrap.outcome != 'failure'
+        # Never cache a partial ~/.mozbuild from a failed or cancelled
+        # bootstrap: a rerun of this run restores that exact key and skips
+        # bootstrap forever.
+        if: always() && steps.bootstrap.outcome == 'success'
         uses: actions/cache/save@v5
         with:
           path: ~/.mozbuild

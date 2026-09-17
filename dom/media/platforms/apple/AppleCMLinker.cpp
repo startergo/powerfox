@@ -21,6 +21,7 @@ AppleCMLinker::sLinkStatus = LinkStatus_INIT;
 
 void* AppleCMLinker::sLink = nullptr;
 nsrefcnt AppleCMLinker::sRefCount = 0;
+CFStringRef AppleCMLinker::skPropExtensionAtoms = nullptr;
 
 #define LINK_FUNC(func) typeof(func) func;
 #include "AppleCMFunctions.h"
@@ -39,21 +40,48 @@ AppleCMLinker::Link()
     return sLinkStatus == LinkStatus_SUCCEEDED;
   }
 
-  const char* dlname =
-    "/System/Library/Frameworks/CoreMedia.framework/CoreMedia";
-  if (!(sLink = dlopen(dlname, RTLD_NOW | RTLD_LOCAL))) {
+  CFStringRef* extensionAtoms = nullptr;
+  const char* dlnames[] = {
+    "/System/Library/Frameworks/CoreMedia.framework/CoreMedia",
+    "/System/Library/PrivateFrameworks/CoreMedia.framework/CoreMedia",
+  };
+  for (const char* dlname : dlnames) {
+    sLink = dlopen(dlname, RTLD_NOW | RTLD_LOCAL);
+    if (sLink) {
+      break;
+    }
+  }
+  if (!sLink) {
     NS_WARNING("Couldn't load CoreMedia framework");
     goto fail;
   }
 
-#define LINK_FUNC(func)                                        \
-  func = (typeof(func))dlsym(sLink, #func);                    \
-  if (!func) {                                                 \
-    NS_WARNING("Couldn't load CoreMedia function " #func ); \
-    goto fail;                                                 \
+#define LINK_FUNC(func, legacy)                                   \
+  func = (typeof(func))dlsym(sLink, #func);                       \
+  if (!func) {                                                    \
+    func = (typeof(func))dlsym(sLink, #legacy);                   \
+  }                                                               \
+  if (!func) {                                                    \
+    NS_WARNING("Couldn't load CoreMedia function " #func);       \
+    goto fail;                                                    \
   }
-#include "AppleCMFunctions.h"
+  LINK_FUNC(CMVideoFormatDescriptionCreate, FigVideoFormatDescriptionCreate)
+  LINK_FUNC(CMBlockBufferCreateWithMemoryBlock, FigBlockBufferCreateWithMemoryBlock)
+  LINK_FUNC(CMSampleBufferCreate, FigSampleBufferCreate)
+  LINK_FUNC(CMTimeMake, FigTimeMake)
 #undef LINK_FUNC
+
+  extensionAtoms = static_cast<CFStringRef*>(
+      dlsym(sLink, "kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms"));
+  if (!extensionAtoms) {
+    extensionAtoms = static_cast<CFStringRef*>(
+        dlsym(sLink, "kFigFormatDescriptionExtension_SampleDescriptionExtensionAtoms"));
+  }
+  if (!extensionAtoms || !*extensionAtoms) {
+    NS_WARNING("Couldn't load CoreMedia extension atoms key");
+    goto fail;
+  }
+  skPropExtensionAtoms = *extensionAtoms;
 
   LOG("Loaded CoreMedia framework.");
   sLinkStatus = LinkStatus_SUCCEEDED;
@@ -76,6 +104,7 @@ AppleCMLinker::Unlink()
     LOG("Unlinking CoreMedia framework.");
     dlclose(sLink);
     sLink = nullptr;
+    skPropExtensionAtoms = nullptr;
   }
 }
 } // namespace mozilla

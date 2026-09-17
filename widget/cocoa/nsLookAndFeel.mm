@@ -74,23 +74,26 @@ void nsLookAndFeel::RefreshImpl() {
   nsXPLookAndFeel::RefreshImpl();
 }
 
+static NSColor* GetRGBColor(NSColor* aColor) {
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return [aColor colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+  }
+  return [aColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+}
+
 static nscolor GetColorFromNSColor(NSColor* aColor) {
   // Pre-10.7 system colors can come in custom colorspaces whose component
   // accessors throw ("need to first convert colorspace"), and conversion
   // may return the same unconvertible object rather than nil.
-  NSColor* srgbColor =
-      [aColor colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
-  if (!srgbColor) {
-    srgbColor = [aColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
-  }
-  if (!srgbColor) {
-    return NS_RGB(0, 0, 0);
-  }
   @try {
-    return NS_RGBA((unsigned int)round(srgbColor.redComponent * 255.0),
-                   (unsigned int)round(srgbColor.greenComponent * 255.0),
-                   (unsigned int)round(srgbColor.blueComponent * 255.0),
-                   (unsigned int)round(srgbColor.alphaComponent * 255.0));
+    NSColor* rgbColor = GetRGBColor(aColor);
+    if (!rgbColor) {
+      return NS_RGB(0, 0, 0);
+    }
+    return NS_RGBA((unsigned int)round(rgbColor.redComponent * 255.0),
+                   (unsigned int)round(rgbColor.greenComponent * 255.0),
+                   (unsigned int)round(rgbColor.blueComponent * 255.0),
+                   (unsigned int)round(rgbColor.alphaComponent * 255.0));
   } @catch (NSException*) {
     return NS_RGB(0, 0, 0);
   }
@@ -98,18 +101,14 @@ static nscolor GetColorFromNSColor(NSColor* aColor) {
 
 static nscolor GetColorFromNSColorWithCustomAlpha(NSColor* aColor,
                                                   float alpha) {
-  NSColor* srgbColor =
-      [aColor colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
-  if (!srgbColor) {
-    srgbColor = [aColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
-  }
-  if (!srgbColor) {
-    return NS_RGB(0, 0, 0);
-  }
   @try {
-    return NS_RGBA((unsigned int)round(srgbColor.redComponent * 255.0),
-                   (unsigned int)round(srgbColor.greenComponent * 255.0),
-                   (unsigned int)round(srgbColor.blueComponent * 255.0),
+    NSColor* rgbColor = GetRGBColor(aColor);
+    if (!rgbColor) {
+      return NS_RGB(0, 0, 0);
+    }
+    return NS_RGBA((unsigned int)round(rgbColor.redComponent * 255.0),
+                   (unsigned int)round(rgbColor.greenComponent * 255.0),
+                   (unsigned int)round(rgbColor.blueComponent * 255.0),
                    (unsigned int)round(alpha * 255.0));
   } @catch (NSException*) {
     return NS_RGB(0, 0, 0);
@@ -779,13 +778,11 @@ nsresult nsLookAndFeel::GetKeyboardLayoutImpl(nsACString& aLayout) {
                   object:nil
       suspensionBehavior:NSNotificationSuspensionBehaviorDeliverImmediately];
 
-  // effectiveAppearance is 10.14+; observing it invokes the getter, which
-  // throws on systems without it.
-  if ([NSApp respondsToSelector:@selector(effectiveAppearance)]) {
+  if (nsCocoaFeatures::OnMojaveOrLater()) {
     [NSApp addObserver:self
             forKeyPath:@"effectiveAppearance"
                options:0
-             context:nil];
+               context:nil];
   }
 
   return self;

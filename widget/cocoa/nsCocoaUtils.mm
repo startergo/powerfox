@@ -2,9 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#if __has_include(<AVFoundation/AVFoundation.h>)
-#  import <AVFoundation/AVFoundation.h>
-#endif
+#import <AVFoundation/AVFoundation.h>
 
 #include <cmath>
 
@@ -216,21 +214,18 @@ NSPoint nsCocoaUtils::EventLocationForWindow(NSEvent* anEvent,
   NS_OBJC_END_TRY_BLOCK_RETURN(NSMakePoint(0.0, 0.0));
 }
 
-static bool EventSupportsPhaseInformation(NSEvent* aEvent) {
-  // NSEvent phase accessors require 10.7
-  return [aEvent respondsToSelector:@selector(phase)];
-}
-
 BOOL nsCocoaUtils::IsMomentumScrollEvent(NSEvent* aEvent) {
-  return [aEvent type] == NSEventTypeScrollWheel &&
-         EventSupportsPhaseInformation(aEvent) &&
+  return nsCocoaFeatures::OnLionOrLater() &&
+         [aEvent type] == NSEventTypeScrollWheel &&
          [aEvent momentumPhase] != NSEventPhaseNone;
 }
 
 BOOL nsCocoaUtils::EventHasPhaseInformation(NSEvent* aEvent) {
-  return EventSupportsPhaseInformation(aEvent) &&
-         ([aEvent phase] != NSEventPhaseNone ||
-          [aEvent momentumPhase] != NSEventPhaseNone);
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return NO;
+  }
+  return [aEvent phase] != NSEventPhaseNone ||
+         [aEvent momentumPhase] != NSEventPhaseNone;
 }
 
 void nsCocoaUtils::HideOSChromeOnScreen(bool aShouldHide) {
@@ -1157,7 +1152,7 @@ NSMutableAttributedString* nsCocoaUtils::GetNSMutableAttributedString(
     lastOffset = fontRange.mStartOffset;
   }
 
-  if (aIsVertical) {
+  if (aIsVertical && nsCocoaFeatures::OnLionOrLater()) {
     [attrStr addAttribute:NSVerticalGlyphFormAttributeName
                     value:[NSNumber numberWithInt:1]
                     range:NSMakeRange(0, [attrStr length])];
@@ -1287,6 +1282,9 @@ static void LogAuthorizationStatus(AVMediaType aType, int aState) {
 }
 
 static nsresult GetPermissionState(AVMediaType aMediaType, uint16_t& aState) {
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   MOZ_ASSERT(aMediaType == AVMediaTypeVideo || aMediaType == AVMediaTypeAudio);
   if (@available(macOS 10.14, *)) {
   AVAuthorizationStatus authStatus = static_cast<AVAuthorizationStatus>(
@@ -1318,11 +1316,17 @@ static nsresult GetPermissionState(AVMediaType aMediaType, uint16_t& aState) {
 
 nsresult nsCocoaUtils::GetVideoCapturePermissionState(
     uint16_t& aPermissionState) {
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   return GetPermissionState(AVMediaTypeVideo, aPermissionState);
 }
 
 nsresult nsCocoaUtils::GetAudioCapturePermissionState(
     uint16_t& aPermissionState) {
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   return GetPermissionState(AVMediaTypeAudio, aPermissionState);
 }
 
@@ -1442,6 +1446,9 @@ nsresult nsCocoaUtils::GetScreenCapturePermissionState(
 nsresult nsCocoaUtils::RequestVideoCapturePermission(
     RefPtr<Promise>& aPromise) {
   MOZ_ASSERT(NS_IsMainThread());
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   return nsCocoaUtils::RequestCapturePermission(AVMediaTypeVideo, aPromise,
                                                 sVideoCapturePromises,
                                                 VideoCompletionHandler);
@@ -1450,6 +1457,9 @@ nsresult nsCocoaUtils::RequestVideoCapturePermission(
 nsresult nsCocoaUtils::RequestAudioCapturePermission(
     RefPtr<Promise>& aPromise) {
   MOZ_ASSERT(NS_IsMainThread());
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   return nsCocoaUtils::RequestCapturePermission(AVMediaTypeAudio, aPromise,
                                                 sAudioCapturePromises,
                                                 AudioCompletionHandler);
@@ -1466,6 +1476,9 @@ nsresult nsCocoaUtils::RequestAudioCapturePermission(
 nsresult nsCocoaUtils::RequestCapturePermission(
     AVMediaType aType, RefPtr<Promise>& aPromise, PromiseArray& aPromiseList,
     void (^aHandler)(BOOL granted)) {
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   MOZ_ASSERT(aType == AVMediaTypeVideo || aType == AVMediaTypeAudio);
   LOG("RequestCapturePermission(%s)", AVMediaTypeToString(aType));
 
@@ -1608,14 +1621,10 @@ bool static ShouldConsiderStartingSwipeFromEvent(NSEvent* anEvent) {
   // fluid swipe tracking is disabled, and a horizontal two-finger gesture is
   // always a scroll (even in Safari).  This preference can't (currently) be set
   // from the Preferences UI -- only using 'defaults write'.
-  NSEventPhase eventPhase = EventSupportsPhaseInformation(anEvent)
-                                ? [anEvent phase]
-                                : NSEventPhaseNone;
+  NSEventPhase eventPhase = [anEvent phase];
   return [anEvent type] == NSEventTypeScrollWheel &&
          eventPhase == NSEventPhaseBegan &&
          [anEvent hasPreciseScrollingDeltas] &&
-         [NSEvent respondsToSelector:@selector(
-             isSwipeTrackingFromScrollEventsEnabled)] &&
          [NSEvent isSwipeTrackingFromScrollEventsEnabled];
 }
 

@@ -507,16 +507,16 @@ bool WebGLContext::InitAndValidateGL(FailureReason* const out_failReason) {
     gl->fEnable(LOCAL_GL_TEXTURE_CUBE_MAP_SEAMLESS);
   }
 
-  uint32_t minGLSLVersion = 150;
-#ifdef XP_MACOSX
-  if (!nsCocoaFeatures::OnLionOrLater()) {
-    // 10.6 only offers GL 2.1 / GLSL 1.20, which WebGL 1 targets directly.
-    minGLSLVersion = 120;
-  }
+  bool allowLegacyMacGLSL = false;
+#if defined(MOZ_WIDGET_COCOA)
+  allowLegacyMacGLSL =
+      !IsWebGL2() && gl->IsCompatibilityProfile() &&
+      !nsCocoaFeatures::OnMountainLionOrLater();
 #endif
-  if (!gl->IsGLES() && gl->ShadingLanguageVersion() < minGLSLVersion) {
-    const nsPrintfCString reason("GL_SHADING_LANGUAGE_VERSION: %u < %u!",
-                                 gl->ShadingLanguageVersion(), minGLSLVersion);
+  if (!gl->IsGLES() && gl->ShadingLanguageVersion() < 150 &&
+      !allowLegacyMacGLSL) {
+    const nsPrintfCString reason("GL_SHADING_LANGUAGE_VERSION: %u < 150!",
+                                 gl->ShadingLanguageVersion());
     *out_failReason = {"FEATURE_FAILURE_WEBGL_GLSL_VERSION", reason};
     return false;
   }

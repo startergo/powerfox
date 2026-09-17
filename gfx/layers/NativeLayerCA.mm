@@ -9,13 +9,8 @@
 #  import <AppKit/NSColor.h>
 #  import <OpenGL/gl.h>
 #endif
-#if !defined(MAC_OS_X_VERSION_10_8) || \
-    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8
-#  import "AVFoundationCompat.h"
-#else
-#  import <AVFoundation/AVFoundation.h>
-#  import <QuartzCore/QuartzCore.h>
-#endif
+#import <AVFoundation/AVFoundation.h>
+#import <QuartzCore/QuartzCore.h>
 
 #include <algorithm>
 #include <fstream>
@@ -26,6 +21,7 @@
 #include "GLBlitHelper.h"
 #ifdef XP_MACOSX
 #  include "GLContextCGL.h"
+#  include "nsCocoaFeatures.h"
 #else
 #  include "GLContextEAGL.h"
 #endif
@@ -38,6 +34,7 @@
 #include "mozilla/glean/GfxMetrics.h"
 #include "mozilla/webrender/RenderMacIOSurfaceTextureHost.h"
 #include "ScopedGLHelpers.h"
+#include "nsThreadUtils.h"
 
 @interface CALayer (PrivateSetContentsOpaque)
 - (void)setContentsOpaque:(BOOL)opaque;
@@ -275,79 +272,54 @@ bool NativeLayerRootCA::UnsuspendOffMainThreadCommits() {
   return mCommitPending;
 }
 
-void NativeLayerRootCA::KeepCommitsOnMainThread() {
+bool NativeLayerRootCA::AreOffMainThreadCommitsSuspended() {
   MutexAutoLock lock(mMutex);
-  mKeepCommitsOnMainThread = true;
+  return mOffMainThreadCommitsSuspended;
 }
 
-void NativeLayerRootCA::SetCommitDeferredCallback(
-    std::function<void()> aCallback) {
-  MutexAutoLock lock(mMutex);
-  mCommitDeferredCallback = std::move(aCallback);
-}
-
-bool NativeLayerRootCA::CommitToScreen(gfx::IntRect* aDirtyRect) {
-  if (!NS_IsMainThread()) {
-    bool deferredCommit = false;
-    std::function<void()> callback;
+bool NativeLayerRootCA::CommitToScreen() {
+#ifdef XP_MACOSX
+  if (!nsCocoaFeatures::OnLionOrLater() && !NS_IsMainThread()) {
     {
       MutexAutoLock lock(mMutex);
-      if (mKeepCommitsOnMainThread || mOffMainThreadCommitsSuspended) {
+      if (mOffMainThreadCommitsSuspended) {
         mCommitPending = true;
-        deferredCommit = true;
-        callback = mCommitDeferredCallback;
+        return false;
       }
+      if (mMainThreadCommitScheduled) {
+        return true;
+      }
+      mMainThreadCommitScheduled = true;
     }
-    if (deferredCommit) {
-      if (callback) {
-        callback();
-      }
+
+    RefPtr<NativeLayerRootCA> self = this;
+    nsresult rv = NS_DispatchToMainThread(NS_NewRunnableFunction(
+        "NativeLayerRootCA::CommitToScreen", [self] {
+          {
+            MutexAutoLock lock(self->mMutex);
+            self->mMainThreadCommitScheduled = false;
+          }
+          self->CommitToScreen();
+        }));
+    if (NS_FAILED(rv)) {
+      MutexAutoLock lock(mMutex);
+      mMainThreadCommitScheduled = false;
       return false;
     }
+    return true;
   }
-
+#endif
+  {
   MutexAutoLock lock(mMutex);
 
-  bool structural = mMutatedOnscreenLayerStructure;
-  if (structural) {
-    // A structural change can move any layer; present everything. The full
-    // present paints every layer at its current bounds, so seed each
-    // layer's presented bounds now.
-    if (aDirtyRect) {
-      *aDirtyRect = gfx::IntRect(0, 0, 1 << 30, 1 << 30);
-    }
-    for (const auto& layer : mSublayers) {
-      gfx::IntRect bounds = layer->CurrentSurfaceDisplayRect();
-      gfx::IntPoint pos = layer->GetPosition();
-      bounds.MoveBy(pos.x, pos.y);
-      layer->TakePresentedBounds(bounds);
-    }
-  } else if (aDirtyRect) {
-    for (const auto& layer : mSublayers) {
-      if (layer->HasUpdate(WhichRepresentation::ONSCREEN) ==
-          NativeLayerCA::UpdateType::None) {
-        continue;
-      }
-      // A transform or scale change leaves the old extents untracked, so
-      // present everything (and re-seed, since the full present repaints
-      // the layer at its new bounds). Otherwise the layer's previous
-      // bounds cover the old area: union old and new so neither goes
-      // stale.
-      gfx::IntRect bounds = layer->CurrentSurfaceDisplayRect();
-      gfx::IntPoint pos = layer->GetPosition();
-      bounds.MoveBy(pos.x, pos.y);
-      if (layer->HasGeometryUpdate(WhichRepresentation::ONSCREEN)) {
-        *aDirtyRect = gfx::IntRect(0, 0, 1 << 30, 1 << 30);
-        layer->TakePresentedBounds(bounds);
-        continue;
-      }
-      gfx::IntRect previous = layer->TakePresentedBounds(bounds);
-      *aDirtyRect = aDirtyRect->Union(previous).Union(bounds);
-    }
+  if (!NS_IsMainThread() && mOffMainThreadCommitsSuspended) {
+    mCommitPending = true;
+    return false;
   }
 
   CommitRepresentation(WhichRepresentation::ONSCREEN, mOnscreenRootCALayer,
-                       mSublayers, structural, mWindowIsFullscreen);
+                       mSublayers, mMutatedOnscreenLayerStructure,
+                       mWindowIsFullscreen);
   mMutatedOnscreenLayerStructure = false;
 
   mCommitPending = false;
@@ -376,19 +348,16 @@ bool NativeLayerRootCA::CommitToScreen(gfx::IntRect* aDirtyRect) {
   // commit.
   static const int32_t TELEMETRY_COMMIT_PERIOD =
       StaticPrefs::gfx_core_animation_low_power_telemetry_frames_AtStartup();
-  mTelemetryCommitCount = (mTelemetryCommitCount + 1) % TELEMETRY_COMMIT_PERIOD;
+    mTelemetryCommitCount =
+        (mTelemetryCommitCount + 1) % TELEMETRY_COMMIT_PERIOD;
   if (mTelemetryCommitCount == 0) {
     // Figure out if we are hitting video low power mode.
     VideoLowPowerType videoLowPower = CheckVideoLowPower(lock);
     EmitTelemetryForVideoLowPower(videoLowPower);
   }
+  }
 
   return true;
-}
-
-bool NativeLayerRootCA::AreOffMainThreadCommitsSuspended() {
-  MutexAutoLock lock(mMutex);
-  return mOffMainThreadCommitsSuspended;
 }
 
 UniquePtr<NativeLayerRootSnapshotter> NativeLayerRootCA::CreateSnapshotter() {
@@ -484,7 +453,7 @@ void NativeLayerRootCA::CommitRepresentation(
   // the sublayers array - layers which are completely clipped out will return
   // null from UndelyingCALayer.
   AutoCATransaction transaction;
-  NSMutableArray* sublayers =
+  NSMutableArray<CALayer*>* sublayers =
       [NSMutableArray arrayWithCapacity:aSublayers.Length()];
   bool mustRebuild = updateRequired == UpdateType::All;
   for (const auto& layer : aSublayers) {
@@ -926,9 +895,7 @@ NativeLayerCA::~NativeLayerCA() {
 #endif
 
   if (mSurfaceToPresent) {
-    if (&::IOSurfaceDecrementUseCount) {
-      ::IOSurfaceDecrementUseCount(mSurfaceToPresent.get());
-    }
+    IOSurfaceDecrementUseCount(mSurfaceToPresent.get());
   }
 }
 
@@ -1373,15 +1340,11 @@ void NativeLayerCA::SetSurfaceToPresent(CFTypeRefPtr<IOSurfaceRef> aSurfaceRef,
   bool changedSurface = (mSurfaceToPresent != aSurfaceRef);
   if (changedSurface) {
     if (mSurfaceToPresent) {
-      if (&::IOSurfaceDecrementUseCount) {
-        ::IOSurfaceDecrementUseCount(mSurfaceToPresent.get());
-      }
+      IOSurfaceDecrementUseCount(mSurfaceToPresent.get());
     }
     mSurfaceToPresent = aSurfaceRef;
     if (mSurfaceToPresent) {
-      if (&::IOSurfaceIncrementUseCount) {
-        ::IOSurfaceIncrementUseCount(mSurfaceToPresent.get());
-      }
+      IOSurfaceIncrementUseCount(mSurfaceToPresent.get());
     }
   }
 
@@ -1527,21 +1490,6 @@ NativeLayerCA::UpdateType NativeLayerCA::HasUpdate(
     WhichRepresentation aRepresentation) {
   MutexAutoLock lock(mMutex);
   return GetRepresentation(aRepresentation).HasUpdate(IsVideo(lock));
-}
-
-bool NativeLayerCA::HasGeometryUpdate(WhichRepresentation aRepresentation) {
-  MutexAutoLock lock(mMutex);
-  const Representation& r = GetRepresentation(aRepresentation);
-  return r.mMutatedTransform || r.mMutatedBackingScale ||
-         r.mMutatedSurfaceIsFlipped;
-}
-
-gfx::IntRect NativeLayerCA::TakePresentedBounds(const gfx::IntRect& aBounds) {
-  MutexAutoLock lock(mMutex);
-  gfx::IntRect previous =
-      mLastPresentedBounds ? *mLastPresentedBounds : aBounds;
-  mLastPresentedBounds = Some(aBounds);
-  return previous;
 }
 
 /* static */
@@ -1930,9 +1878,13 @@ bool NativeLayerCARepresentation::ApplyChanges(
       mContentCALayer.position = CGPointZero;
       mContentCALayer.anchorPoint = CGPointZero;
       mContentCALayer.contentsGravity = kCAGravityTopLeft;
-      if ([mContentCALayer respondsToSelector:@selector(setContentsScale:)]) {
+#ifdef XP_MACOSX
+      if (nsCocoaFeatures::OnLionOrLater()) {
+#endif
         mContentCALayer.contentsScale = 1;
+#ifdef XP_MACOSX
       }
+#endif
       mContentCALayer.bounds = CGRectMake(0, 0, aSize.width, aSize.height);
       mContentCALayer.edgeAntialiasingMask = 0;
       mContentCALayer.opaque = aIsOpaque;
@@ -1991,9 +1943,13 @@ bool NativeLayerCARepresentation::ApplyChanges(
     if (mOpaquenessTintLayer) {
       mOpaquenessTintLayer.bounds = mContentCALayer.bounds;
     }
-    if ([mContentCALayer respondsToSelector:@selector(setContentsScale:)]) {
+#ifdef XP_MACOSX
+    if (nsCocoaFeatures::OnLionOrLater()) {
+#endif
       mContentCALayer.contentsScale = aBackingScale;
+#ifdef XP_MACOSX
     }
+#endif
   }
 
   if (mMutatedBackingScale || mMutatedPosition || mMutatedDisplayRect ||

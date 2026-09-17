@@ -465,6 +465,14 @@ force-cargo-program-build: MOZ_CARGO_WRAP_LDFLAGS+=-L$(topobjdir)/build/win32 -l
 force-cargo-program-build: CARGO_RUSTCFLAGS += -C default-linker-libraries=yes
 endif
 
+# The 10.6 Rust sysroot uses emulated TLS. Let clang add compiler-rt when
+# linking Rust programs so that ___emutls_get_address is available.
+ifeq (Darwin,$(OS_ARCH))
+ifneq (,$(filter 10.6%,$(MACOSX_DEPLOYMENT_TARGET)))
+force-cargo-program-build: CARGO_RUSTCFLAGS += -C default-linker-libraries=yes
+endif
+endif
+
 # Rustc passes -nodefaultlibs to the linker (clang) on mac, which prevents
 # clang from adding the necessary sanitizer runtimes when building with
 # C/C++ sanitizer but without rust sanitizer.

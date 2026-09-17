@@ -182,7 +182,7 @@ nsMacDockSupport::SetBadgeImage(imgIContainer* aImage,
                                         withSize:NSMakeSize(256, 256)
                                       svgContext:&svgContext
                                      scaleFactor:0.0];
-  if ([image respondsToSelector:@selector(setResizingMode:)]) {
+  if (nsCocoaFeatures::OnYosemiteOrLater()) {
     image.resizingMode = NSImageResizingModeStretch;
   }
   mDockBadgeView.image = image;
@@ -260,9 +260,8 @@ nsresult nsMacDockSupport::UpdateDockTile() {
       mHasBadgeImage) {
     BuildDockTile();
 
-    NSDockTile* dockTile = [NSApp dockTile];
-    if (dockTile.contentView != mDockTileWrapperView) {
-      dockTile.contentView = mDockTileWrapperView;
+    if (NSApp.dockTile.contentView != mDockTileWrapperView) {
+      NSApp.dockTile.contentView = mDockTileWrapperView;
     }
 
     mDockBadgeView.hidden = !mHasBadgeImage;
@@ -278,10 +277,10 @@ nsresult nsMacDockSupport::UpdateDockTile() {
     } else {
       mProgressDockOverlayView.hidden = true;
     }
-    [dockTile display];
-  } else if ([NSApp dockTile].contentView) {
-    [NSApp dockTile].contentView = nil;
-    [[NSApp dockTile] display];
+    [NSApp.dockTile display];
+  } else if (NSApp.dockTile.contentView) {
+    NSApp.dockTile.contentView = nil;
+    [NSApp.dockTile display];
   }
 
   return NS_OK;
@@ -349,10 +348,8 @@ NSString* GetPathForApp(NSDictionary* aPersistantApp) {
 void RefreshDock(NSDictionary* aDockPlist) {
   [[NSUserDefaults standardUserDefaults] setPersistentDomain:aDockPlist
                                                      forName:kDockDomainName];
-  NSArray* dockApps = [NSRunningApplication
-      runningApplicationsWithBundleIdentifier:@"com.apple.dock"];
-  NSRunningApplication* dockApp =
-      [dockApps count] ? [dockApps objectAtIndex:0] : nil;
+  NSRunningApplication* dockApp = [[NSRunningApplication
+      runningApplicationsWithBundleIdentifier:@"com.apple.dock"] firstObject];
   if (!dockApp) {
     return;
   }
@@ -441,7 +438,8 @@ nsresult nsMacDockSupport::EnsureAppIsPinnedToDock(
       NSString* persistentAppName = [persistentAppPath lastPathComponent];
 
       if ([persistentAppName isEqual:appName]) {
-        if ([appToReplacePath hasPrefix:@"/private/var/folders/"] &&
+        if (nsCocoaFeatures::OnYosemiteOrLater() &&
+            [appToReplacePath hasPrefix:@"/private/var/folders/"] &&
             [appToReplacePath containsString:@"/AppTranslocation/"] &&
             [persistentAppPath hasPrefix:@"/Volumes/"]) {
           // This is a special case when an app with the same name was

@@ -1271,10 +1271,21 @@ static SkUniqueCFRef<CTFontRef> ctfont_from_skdata(sk_sp<SkData> data, int ttcIn
 
     SkUniqueCFRef<CFDataRef> cfData(cfdata_from_skdata(std::move(data)));
 
-    if (!&CTFontManagerCreateFontDescriptorFromData) {
-        // Requires macOS 10.13.
-        return nullptr;
+    // CTFontManagerCreateFontDescriptorFromData was added after OS X 10.6.
+    // The graphics-font constructor works with the same in-memory font data.
+    if (!dlsym(RTLD_DEFAULT, "CTFontManagerCreateFontDescriptorFromData")) {
+        SkUniqueCFRef<CGDataProviderRef> provider(CGDataProviderCreateWithCFData(cfData.get()));
+        if (!provider) {
+            return nullptr;
+        }
+        SkUniqueCFRef<CGFontRef> cgFont(CGFontCreateWithDataProvider(provider.get()));
+        if (!cgFont) {
+            return nullptr;
+        }
+        return SkUniqueCFRef<CTFontRef>(
+                CTFontCreateWithGraphicsFont(cgFont.get(), 0, nullptr, nullptr));
     }
+
     SkUniqueCFRef<CTFontDescriptorRef> desc(
             CTFontManagerCreateFontDescriptorFromData(cfData.get()));
     if (!desc) {

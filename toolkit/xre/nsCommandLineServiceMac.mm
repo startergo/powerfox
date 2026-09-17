@@ -8,6 +8,7 @@
 #include "nsTArray.h"
 #include "MacApplicationDelegate.h"
 #include "MacAutoreleasePool.h"
+#include "nsCocoaFeatures.h"
 #include <cstring>
 #include <Cocoa/Cocoa.h>
 
@@ -112,14 +113,10 @@ void SetupMacCommandLine(int& argc, char**& argv, bool forRestart) {
   // if the parent is in the foreground.  This will be communicated in a
   // command-line argument to the child.
   if (forRestart) {
-    if ([[NSWorkspace sharedWorkspace] respondsToSelector:@selector(
-            frontmostApplication)]) {
-      NSRunningApplication* frontApp =
-          [[NSWorkspace sharedWorkspace] frontmostApplication];
-      if ([frontApp isEqual:[NSRunningApplication currentApplication]]) {
-        AddToCommandLine("-foreground");
-      }
-    } else {
+    if ((!nsCocoaFeatures::OnLionOrLater() && [NSApp isActive]) ||
+        (nsCocoaFeatures::OnLionOrLater() &&
+         [[[NSWorkspace sharedWorkspace] frontmostApplication]
+             isEqual:[NSRunningApplication currentApplication]])) {
       AddToCommandLine("-foreground");
     }
   }

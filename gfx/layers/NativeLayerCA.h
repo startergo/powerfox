@@ -7,7 +7,6 @@
 
 #include <IOSurface/IOSurfaceRef.h>
 
-#include <functional>
 #include <ostream>
 
 #include "mozilla/Mutex.h"
@@ -123,12 +122,10 @@ class NativeLayerRootCA final : public NativeLayerRoot {
 
   virtual NativeLayerRootCA* AsNativeLayerRootCA() override { return this; }
 
-  // Can be called on any thread at any point. Returns whether comitting was
-  // successful. Will return false if called off the main thread while
-  // off-main-thread commits are suspended. When aDirtyRect is given and the
-  // commit applies updates, it receives the screen-space bounds that changed,
-  // computed under the same lock as the commit.
-  bool CommitToScreen(gfx::IntRect* aDirtyRect = nullptr);
+  // Can be called on any thread at any point. On Snow Leopard, off-main-thread
+  // requests are coalesced onto the main thread. Returns false if called off
+  // the main thread while off-main-thread commits are suspended.
+  bool CommitToScreen() override;
 
   void CommitOffscreen(CALayer* aRootCALayer);
   void OnNativeLayerRootSnapshotterDestroyed(
@@ -142,17 +139,6 @@ class NativeLayerRootCA final : public NativeLayerRoot {
   // Returns true if the last CommitToScreen() was canceled due to suspension,
   // indicating that another call to CommitToScreen() is needed.
   bool UnsuspendOffMainThreadCommits();
-
-  // Permanently confines CALayer updates to the main thread. On macOS
-  // before 10.8, CATransactions on a non-main thread can deadlock against
-  // the window backing store machinery (CAViewEndDraw) of the main thread.
-  void KeepCommitsOnMainThread();
-
-  // Called when CommitToScreen() is skipped on a non-main thread, so the
-  // embedder can schedule the deferred commit on the main thread.
-  void SetCommitDeferredCallback(std::function<void()> aCallback);
-
-
 
   bool AreOffMainThreadCommitsSuspended();
 
@@ -241,16 +227,14 @@ class NativeLayerRootCA final : public NativeLayerRoot {
   // glitches.
   bool mOffMainThreadCommitsSuspended = false;
 
-  // See KeepCommitsOnMainThread().
-  bool mKeepCommitsOnMainThread = false;
-
-  std::function<void()> mCommitDeferredCallback;
-
   // Set to true if CommitToScreen() was aborted because of commit suspension.
   // Set to false when CommitToScreen() completes successfully. When true,
   // indicates that CommitToScreen() needs to be called at the next available
   // opportunity.
   bool mCommitPending = false;
+
+  // Snow Leopard does not reliably present off-main-thread layer commits.
+  bool mMainThreadCommitScheduled = false;
 
   // Updated by the layer's view's window to match the fullscreen state
   // of that window.
@@ -446,14 +430,6 @@ class NativeLayerCA : public NativeLayer {
 
   NativeLayerCAUpdateType HasUpdate(WhichRepresentation aRepresentation);
 
-  // True if pending mutations change the layer's screen-space geometry in
-  // a way that cannot be covered by invalidating old and new bounds.
-  bool HasGeometryUpdate(WhichRepresentation aRepresentation);
-
-  // Returns the bounds passed at the previous call (or aBounds if the first
-  // call) and stores aBounds, so callers can invalidate both extents.
-  gfx::IntRect TakePresentedBounds(const gfx::IntRect& aBounds);
-
   // Apply pending updates to the underlaying CALayer. Sets *aMustRebuild to
   // true if the update requires changing which set of CALayers should be in the
   // parent.
@@ -528,9 +504,6 @@ class NativeLayerCA : public NativeLayer {
   bool mHasEverAttachExternalImage = false;
   bool mHasEverNotifySurfaceReady = false;
 #endif
-
-  // Set by TakePresentedBounds; bounds at the previous present.
-  Maybe<gfx::IntRect> mLastPresentedBounds;
 };
 
 }  // namespace layers

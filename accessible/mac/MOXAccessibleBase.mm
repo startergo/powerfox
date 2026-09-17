@@ -6,12 +6,12 @@
 
 #import <Accessibility/Accessibility.h>
 
-#import "SDKDeclarations.h"
 #import "MOXAccessibleBase.h"
 
 #import "MacSelectorMap.h"
 
 #include "nsObjCExceptions.h"
+#include "nsCocoaFeatures.h"
 #include "xpcAccessibleMacInterface.h"
 #include "mozilla/Logging.h"
 #include "gfxPlatform.h"
@@ -54,11 +54,8 @@ mozilla::LogModule* GetMacAccessibilityLog() {
 }
 
 - (BOOL)hasMOXAccessibles {
-  if (![self isKindOfClass:[NSArray class]]) {
-    return NO;
-  }
-  NSArray* array = (NSArray*)self;
-  return [array count] && [[array objectAtIndex:0] isMOXAccessible];
+  return [self isKindOfClass:[NSArray class]] &&
+         [[(NSArray*)self firstObject] isMOXAccessible];
 }
 
 @end
@@ -478,7 +475,7 @@ mozilla::LogModule* GetMacAccessibilityLog() {
     return;
   }
 
-  if (userInfo && &NSAccessibilityPostNotificationWithUserInfo) {
+  if (userInfo && nsCocoaFeatures::OnLionOrLater()) {
     NSAccessibilityPostNotificationWithUserInfo(
         GetObjectOrRepresentedView(self), notification, userInfo);
   } else {

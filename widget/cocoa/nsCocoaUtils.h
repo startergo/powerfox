@@ -8,6 +8,7 @@
 #import <Cocoa/Cocoa.h>
 
 #include "InputData.h"
+#include "nsCocoaFeatures.h"
 #include "nsRect.h"
 #include "imgIContainer.h"
 #include "nsTArray.h"
@@ -43,10 +44,6 @@ extern NSString* const kMozFileUrlsPboardType;
 
 #if !defined(MAC_OS_X_VERSION_10_8) || MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8
 enum { NSEventPhaseMayBegin = 0x1 << 5 };
-#endif
-
-#if !defined(MAC_OS_X_VERSION_10_7) || MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
-#import "SDKDeclarations.h"
 #endif
 
 class nsITransferable;
@@ -187,22 +184,18 @@ class nsCocoaUtils {
 
   // Implements an NSPoint equivalent of -[NSWindow convertRectFromScreen:].
   static NSPoint ConvertPointFromScreen(NSWindow* aWindow, const NSPoint& aPt) {
-    if ([aWindow respondsToSelector:@selector(convertRectFromScreen:)]) {
-      return [aWindow convertRectFromScreen:NSMakeRect(aPt.x, aPt.y, 0, 0)]
-                 .origin;
+    if (!nsCocoaFeatures::OnLionOrLater()) {
+      return [aWindow convertScreenToBase:aPt];
     }
-    // convertRectFromScreen: requires 10.7.
-    return [aWindow convertScreenToBase:aPt];
+    return [aWindow convertRectFromScreen:NSMakeRect(aPt.x, aPt.y, 0, 0)].origin;
   }
 
   // Implements an NSPoint equivalent of -[NSWindow convertRectToScreen:].
   static NSPoint ConvertPointToScreen(NSWindow* aWindow, const NSPoint& aPt) {
-    if ([aWindow respondsToSelector:@selector(convertRectToScreen:)]) {
-      return [aWindow convertRectToScreen:NSMakeRect(aPt.x, aPt.y, 0, 0)]
-                 .origin;
+    if (!nsCocoaFeatures::OnLionOrLater()) {
+      return [aWindow convertBaseToScreen:aPt];
     }
-    // convertRectToScreen: requires 10.7.
-    return [aWindow convertBaseToScreen:aPt];
+    return [aWindow convertRectToScreen:NSMakeRect(aPt.x, aPt.y, 0, 0)].origin;
   }
 
   static NSRect DevPixelsToCocoaPoints(const LayoutDeviceIntRect& aRect,

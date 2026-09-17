@@ -3,9 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "CubebUtils.h"
-#if defined(XP_MACOSX)
-#  include "nsCocoaFeatures.h"
-#endif
 
 #include "audio_thread_priority.h"
 #include "base/process_util.h"
@@ -34,6 +31,9 @@
 #include "nsIStringBundle.h"
 #include "nsString.h"
 #include "nsThreadUtils.h"
+#if defined(XP_MACOSX)
+#  include "nsCocoaFeatures.h"
+#endif
 #include "prdtoa.h"
 #ifdef MOZ_WIDGET_ANDROID
 #  include "mozilla/java/GeckoAppShellWrappers.h"
@@ -381,22 +381,17 @@ void PrefChanged(const char* aPref, void* aClosure) {
 #ifdef MOZ_CUBEB_REMOTING
   else if (strcmp(aPref, PREF_CUBEB_SANDBOX) == 0) {
     StaticMutexAutoLock lock(sMutex);
-    sCubebSandbox = Preferences::GetBool(aPref);
-#if defined(XP_MACOSX)
-    if (!nsCocoaFeatures::OnLionOrLater()) {
-      // The audioipc server cannot start on 10.6; without this, cubeb has
-      // no context and all audio playback fails.
-      sCubebSandbox = false;
-    }
-#endif
+    bool canSandboxAudio = true;
+#  if defined(XP_MACOSX)
+    // The 10.6 content sandbox is disabled, and AudioIPC cannot establish its
+    // connection there. Use the CoreAudio backend in the content process.
+    canSandboxAudio = nsCocoaFeatures::OnLionOrLater();
+#  endif
+    sCubebSandbox = canSandboxAudio && Preferences::GetBool(aPref);
     MOZ_LOG_FMT(gCubebLog, LogLevel::Verbose, "{}: {}", PREF_CUBEB_SANDBOX,
                 sCubebSandbox ? "true" : "false");
 #  if defined(MOZ_SANDBOX)
-    if (!sCubebSandbox && IsContentSandboxEnabled()
-#    if defined(XP_MACOSX)
-        && nsCocoaFeatures::OnLionOrLater()
-#    endif
-    ) {
+    if (canSandboxAudio && !sCubebSandbox && IsContentSandboxEnabled()) {
       sCubebSandbox = true;
       MOZ_LOG_FMT(gCubebLog, LogLevel::Error,
                   "{}: false, but content sandbox enabled - forcing true",

@@ -223,6 +223,7 @@ class TextInputHandler;
     (NSPoint)aDefaultPosition;
 - (NSRect)windowButtonsRect;
 - (void)windowMainStateChanged;
+- (void)shapeWindowCornersForLion;
 @end
 
 class nsCocoaWindow final : public nsIWidget {

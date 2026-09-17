@@ -5032,23 +5032,20 @@ static NSTextCheckingType GetTextCheckingTypes() {
 
   NSTextCheckingType types = 0;
 
-  if (StaticPrefs::widget_macos_automatic_text_replacement() &&
-      [NSSpellChecker
-          respondsToSelector:@selector(isAutomaticTextReplacementEnabled)] &&
+  if (nsCocoaFeatures::OnLionOrLater() &&
+      StaticPrefs::widget_macos_automatic_text_replacement() &&
       [NSSpellChecker isAutomaticTextReplacementEnabled]) {
     types |= NSTextCheckingTypeReplacement;
   }
 
-  if (StaticPrefs::widget_macos_automatic_quote_substitution() &&
-      [NSSpellChecker respondsToSelector:
-                   @selector(isAutomaticQuoteSubstitutionEnabled)] &&
+  if (nsCocoaFeatures::OnMavericksOrLater() &&
+      StaticPrefs::widget_macos_automatic_quote_substitution() &&
       [NSSpellChecker isAutomaticQuoteSubstitutionEnabled]) {
     types |= NSTextCheckingTypeQuote;
   }
 
-  if (StaticPrefs::widget_macos_automatic_dash_substitution() &&
-      [NSSpellChecker
-          respondsToSelector:@selector(isAutomaticDashSubstitutionEnabled)] &&
+  if (nsCocoaFeatures::OnMavericksOrLater() &&
+      StaticPrefs::widget_macos_automatic_dash_substitution() &&
       [NSSpellChecker isAutomaticDashSubstitutionEnabled]) {
     types |= NSTextCheckingTypeDash;
   }
@@ -5216,15 +5213,21 @@ void IMEInputHandler::OnTextSubstitution(uint32_t aStartOffset) {
   // NSTextCheckingResult.range is read only, so re-create this result object.
   NSRange candidatedRange = NSMakeRange(candidate.range.location + startFetch,
                                         candidate.range.length);
-  NSArray* alternativeStrings = @[];
-  if (@available(macOS 10.8, *)) {
+  NSArray<NSString*>* alternativeStrings = @[];
+  if (nsCocoaFeatures::OnMavericksOrLater()) {
     alternativeStrings = candidate.alternativeStrings;
   }
   [mCandidatedTextSubstitutionResult release];
-  mCandidatedTextSubstitutionResult = [[NSTextCheckingResult
-      correctionCheckingResultWithRange:candidatedRange
-                      replacementString:candidate.replacementString
-                     alternativeStrings:alternativeStrings] retain];
+  if (nsCocoaFeatures::OnMavericksOrLater()) {
+    mCandidatedTextSubstitutionResult = [[NSTextCheckingResult
+        correctionCheckingResultWithRange:candidatedRange
+                        replacementString:candidate.replacementString
+                       alternativeStrings:alternativeStrings] retain];
+  } else {
+    mCandidatedTextSubstitutionResult = [[NSTextCheckingResult
+        correctionCheckingResultWithRange:candidatedRange
+                        replacementString:candidate.replacementString] retain];
+  }
   mOriginalTextForTextSubstitution =
       Substring(queryTextContentEvent.mReply->DataRef(),
                 candidatedRange.location - startFetch, candidatedRange.length);
@@ -5274,15 +5277,11 @@ void IMEInputHandler::ShowTextSubstitutionPanel() {
   if (!spellchecker) {
     return;
   }
-  NSArray *anotherAlternativeString;
-  if(@available(macOS 10.8, *)) {
+  NSArray<NSString *> *anotherAlternativeString;
+  if (nsCocoaFeatures::OnMavericksOrLater()) {
     anotherAlternativeString = mCandidatedTextSubstitutionResult.alternativeStrings;
   } else {
     anotherAlternativeString = @[];
-  }
-  if (![spellchecker
-          respondsToSelector:@selector(showCorrectionIndicatorOfType:)]) {
-    return;
   }
   [spellchecker
       showCorrectionIndicatorOfType:NSCorrectionIndicatorTypeDefault
@@ -5341,8 +5340,7 @@ void IMEInputHandler::DismissTextSubstitutionPanel() {
   if (!spellchecker) {
     return;
   }
-  if ([spellchecker respondsToSelector:@selector(
-          dismissCorrectionIndicatorForView:)]) {
+  if (nsCocoaFeatures::OnLionOrLater()) {
     [spellchecker dismissCorrectionIndicatorForView:mView];
   }
 

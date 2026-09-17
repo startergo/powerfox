@@ -125,11 +125,13 @@ impl Queue {
     }
 
     pub fn get_global_queue() -> Self {
-        // DISPATCH_QUEUE_PRIORITY_DEFAULT: the QOS class identifiers do not
-        // exist on macOS < 10.10 and are absent from their SDKs, so
-        // bindgen does not generate them.
+        let mut queue = unsafe { dispatch_get_global_queue(QOS_CLASS_DEFAULT as isize, 0) };
+        if queue.is_null() {
+            // Snow Leopard does not accept QoS-class identifiers here.
+            queue = unsafe { dispatch_get_global_queue(0, 0) };
+        }
         Self {
-            queue: Mutex::new(unsafe { dispatch_get_global_queue(0, 0) }),
+            queue: Mutex::new(queue),
             owned: AtomicBool::new(false),
         }
     }

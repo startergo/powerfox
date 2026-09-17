@@ -159,6 +159,9 @@ static void DrawFocusRingForCellIfNeeded(NSCell* aCell, NSRect aWithFrame,
 }
 
 static bool FocusIsDrawnByDrawWithFrame(NSCell* aCell) {
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return true;
+  }
 #if defined(MAC_OS_X_VERSION_10_8) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_8
   // When building with the 10.8 SDK or higher, focus rings don't draw as part
   // of -[NSCell drawWithFrame:inView:] and must be drawn by a separate call

@@ -5,9 +5,12 @@
 #include <sys/sysctl.h>
 #include <sys/types.h>
 #include <time.h>
+#include <mach/mach_host.h>
+#include <mach/vm_statistics.h>
 
 #include "AvailableMemoryWatcher.h"
 #include "Logging.h"
+#include "mozilla/Literals.h"
 #include "mozilla/Preferences.h"
 #include "nsICrashReporter.h"
 #include "nsISupports.h"
@@ -107,6 +110,9 @@ class nsAvailableMemoryWatcher final : public nsITimerCallback,
   inline bool IsPolling() { return mTimer; }
 
   void ReadSysctls();
+  bool ReadLegacyMemoryStats(uint64_t& aAvailableBytes,
+                             uint64_t& aTotalBytes);
+  void PollLegacyMemoryPressure();
 
   // This enum represents the allowed values for the pref that controls
   // the low memory response - "browser.lowMemoryResponseMask". Specifically,
@@ -173,6 +179,8 @@ class nsAvailableMemoryWatcher final : public nsITimerCallback,
   nsAutoCString mCriticalTimeStr;
 
   nsCOMPtr<nsITimer> mTimer;  // non-null indicates the timer is active
+  nsCOMPtr<nsITimer> mLegacyTimer;
+  bool mUseLegacyPolling = false;
 
   // Saved pref values.
   uint32_t mPollingInterval;
@@ -299,6 +307,16 @@ nsresult nsAvailableMemoryWatcher::Init() {
 
   OnMemoryPressureChangedInternal(initialLevel, /* aIsInitialLevel */ true);
   mInitialized = true;
+  if (mUseLegacyPolling) {
+    mLegacyTimer = NS_NewTimer();
+    if (mLegacyTimer) {
+      rv = mLegacyTimer->InitWithCallback(this, 5'000,
+                                          nsITimer::TYPE_REPEATING_SLACK);
+      if (NS_FAILED(rv)) {
+        mLegacyTimer = nullptr;
+      }
+    }
+  }
   return NS_OK;
 }
 
@@ -361,28 +379,93 @@ void nsAvailableMemoryWatcher::UpdateParentAnnotations() {
                       mAvailMemSysctl);
 }
 
-void nsAvailableMemoryWatcher::ReadSysctls() {
-  // Pressure level
-  uint32_t level;
-  size_t size = sizeof(level);
-  if (sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size,
-                   nullptr, 0) == -1) {
-    MP_LOG("Failure reading memory pressure sysctl");
-    NS_WARNING("Failure reading memory pressure sysctl");
-    level = kSysctlLevelNormal;
+bool nsAvailableMemoryWatcher::ReadLegacyMemoryStats(
+    uint64_t& aAvailableBytes, uint64_t& aTotalBytes) {
+  size_t size = sizeof(aTotalBytes);
+  if (sysctlbyname("hw.memsize", &aTotalBytes, &size, nullptr, 0) != 0 ||
+      size != sizeof(aTotalBytes) || !aTotalBytes) {
+    return false;
   }
-  mLevelSysctl = level;
 
-  // Available memory percent
-  int availPercent;
-  size = sizeof(availPercent);
-  if (sysctlbyname("kern.memorystatus_level", &availPercent, &size, nullptr,
-                   0) == -1) {
-    MP_LOG("Failure reading available memory level");
-    NS_WARNING("Failure reading available memory level");
-    availPercent = 50;
+  host_t host = mach_host_self();
+  vm_statistics64_data_t stats = {};
+  mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+  vm_size_t pageSize = 0;
+  kern_return_t statsResult = host_statistics64(
+      host, HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&stats), &count);
+  kern_return_t pageSizeResult = host_page_size(host, &pageSize);
+  mach_port_deallocate(mach_task_self(), host);
+  if (statsResult != KERN_SUCCESS || count < HOST_VM_INFO64_REV0_COUNT ||
+      pageSizeResult != KERN_SUCCESS || !pageSize) {
+    return false;
   }
-  mAvailMemSysctl = availPercent;
+
+  // free_count already includes speculative pages. Inactive pages can also
+  // be reclaimed on these pre-compressor systems.
+  aAvailableBytes =
+      (uint64_t(stats.free_count) + stats.inactive_count) * pageSize;
+  return true;
+}
+
+void nsAvailableMemoryWatcher::ReadSysctls() {
+  uint32_t level = kSysctlLevelNormal;
+  size_t size = sizeof(level);
+  if (!mUseLegacyPolling &&
+      sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size,
+                   nullptr, 0) == 0 &&
+      size == sizeof(level)) {
+    mLevelSysctl = level;
+
+    int availPercent = -1;
+    size = sizeof(availPercent);
+    if (sysctlbyname("kern.memorystatus_level", &availPercent, &size, nullptr,
+                     0) != 0 ||
+        size != sizeof(availPercent)) {
+      uint64_t availableBytes = 0;
+      uint64_t totalBytes = 0;
+      if (ReadLegacyMemoryStats(availableBytes, totalBytes)) {
+        availPercent = static_cast<int>(
+            std::min<uint64_t>(100, availableBytes * 100 / totalBytes));
+      }
+    }
+    mAvailMemSysctl = availPercent;
+    return;
+  }
+
+  mUseLegacyPolling = true;
+  uint64_t availableBytes = 0;
+  uint64_t totalBytes = 0;
+  if (!ReadLegacyMemoryStats(availableBytes, totalBytes)) {
+    NS_WARNING("Failure reading legacy memory statistics");
+    mLevelSysctl = kSysctlLevelNormal;
+    mAvailMemSysctl = -1;
+    return;
+  }
+
+  mAvailMemSysctl = static_cast<int>(
+      std::min<uint64_t>(100, availableBytes * 100 / totalBytes));
+  uint64_t criticalThreshold = std::min<uint64_t>(totalBytes / 16, 512_MiB);
+  uint64_t warningThreshold = std::min<uint64_t>(totalBytes / 8, 1024_MiB);
+  if (mLevelSysctl == kSysctlLevelCritical) {
+    criticalThreshold += criticalThreshold / 2;
+  }
+  if (mLevelSysctl == kSysctlLevelWarning) {
+    warningThreshold += warningThreshold / 4;
+  }
+  mLevelSysctl = availableBytes <= criticalThreshold ? kSysctlLevelCritical
+                 : availableBytes <= warningThreshold ? kSysctlLevelWarning
+                                                      : kSysctlLevelNormal;
+}
+
+void nsAvailableMemoryWatcher::PollLegacyMemoryPressure() {
+  ReadSysctls();
+  MacMemoryPressureLevel level = MacMemoryPressureLevel::Value::eNormal;
+  if (mLevelSysctl == kSysctlLevelCritical) {
+    level = MacMemoryPressureLevel::Value::eCritical;
+  } else if (mLevelSysctl == kSysctlLevelWarning) {
+    level = MacMemoryPressureLevel::Value::eWarning;
+  }
+  OnMemoryPressureChangedInternal(level, /* aIsInitialLevel */ false);
 }
 
 /* virtual */
@@ -430,7 +513,7 @@ void nsAvailableMemoryWatcher::OnMemoryPressureChangedInternal(
 
   mLevel = aNewLevel;
 
-  if (!aIsInitialLevel) {
+  if (!aIsInitialLevel && !mUseLegacyPolling) {
     // Sysctls are already read by ::Init().
     ReadSysctls();
     MP_LOG("level sysctl: %d, available memory: %d percent", mLevelSysctl,
@@ -472,6 +555,10 @@ void nsAvailableMemoryWatcher::LowMemoryResponse() {
 NS_IMETHODIMP
 nsAvailableMemoryWatcher::Notify(nsITimer* aTimer) {
   MOZ_ASSERT(NS_IsMainThread());
+  if (aTimer == mLegacyTimer) {
+    PollLegacyMemoryPressure();
+    return NS_OK;
+  }
   MOZ_ASSERT(mLevel >= mResponseLevel);
   LowMemoryResponse();
   return NS_OK;
@@ -536,6 +623,10 @@ nsAvailableMemoryWatcher::Observe(nsISupports* aSubject, const char* aTopic,
 
 void nsAvailableMemoryWatcher::OnShutdown() {
   StopPolling();
+  if (mLegacyTimer) {
+    mLegacyTimer->Cancel();
+    mLegacyTimer = nullptr;
+  }
   Preferences::RemoveObserver(this, kResponseMask);
   Preferences::RemoveObserver(this, kPollingIntervalMS);
 }

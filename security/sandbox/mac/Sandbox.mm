@@ -294,6 +294,9 @@ bool StartMacSandbox(MacSandboxInfo const& aInfo, std::string& aErrorMessage) {
   // in sandbox policies. For example, 10.14 becomes "1014".
   int32_t major = 0, minor = 0;
   OSXVersion::Get(major, minor);
+  if (major == 10 && minor < 7) {
+    return true;
+  }
   MOZ_ASSERT(minor >= 0 && minor < 100);
   std::string combinedVersion = std::to_string((major * 100) + minor);
 
@@ -904,6 +907,11 @@ bool IsMacSandboxStarted() { return sandbox_check(getpid(), nullptr, 0) == 1; }
 #ifdef DEBUG
 // sandbox_check returns 1 if the specified process is sandboxed
 void AssertMacSandboxEnabled() {
+  int32_t major = 0, minor = 0;
+  OSXVersion::Get(major, minor);
+  if (major == 10 && minor < 7) {
+    return;
+  }
   MOZ_ASSERT(sandbox_check(getpid(), nullptr, 0) == 1);
 }
 #endif /* DEBUG */

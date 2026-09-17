@@ -130,18 +130,19 @@ nsresult nsColorPicker::InitNative(const nsTArray<nsString>& aDefaultColors) {
       HexStrToInt([str substringWithRange:NSMakeRange(3, 2)]) / 255.0;
   double blue = HexStrToInt([str substringWithRange:NSMakeRange(5, 2)]) / 255.0;
 
-  // +colorWithSRGBRed: requires 10.7
-  if ([NSColor respondsToSelector:@selector(colorWithSRGBRed:green:blue:alpha:)]) {
-    return [NSColor colorWithSRGBRed:red green:green blue:blue alpha:1.0];
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return [NSColor colorWithCalibratedRed:red green:green blue:blue alpha:1.0];
   }
-  return [NSColor colorWithCalibratedRed:red green:green blue:blue alpha:1.0];
+  return [NSColor colorWithSRGBRed:red green:green blue:blue alpha:1.0];
 }
 
 /* static */ void nsColorPicker::GetHexStringFromNSColor(NSColor* aColor,
                                                          nsAString& aResult) {
   CGFloat redFloat, greenFloat, blueFloat;
 
-  NSColor* color = [aColor colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+  NSColor* color = nsCocoaFeatures::OnLionOrLater()
+                       ? [aColor colorUsingColorSpace:[NSColorSpace sRGBColorSpace]]
+                       : [aColor colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
   [color getRed:&redFloat green:&greenFloat blue:&blueFloat alpha:nil];
 
   nsCocoaUtils::GetStringForNSString(

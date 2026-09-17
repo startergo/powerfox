@@ -247,7 +247,12 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
         "-framework CoreMIDI",
         "-framework SystemConfiguration",
         fw + "AVFoundation",
-        fw + "CoreMedia",
+        (
+            "-weak_framework CoreMedia"
+            if CONFIG["MOZ_COREMEDIA_IN_PRIVATE_FRAMEWORKS"]
+            else "-framework CoreMedia"
+        ),
+        "-framework IOKit",
         "-weak_framework ScreenCaptureKit",
         "-F%s" % CONFIG["MACOS_PRIVATE_FRAMEWORKS_DIR"],
         fw + "CoreUI",

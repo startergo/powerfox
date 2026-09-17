@@ -22,6 +22,13 @@ LEGACY_CORETEXT = (
 
 def main(output, sdk_path):
     source_path = os.path.join(sdk_path, CORETEXT_TBD)
+    if not os.path.exists(source_path):
+        # The period 10.6 SDK resolves CoreText through the
+        # ApplicationServices sub-framework natively; there is no standalone
+        # stub to rewrite, and no binary carries CoreText's system install
+        # name, so an empty output leaves the dylib_file mapping unused.
+        output.write("")
+        return {}
     with open(source_path, encoding="utf-8") as source:
         contents = source.read()
 

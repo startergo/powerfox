@@ -98,6 +98,8 @@ OSStatus CMVideoFormatDescriptionCreateForImageBuffer(
     CFAllocatorRef allocator, CVImageBufferRef imageBuffer,
     CMVideoFormatDescriptionRef* formatDescriptionOut)
     __attribute__((availability(macos, introduced = 10.8)));
+CGColorSpaceRef CVImageBufferGetColorSpace(CVImageBufferRef imageBuffer)
+    __attribute__((availability(macos, introduced = 10.8)));
 FourCharCode CMFormatDescriptionGetMediaSubType(
     CMVideoFormatDescriptionRef formatDescription)
     __attribute__((availability(macos, introduced = 10.8)));

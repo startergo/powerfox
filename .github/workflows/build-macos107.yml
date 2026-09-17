@@ -150,6 +150,9 @@ jobs:
           rm -rf Nightly.app
           cp -RL obj-x86_64-mac107/dist/Nightly.app Nightly.app
           tools/legacy-macos/polyfill-10.7.sh Nightly.app
+          # 10.7/10.8 ship a libc++ far too old for this tree; load the
+          # bundled 10.7-floor libc++ through @rpath instead.
+          tools/legacy-macos/rpath-libcxx-10.7.sh Nightly.app
           # mach package's dmg predates the polyfill; rebuild it.
           rm -f "powerfox-${VERSION}_macOS10.7-10.14.dmg"
           hdiutil create -volname Nightly -srcfolder Nightly.app \

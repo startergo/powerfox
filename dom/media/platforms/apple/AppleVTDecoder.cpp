@@ -12,6 +12,7 @@
 
 #include "AOMDecoder.h"
 #include "AppleDecoderModule.h"
+#include "AppleCMLinker.h"
 #include "AppleUtils.h"
 #include "CallbackThreadRegistry.h"
 #include "H264.h"
@@ -733,7 +734,7 @@ CFDictionaryRef AppleVTDecoder::CreateDecoderExtensions() {
   const void* extensionKeys[] = {
       kCVImageBufferChromaLocationBottomFieldKey,
       kCVImageBufferChromaLocationTopFieldKey,
-      kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms};
+      AppleCMLinker::skPropExtensionAtoms};
 
   const void* extensionValues[] = {kCVImageBufferChromaLocation_Left,
                                    kCVImageBufferChromaLocation_Left, atoms};

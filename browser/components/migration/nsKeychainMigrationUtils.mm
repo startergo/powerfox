@@ -21,6 +21,10 @@ NS_IMETHODIMP
 nsKeychainMigrationUtils::GetGenericPassword(const nsACString& aServiceName,
                                              const nsACString& aAccountName,
                                              nsACString& aKey) {
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
   // To retrieve a secret, we create a CFDictionary of the form:
   // { class: generic password,
   //   service: the given service name

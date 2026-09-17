@@ -77,7 +77,9 @@ void AppleDecoderModule::Init() {
   // H264 HW is supported since 10.6.
   sCanUseHWDecoder[MediaCodec::H264] = CanCreateHWDecoder(MediaCodec::H264);
   // HEVC HW is supported since 10.13.
-  sCanUseHWDecoder[MediaCodec::HEVC] = CanCreateHWDecoder(MediaCodec::HEVC);
+  if (__builtin_available(macOS 10.13, *)) {
+    sCanUseHWDecoder[MediaCodec::HEVC] = CanCreateHWDecoder(MediaCodec::HEVC);
+  }
   // VP9 HW is supported since 11.0 on Apple silicon.
   sCanUseHWDecoder[MediaCodec::VP9] =
       RegisterSupplementalDecoder(MediaCodec::VP9) &&

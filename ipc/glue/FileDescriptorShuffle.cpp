@@ -11,6 +11,9 @@
 #include <algorithm>
 #include <unistd.h>
 #include <fcntl.h>
+#ifdef XP_MACOSX
+#  include <AvailabilityMacros.h>
+#endif
 
 #ifdef DEBUG
 #  include <numeric>
@@ -30,7 +33,9 @@ namespace ipc {
 // the constant until API 21 (Lollipop).  We also don't use this for
 // IPC child launching on Android, so there's no point in hard-coding
 // the definitions like we do for Android in some other cases.)
-#ifdef F_DUPFD_CLOEXEC
+#if defined(XP_MACOSX) && MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_7
+static const int kDupFdCmd = F_DUPFD;
+#elif defined(F_DUPFD_CLOEXEC)
 static const int kDupFdCmd = F_DUPFD_CLOEXEC;
 #else
 static const int kDupFdCmd = F_DUPFD;

@@ -1615,6 +1615,10 @@ static NSMutableDictionary* gShadowKeyEquivDB = nil;
   // for..." context menu entry and because it opens in Safari, which can cause
   // confusion for users.
   for (_NSServiceEntry* service in aServices) {
+    if (![service respondsToSelector:@selector(bundleIdentifier)]) {
+      [filteredServices addObject:service];
+      continue;
+    }
     NSString* bundleId = [service bundleIdentifier];
     NSString* msg = [service valueForKey:@"message"];
     bool shouldSkip = ([bundleId isEqualToString:@"com.apple.Safari"]) ||

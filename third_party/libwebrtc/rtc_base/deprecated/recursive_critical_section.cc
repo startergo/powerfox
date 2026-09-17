@@ -37,8 +37,10 @@ RecursiveCriticalSection::RecursiveCriticalSection() {
   pthread_mutexattr_init(&mutex_attribute);
   pthread_mutexattr_settype(&mutex_attribute, PTHREAD_MUTEX_RECURSIVE);
 #if defined(WEBRTC_MAC)
+  if (__builtin_available(macOS 10.7, *)) {
   pthread_mutexattr_setpolicy_np(&mutex_attribute,
                                  _PTHREAD_MUTEX_POLICY_FIRSTFIT);
+  }
 #endif
   pthread_mutex_init(&mutex_, &mutex_attribute);
   pthread_mutexattr_destroy(&mutex_attribute);

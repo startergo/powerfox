@@ -22,6 +22,7 @@ class AppleCMLinker
 public:
   static bool Link();
   static void Unlink();
+  static CFStringRef skPropExtensionAtoms;
 
 private:
   static void* sLink;

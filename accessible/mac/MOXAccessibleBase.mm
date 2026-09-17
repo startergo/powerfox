@@ -11,6 +11,7 @@
 #import "MacSelectorMap.h"
 
 #include "nsObjCExceptions.h"
+#include "nsCocoaFeatures.h"
 #include "xpcAccessibleMacInterface.h"
 #include "mozilla/Logging.h"
 #include "gfxPlatform.h"
@@ -474,7 +475,7 @@ mozilla::LogModule* GetMacAccessibilityLog() {
     return;
   }
 
-  if (userInfo) {
+  if (userInfo && nsCocoaFeatures::OnLionOrLater()) {
     NSAccessibilityPostNotificationWithUserInfo(
         GetObjectOrRepresentedView(self), notification, userInfo);
   } else {

@@ -295,7 +295,7 @@ void AddQuarantineMetadataToFile(const CFStringRef filePath,
   }
 
   // Set quarantine properties on file.
-  ::CFURLSetResourcePropertyForKey(fileURL, kCFURLQuarantinePropertiesKey,
+  ::CFURLSetResourcePropertyForKey(fileURL, GetQuarantinePropKey(),
                                    mutQuarantineProps, nullptr);
 
   ::CFRelease(fileURL);

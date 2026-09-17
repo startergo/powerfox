@@ -21,6 +21,7 @@
 #include "GLBlitHelper.h"
 #ifdef XP_MACOSX
 #  include "GLContextCGL.h"
+#  include "nsCocoaFeatures.h"
 #else
 #  include "GLContextEAGL.h"
 #endif
@@ -33,6 +34,7 @@
 #include "mozilla/glean/GfxMetrics.h"
 #include "mozilla/webrender/RenderMacIOSurfaceTextureHost.h"
 #include "ScopedGLHelpers.h"
+#include "nsThreadUtils.h"
 
 @interface CALayer (PrivateSetContentsOpaque)
 - (void)setContentsOpaque:(BOOL)opaque;
@@ -276,6 +278,37 @@ bool NativeLayerRootCA::AreOffMainThreadCommitsSuspended() {
 }
 
 bool NativeLayerRootCA::CommitToScreen() {
+#ifdef XP_MACOSX
+  if (!nsCocoaFeatures::OnLionOrLater() && !NS_IsMainThread()) {
+    {
+      MutexAutoLock lock(mMutex);
+      if (mOffMainThreadCommitsSuspended) {
+        mCommitPending = true;
+        return false;
+      }
+      if (mMainThreadCommitScheduled) {
+        return true;
+      }
+      mMainThreadCommitScheduled = true;
+    }
+
+    RefPtr<NativeLayerRootCA> self = this;
+    nsresult rv = NS_DispatchToMainThread(NS_NewRunnableFunction(
+        "NativeLayerRootCA::CommitToScreen", [self] {
+          {
+            MutexAutoLock lock(self->mMutex);
+            self->mMainThreadCommitScheduled = false;
+          }
+          self->CommitToScreen();
+        }));
+    if (NS_FAILED(rv)) {
+      MutexAutoLock lock(mMutex);
+      mMainThreadCommitScheduled = false;
+      return false;
+    }
+    return true;
+  }
+#endif
   {
   MutexAutoLock lock(mMutex);
 
@@ -1845,7 +1878,13 @@ bool NativeLayerCARepresentation::ApplyChanges(
       mContentCALayer.position = CGPointZero;
       mContentCALayer.anchorPoint = CGPointZero;
       mContentCALayer.contentsGravity = kCAGravityTopLeft;
-      mContentCALayer.contentsScale = 1;
+#ifdef XP_MACOSX
+      if (nsCocoaFeatures::OnLionOrLater()) {
+#endif
+        mContentCALayer.contentsScale = 1;
+#ifdef XP_MACOSX
+      }
+#endif
       mContentCALayer.bounds = CGRectMake(0, 0, aSize.width, aSize.height);
       mContentCALayer.edgeAntialiasingMask = 0;
       mContentCALayer.opaque = aIsOpaque;
@@ -1904,7 +1943,13 @@ bool NativeLayerCARepresentation::ApplyChanges(
     if (mOpaquenessTintLayer) {
       mOpaquenessTintLayer.bounds = mContentCALayer.bounds;
     }
-    mContentCALayer.contentsScale = aBackingScale;
+#ifdef XP_MACOSX
+    if (nsCocoaFeatures::OnLionOrLater()) {
+#endif
+      mContentCALayer.contentsScale = aBackingScale;
+#ifdef XP_MACOSX
+    }
+#endif
   }
 
   if (mMutatedBackingScale || mMutatedPosition || mMutatedDisplayRect ||

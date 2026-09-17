@@ -774,9 +774,7 @@ impl ProgramSourceInfo {
 
         let full_name = Self::make_full_name(name, features);
 
-        let optimized_source = if device.use_optimized_shaders &&
-            !(device.has_lion_shader_compiler &&
-              is_lion_optimized_shader_crasher(&full_name)) {
+        let optimized_source = if device.use_optimized_shaders {
             OPTIMIZED_SHADERS.get(&(gl_version, &full_name)).or_else(|| {
                 warn!("Missing optimized shader source for {}", &full_name);
                 None
@@ -800,6 +798,9 @@ impl ProgramSourceInfo {
                     hasher.write(digest.as_bytes());
                 } else {
                     hasher.write(source_and_digest.digest.as_bytes());
+                }
+                if device.has_lion_shader_compiler {
+                    hasher.write(b"lion-unsigned-subscript-workaround-v1");
                 }
 
                 ProgramSourceType::Optimized(gl_version)
@@ -864,9 +865,14 @@ impl ProgramSourceInfo {
                     .get(&(gl_version, &full_name))
                     .unwrap_or_else(|| panic!("Missing optimized shader source for {}", full_name));
 
-                match kind {
-                    ShaderKind::Vertex => shader.vert_source.to_string(),
-                    ShaderKind::Fragment => shader.frag_source.to_string(),
+                let source = match kind {
+                    ShaderKind::Vertex => shader.vert_source,
+                    ShaderKind::Fragment => shader.frag_source,
+                };
+                if device.has_lion_shader_compiler {
+                    lower_unsigned_constant_subscripts(source)
+                } else {
+                    source.to_string()
                 }
             },
             ProgramSourceType::Unoptimized => {
@@ -895,13 +901,64 @@ impl ProgramSourceInfo {
     }
 }
 
-fn is_lion_optimized_shader_crasher(name: &str) -> bool {
-    name.starts_with("brush_blend") ||
-        name.starts_with("brush_yuv_image") ||
-        (name.starts_with("composite") && name.ends_with("YUV")) ||
-        name.starts_with("cs_clip_rectangle") ||
-        name == "cs_svg_filter_node" ||
-        (name.starts_with("ps_text_run") && name.contains("GLYPH_TRANSFORM"))
+// The GLSL compiler in OS X 10.7 crashes while serializing its AST when an
+// array, vector, or matrix is indexed by an unsigned constant. glsl-optimizer
+// emits such indices even though the equivalent signed constants generate the
+// same code. Lower only these constants before sending optimized GLSL to Lion.
+fn lower_unsigned_constant_subscripts(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut result = String::with_capacity(source.len());
+    let mut copied_through = 0;
+    let mut cursor = 0;
+
+    while cursor < bytes.len() {
+        if bytes[cursor] != b'[' {
+            cursor += 1;
+            continue;
+        }
+
+        let value_start;
+        let value_end;
+        let match_end;
+        if source[cursor + 1..].starts_with("uint(") {
+            value_start = cursor + 6;
+            value_end = bytes[value_start..]
+                .iter()
+                .position(|byte| !byte.is_ascii_digit())
+                .map_or(bytes.len(), |offset| value_start + offset);
+            if value_end == value_start
+                || bytes.get(value_end) != Some(&b')')
+                || bytes.get(value_end + 1) != Some(&b']')
+            {
+                cursor += 1;
+                continue;
+            }
+            match_end = value_end + 2;
+        } else {
+            value_start = cursor + 1;
+            value_end = bytes[value_start..]
+                .iter()
+                .position(|byte| !byte.is_ascii_digit())
+                .map_or(bytes.len(), |offset| value_start + offset);
+            if value_end == value_start
+                || bytes.get(value_end) != Some(&b'u')
+                || bytes.get(value_end + 1) != Some(&b']')
+            {
+                cursor += 1;
+                continue;
+            }
+            match_end = value_end + 2;
+        }
+
+        result.push_str(&source[copied_through..cursor + 1]);
+        result.push_str(&source[value_start..value_end]);
+        result.push(']');
+        copied_through = match_end;
+        cursor = match_end;
+    }
+
+    result.push_str(&source[copied_through..]);
+    result
 }
 
 #[cfg_attr(feature = "serialize_program", derive(Deserialize, Serialize))]
@@ -1218,8 +1275,7 @@ pub struct Device {
     /// Whether to use shaders that have been optimized at build time.
     use_optimized_shaders: bool,
 
-    /// Whether this device uses Lion's GLSL compiler, which crashes on a small
-    /// set of offline-optimized WebRender shaders.
+    /// Whether this device uses the GLSL compiler shipped with OS X 10.7.
     has_lion_shader_compiler: bool,
 
     max_texture_size: i32,
@@ -1585,11 +1641,12 @@ impl Device {
         info!("Renderer: {}", renderer_name);
         let version_string = gl.get_string(gl::VERSION);
         info!("Version: {}", version_string);
-        // Apple's OpenGL drivers use the platform GL stack's major version in
-        // their version string. Lion reports vendor versions beginning with 7.
-        let has_lion_shader_compiler = version_string.contains("-7.");
+        // Lion's Apple OpenGL drivers report a compiler version beginning with
+        // 7. Later macOS releases use a different compiler and must retain the
+        // original optimized GLSL.
+        let has_lion_shader_compiler =
+            cfg!(target_os = "macos") && version_string.contains("-7.");
         info!("Max texture size: {}", max_texture_size);
-
         let mut extension_count = [0];
         unsafe {
             gl.get_integer_v(gl::NUM_EXTENSIONS, &mut extension_count);

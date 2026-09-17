@@ -274,3 +274,53 @@ bool Gecko_OnSierraOrLater() { return nsCocoaFeatures::OnSierraOrLater(); }
   }
   return (ret == 1);
 }
+
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_7
+extern "C" __attribute__((visibility("default"))) void* objc_autoreleasePoolPush() {
+  return [[NSAutoreleasePool alloc] init];
+}
+
+extern "C" __attribute__((visibility("default"))) void objc_autoreleasePoolPop(
+    void* pool) {
+  [(NSAutoreleasePool*)pool drain];
+}
+
+extern "C" __attribute__((visibility("default"))) id objc_alloc(Class cls) {
+  return [cls alloc];
+}
+
+extern "C" __attribute__((visibility("default"))) id objc_retain(id obj) {
+  return [obj retain];
+}
+
+extern "C" __attribute__((visibility("default"))) void objc_release(id obj) {
+  [obj release];
+}
+
+extern "C" __attribute__((visibility("default"))) id
+objc_retainAutoreleasedReturnValue(id obj) {
+  return [obj retain];
+}
+
+extern "C" __attribute__((visibility("default"))) id
+objc_autoreleaseReturnValue(id obj) {
+  return [obj autorelease];
+}
+
+extern "C" __attribute__((visibility("default"))) id
+objc_retainAutorelease(id obj) {
+  return [[obj retain] autorelease];
+}
+
+extern "C" __attribute__((visibility("default"))) id objc_retainBlock(id block) {
+  return [block copy];
+}
+
+extern "C" __attribute__((visibility("default"))) void objc_storeStrong(
+    id* location, id obj) {
+  id old = *location;
+  *location = [obj retain];
+  [old release];
+}
+#endif

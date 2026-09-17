@@ -27,6 +27,12 @@ enum class SkCTFontSmoothBehavior {
 
 SkCTFontSmoothBehavior SkCTFontGetSmoothBehavior();
 
+#ifdef SK_BUILD_FOR_MAC
+void SkCTFontDrawGlyphsCompat(CTFontRef font, const CGGlyph glyphs[],
+                              const CGPoint positions[], size_t count,
+                              CGContextRef context);
+#endif
+
 using SkCTFontWeightMapping = const CGFloat[11];
 
 /** Returns the [-1, 1] CTFontDescriptor weights for the

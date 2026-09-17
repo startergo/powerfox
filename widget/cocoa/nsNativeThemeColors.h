@@ -74,6 +74,11 @@ inline NSColor* ControlAccentColor() {
   }
 
   // Pre-10.14, use hardcoded colors.
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return [NSColor currentControlTint] == NSGraphiteControlTint
+               ? [NSColor colorWithCalibratedRed:0.635 green:0.635 blue:0.655 alpha:1.0]
+               : [NSColor colorWithCalibratedRed:0.247 green:0.584 blue:0.965 alpha:1.0];
+  }
   return [NSColor currentControlTint] == NSGraphiteControlTint
              ? [NSColor colorWithSRGBRed:0.635 green:0.635 blue:0.655 alpha:1.0]
              : [NSColor colorWithSRGBRed:0.247 green:0.584 blue:0.965 alpha:1.0];

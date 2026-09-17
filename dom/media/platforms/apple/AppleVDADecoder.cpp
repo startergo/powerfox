@@ -22,6 +22,7 @@
 #include "mozilla/Logging.h"
 #include "mozilla/SyncRunnable.h"
 #include "nsThreadUtils.h"
+#include "nsCocoaFeatures.h"
 
 #include <algorithm>
 
@@ -62,6 +63,7 @@ AppleVDADecoder::AppleVDADecoder(const VideoInfo& aConfig,
       mTaskQueue(TaskQueue::Create(
           GetMediaThreadPool(MediaThreadType::PLATFORM_DECODER),
           "AppleVDADecoder")),
+      mDecoder(nullptr),
       mMaxRefFrames(
           mStreamType != StreamType::H264 ||
                   aOptions.contains(CreateDecoderParams::Option::LowLatency)
@@ -196,7 +198,15 @@ PlatformCallback(void* decompressionOutputRefCon,
                  CVImageBufferRef image)
 {
   LOG("AppleVDADecoder[%s] status %d flags %d retainCount %ld",
-      __func__, status, infoFlags, CFGetRetainCount(frameInfo));
+      __func__, status, infoFlags,
+      frameInfo ? CFGetRetainCount(frameInfo) : 0);
+
+  AppleVDADecoder* decoder =
+    static_cast<AppleVDADecoder*>(decompressionOutputRefCon);
+  if (status != noErr || !frameInfo) {
+    decoder->OnDecodeError(status != noErr ? status : -1);
+    return;
+  }
 
   // Validate our arguments.
   // According to Apple's TN2267
@@ -214,19 +224,21 @@ PlatformCallback(void* decompressionOutputRefCon,
                "AppleVDADecoder returned an unexpected image type");
   }
 
-  AppleVDADecoder* decoder =
-    static_cast<AppleVDADecoder*>(decompressionOutputRefCon);
-
-  AutoCFTypeRef<CFNumberRef> ptsref(
-    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_PTS")));
-  AutoCFTypeRef<CFNumberRef> dtsref(
-    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_DTS")));
-  AutoCFTypeRef<CFNumberRef> durref(
-    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_DURATION")));
-  AutoCFTypeRef<CFNumberRef> boref(
-    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_OFFSET")));
-  AutoCFTypeRef<CFNumberRef> kfref(
-    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_KEYFRAME")));
+  // CFDictionaryGetValue returns borrowed references owned by frameInfo.
+  CFNumberRef ptsref =
+    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_PTS"));
+  CFNumberRef dtsref =
+    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_DTS"));
+  CFNumberRef durref =
+    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_DURATION"));
+  CFNumberRef boref =
+    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_OFFSET"));
+  CFNumberRef kfref =
+    (CFNumberRef)CFDictionaryGetValue(frameInfo, CFSTR("FRAME_KEYFRAME"));
+  if (!ptsref || !dtsref || !durref || !boref || !kfref) {
+    decoder->OnDecodeError(-1);
+    return;
+  }
 
   int64_t dts;
   int64_t pts;
@@ -234,11 +246,14 @@ PlatformCallback(void* decompressionOutputRefCon,
   int64_t byte_offset;
   char is_sync_point;
 
-  CFNumberGetValue(ptsref, kCFNumberSInt64Type, &pts);
-  CFNumberGetValue(dtsref, kCFNumberSInt64Type, &dts);
-  CFNumberGetValue(durref, kCFNumberSInt64Type, &duration);
-  CFNumberGetValue(boref, kCFNumberSInt64Type, &byte_offset);
-  CFNumberGetValue(kfref, kCFNumberSInt8Type, &is_sync_point);
+  if (!CFNumberGetValue(ptsref, kCFNumberSInt64Type, &pts) ||
+      !CFNumberGetValue(dtsref, kCFNumberSInt64Type, &dts) ||
+      !CFNumberGetValue(durref, kCFNumberSInt64Type, &duration) ||
+      !CFNumberGetValue(boref, kCFNumberSInt64Type, &byte_offset) ||
+      !CFNumberGetValue(kfref, kCFNumberSInt8Type, &is_sync_point)) {
+    decoder->OnDecodeError(-1);
+    return;
+  }
 
   AppleVDADecoder::AppleFrameRef frameRef(
       media::TimeUnit::FromMicroseconds(dts),
@@ -510,6 +525,16 @@ AppleVDADecoder::ProcessDecode(MediaRawData* aSample)
                        std::size(keys),
                        &kCFTypeDictionaryKeyCallBacks,
                        &kCFTypeDictionaryValueCallBacks));
+  if (!frameInfo) {
+    NS_ERROR("Couldn't create frame metadata dictionary");
+    return;
+  }
+
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    // The 10.6 VDA implementation releases frameInfo one time too many.
+    // Its callback can run synchronously, so retain before entering VDA.
+    CFRetain(frameInfo);
+  }
 
   OSStatus rv = VDADecoderDecode(mDecoder,
                                  0,
@@ -535,19 +560,21 @@ AppleVDADecoder::InitializeSession()
   AutoCFTypeRef<CFDictionaryRef> outputConfiguration(
     CreateOutputConfiguration());
 
+  VDADecoder decoder = nullptr;
   rv =
     VDADecoderCreate(decoderConfig,
                      outputConfiguration,
                      (VDADecoderOutputCallback*)PlatformCallback,
                      this,
-                     &mDecoder);
+                     &decoder);
 
-  mIsHardwareAccelerated = rv == 0 ? 1 : 0; //kVDADecoderNoErr = 0
-  if (rv != noErr) {
+  mIsHardwareAccelerated = rv == noErr && decoder;
+  if (rv != noErr || !decoder) {
     LOG("AppleVDADecoder: Couldn't create hardware VDA decoder, error %d", rv);
       return MediaResult(NS_ERROR_DOM_MEDIA_FATAL_ERR,
                        RESULT_DETAIL("Couldn't create format description!"));
   }
+  mDecoder = decoder;
 
   LOG("AppleVDADecoder: %s hardware accelerated decoding",
       mIsHardwareAccelerated ? "using" : "not using");

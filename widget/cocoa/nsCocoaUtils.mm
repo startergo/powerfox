@@ -215,11 +215,15 @@ NSPoint nsCocoaUtils::EventLocationForWindow(NSEvent* anEvent,
 }
 
 BOOL nsCocoaUtils::IsMomentumScrollEvent(NSEvent* aEvent) {
-  return [aEvent type] == NSEventTypeScrollWheel &&
+  return nsCocoaFeatures::OnLionOrLater() &&
+         [aEvent type] == NSEventTypeScrollWheel &&
          [aEvent momentumPhase] != NSEventPhaseNone;
 }
 
 BOOL nsCocoaUtils::EventHasPhaseInformation(NSEvent* aEvent) {
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return NO;
+  }
   return [aEvent phase] != NSEventPhaseNone ||
          [aEvent momentumPhase] != NSEventPhaseNone;
 }
@@ -1148,7 +1152,7 @@ NSMutableAttributedString* nsCocoaUtils::GetNSMutableAttributedString(
     lastOffset = fontRange.mStartOffset;
   }
 
-  if (aIsVertical) {
+  if (aIsVertical && nsCocoaFeatures::OnLionOrLater()) {
     [attrStr addAttribute:NSVerticalGlyphFormAttributeName
                     value:[NSNumber numberWithInt:1]
                     range:NSMakeRange(0, [attrStr length])];
@@ -1278,6 +1282,9 @@ static void LogAuthorizationStatus(AVMediaType aType, int aState) {
 }
 
 static nsresult GetPermissionState(AVMediaType aMediaType, uint16_t& aState) {
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   MOZ_ASSERT(aMediaType == AVMediaTypeVideo || aMediaType == AVMediaTypeAudio);
   if (@available(macOS 10.14, *)) {
   AVAuthorizationStatus authStatus = static_cast<AVAuthorizationStatus>(
@@ -1309,11 +1316,17 @@ static nsresult GetPermissionState(AVMediaType aMediaType, uint16_t& aState) {
 
 nsresult nsCocoaUtils::GetVideoCapturePermissionState(
     uint16_t& aPermissionState) {
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   return GetPermissionState(AVMediaTypeVideo, aPermissionState);
 }
 
 nsresult nsCocoaUtils::GetAudioCapturePermissionState(
     uint16_t& aPermissionState) {
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   return GetPermissionState(AVMediaTypeAudio, aPermissionState);
 }
 
@@ -1433,6 +1446,9 @@ nsresult nsCocoaUtils::GetScreenCapturePermissionState(
 nsresult nsCocoaUtils::RequestVideoCapturePermission(
     RefPtr<Promise>& aPromise) {
   MOZ_ASSERT(NS_IsMainThread());
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   return nsCocoaUtils::RequestCapturePermission(AVMediaTypeVideo, aPromise,
                                                 sVideoCapturePromises,
                                                 VideoCompletionHandler);
@@ -1441,6 +1457,9 @@ nsresult nsCocoaUtils::RequestVideoCapturePermission(
 nsresult nsCocoaUtils::RequestAudioCapturePermission(
     RefPtr<Promise>& aPromise) {
   MOZ_ASSERT(NS_IsMainThread());
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   return nsCocoaUtils::RequestCapturePermission(AVMediaTypeAudio, aPromise,
                                                 sAudioCapturePromises,
                                                 AudioCompletionHandler);
@@ -1457,6 +1476,9 @@ nsresult nsCocoaUtils::RequestAudioCapturePermission(
 nsresult nsCocoaUtils::RequestCapturePermission(
     AVMediaType aType, RefPtr<Promise>& aPromise, PromiseArray& aPromiseList,
     void (^aHandler)(BOOL granted)) {
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   MOZ_ASSERT(aType == AVMediaTypeVideo || aType == AVMediaTypeAudio);
   LOG("RequestCapturePermission(%s)", AVMediaTypeToString(aType));
 

@@ -74,22 +74,27 @@ void nsLookAndFeel::RefreshImpl() {
   nsXPLookAndFeel::RefreshImpl();
 }
 
+static NSColor* GetRGBColor(NSColor* aColor) {
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return [aColor colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+  }
+  return [aColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+}
+
 static nscolor GetColorFromNSColor(NSColor* aColor) {
-  NSColor* srgbColor =
-      [aColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
-  return NS_RGBA((unsigned int)round(srgbColor.redComponent * 255.0),
-                 (unsigned int)round(srgbColor.greenComponent * 255.0),
-                 (unsigned int)round(srgbColor.blueComponent * 255.0),
-                 (unsigned int)round(srgbColor.alphaComponent * 255.0));
+  NSColor* rgbColor = GetRGBColor(aColor);
+  return NS_RGBA((unsigned int)round(rgbColor.redComponent * 255.0),
+                 (unsigned int)round(rgbColor.greenComponent * 255.0),
+                 (unsigned int)round(rgbColor.blueComponent * 255.0),
+                 (unsigned int)round(rgbColor.alphaComponent * 255.0));
 }
 
 static nscolor GetColorFromNSColorWithCustomAlpha(NSColor* aColor,
                                                   float alpha) {
-  NSColor* srgbColor =
-      [aColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
-  return NS_RGBA((unsigned int)round(srgbColor.redComponent * 255.0),
-                 (unsigned int)round(srgbColor.greenComponent * 255.0),
-                 (unsigned int)round(srgbColor.blueComponent * 255.0),
+  NSColor* rgbColor = GetRGBColor(aColor);
+  return NS_RGBA((unsigned int)round(rgbColor.redComponent * 255.0),
+                 (unsigned int)round(rgbColor.greenComponent * 255.0),
+                 (unsigned int)round(rgbColor.blueComponent * 255.0),
                  (unsigned int)round(alpha * 255.0));
 }
 
@@ -721,11 +726,13 @@ nsresult nsLookAndFeel::GetKeyboardLayoutImpl(nsACString& aLayout) {
               name:NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification
               object:nil];
   }
-  [NSNotificationCenter.defaultCenter
-      addObserver:self
-         selector:@selector(scrollbarsChanged)
-             name:NSPreferredScrollerStyleDidChangeNotification
-           object:nil];
+  if (nsCocoaFeatures::OnLionOrLater()) {
+    [NSNotificationCenter.defaultCenter
+        addObserver:self
+           selector:@selector(scrollbarsChanged)
+               name:NSPreferredScrollerStyleDidChangeNotification
+             object:nil];
+  }
   [NSDistributedNotificationCenter.defaultCenter
              addObserver:self
                 selector:@selector(scrollbarsChanged)
@@ -745,10 +752,12 @@ nsresult nsLookAndFeel::GetKeyboardLayoutImpl(nsACString& aLayout) {
                   object:nil
       suspensionBehavior:NSNotificationSuspensionBehaviorDeliverImmediately];
 
-  [NSApp addObserver:self
-          forKeyPath:@"effectiveAppearance"
-             options:0
-             context:nil];
+  if (nsCocoaFeatures::OnMojaveOrLater()) {
+    [NSApp addObserver:self
+            forKeyPath:@"effectiveAppearance"
+               options:0
+               context:nil];
+  }
 
   return self;
 }

@@ -91,6 +91,9 @@ static constexpr nsCursor kCustomCursor = eCursorCount;
       return [NSCursor cursorWithImageNamed:@"zoomOut"
                                     hotSpot:NSMakePoint(10, 10)];
     case eCursor_vertical_text:
+      if (!nsCocoaFeatures::OnLionOrLater()) {
+        return [NSCursor IBeamCursor];
+      }
       return [NSCursor IBeamCursorForVerticalLayout];
     case eCursor_all_scroll:
       return [NSCursor openHandCursor];

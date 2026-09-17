@@ -15,6 +15,7 @@
 #include "api/scoped_refptr.h"
 #include "device_info_objc.h"
 #include "mozilla/StaticPrefs_media.h"
+#include "nsCocoaFeatures.h"
 #include "rtc_base/ref_counted_object.h"
 #include "rtc_video_capture_objc.h"
 #include "video_capture_avfoundation.h"
@@ -25,6 +26,12 @@ using namespace videocapturemodule;
 
 webrtc::scoped_refptr<VideoCaptureModule> VideoCaptureImpl::Create(
     Clock* _Nonnull clock, const char* _Null_unspecified deviceUniqueIdUTF8) {
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_7
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    return nullptr;
+  }
+#endif
   if (StaticPrefs::media_getusermedia_camera_macavf_enabled_AtStartup()) {
     return VideoCaptureAvFoundation::Create(clock, deviceUniqueIdUTF8);
   }

@@ -233,6 +233,17 @@ with only_when(target_is_osx):
         macos_coretext_in_application_services,
     )
 
+    @depends(macos_target)
+    def macos_coremedia_in_private_frameworks(value):
+        version = tuple(int(component) for component in value.split("."))
+        if version < (10, 7):
+            return True
+
+    set_config(
+        "MOZ_COREMEDIA_IN_PRIVATE_FRAMEWORKS",
+        macos_coremedia_in_private_frameworks,
+    )
+
 
 @imports("plistlib")
 @imports(_from="__builtin__", _import="open")

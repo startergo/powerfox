@@ -90,6 +90,7 @@
 #include "mozilla/layers/CompositorBridgeChild.h"
 #include "mozilla/widget/Screen.h"
 #include <algorithm>
+#include <dlfcn.h>
 
 #ifdef ACCESSIBILITY
 #  include "mozilla/a11y/DocAccessible.h"
@@ -171,6 +172,72 @@ static NSString* const CGSSpacesKey = @"Spaces";
 extern CGSConnection _CGSDefaultConnection(void);
 extern CGError CGSSetWindowTransform(CGSConnection cid, CGSWindow wid,
                                      CGAffineTransform transform);
+}
+
+using CGSRegionObj = void*;
+using CGSNewRegionWithRectListFunc = CGError (*)(const CGRect*, size_t,
+                                                 CGSRegionObj*);
+using CGSSetWindowShapeFunc = CGError (*)(CGSConnection, CGSWindow,
+                                          CGSRegionObj, CGFloat, CGFloat);
+using CGSReleaseRegionFunc = CGError (*)(CGSRegionObj);
+
+static void ShapeWindowCornersForLion(NSWindow* aWindow) {
+  if (!nsCocoaFeatures::OnLionOrLater() ||
+      nsCocoaFeatures::OnMountainLionOrLater() ||
+      (aWindow.styleMask & NSWindowStyleMaskFullScreen) ||
+      aWindow.windowNumber <= 0) {
+    return;
+  }
+
+  static const auto newRegionWithRectList =
+      reinterpret_cast<CGSNewRegionWithRectListFunc>(
+          dlsym(RTLD_DEFAULT, "CGSNewRegionWithRectList"));
+  static const auto setWindowShape = reinterpret_cast<CGSSetWindowShapeFunc>(
+      dlsym(RTLD_DEFAULT, "CGSSetWindowShape"));
+  static const auto releaseRegion = reinterpret_cast<CGSReleaseRegionFunc>(
+      dlsym(RTLD_DEFAULT, "CGSReleaseRegion"));
+  if (!newRegionWithRectList || !setWindowShape || !releaseRegion) {
+    return;
+  }
+
+  NSRect frame = aWindow.frame;
+  CGFloat scale = aWindow.backingScaleFactor;
+  frame.origin.x *= scale;
+  frame.origin.y = nsCocoaUtils::FlippedScreenY(NSMaxY(frame)) * scale;
+  frame.size.width *= scale;
+  frame.size.height *= scale;
+
+  const CGFloat one = scale;
+  const CGFloat two = 2.0 * scale;
+  const CGFloat four = 4.0 * scale;
+  const CGFloat eight = 8.0 * scale;
+  if (NSWidth(frame) <= eight || NSHeight(frame) <= eight) {
+    return;
+  }
+
+  const CGRect rects[] = {
+      CGRectMake(NSMinX(frame) + four, NSMinY(frame),
+                 NSWidth(frame) - eight, one),
+      CGRectMake(NSMinX(frame) + two, NSMinY(frame) + one,
+                 NSWidth(frame) - four, one),
+      CGRectMake(NSMinX(frame) + one, NSMinY(frame) + two,
+                 NSWidth(frame) - two, two),
+      CGRectMake(NSMinX(frame), NSMinY(frame) + four, NSWidth(frame),
+                 NSHeight(frame) - eight),
+      CGRectMake(NSMinX(frame) + one, NSMaxY(frame) - four,
+                 NSWidth(frame) - two, two),
+      CGRectMake(NSMinX(frame) + two, NSMaxY(frame) - two,
+                 NSWidth(frame) - four, one),
+      CGRectMake(NSMinX(frame) + four, NSMaxY(frame) - one,
+                 NSWidth(frame) - eight, one),
+  };
+  CGSRegionObj region = nullptr;
+  if (newRegionWithRectList(rects, sizeof(rects) / sizeof(rects[0]), &region) ==
+      kCGErrorSuccess) {
+    setWindowShape(_CGSDefaultConnection(), aWindow.windowNumber, region, 0.0,
+                   0.0);
+    releaseRegion(region);
+  }
 }
 
 static void RollUpPopups(nsIRollupListener::AllowAnimations aAllowAnimations =
@@ -2844,7 +2911,9 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
     return;
   }
 
-  NSEventPhase phase = [theEvent phase];
+  NSEventPhase phase = nsCocoaFeatures::OnLionOrLater()
+                           ? [theEvent phase]
+                           : NSEventPhaseNone;
   // Fire eWheelOperationStart/End events when 2 fingers touch/release the
   // touchpad.
   if (phase & NSEventPhaseMayBegin) {
@@ -2876,7 +2945,7 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
       PixelCastJustification::LayoutDeviceIsScreenForUntransformedEvent);
 
   bool usePreciseDeltas =
-      [theEvent hasPreciseScrollingDeltas] &&
+      nsCocoaFeatures::OnLionOrLater() && [theEvent hasPreciseScrollingDeltas] &&
       Preferences::GetBool("mousewheel.enable_pixel_scrolling", true);
   bool hasPhaseInformation = nsCocoaUtils::EventHasPhaseInformation(theEvent);
 
@@ -3400,7 +3469,8 @@ static gfx::IntPoint GetIntegerDeltaForEvent(NSEvent* aEvent) {
   // Handle fn+f (Globe+F) to toggle fullscreen. We must intercept this before
   // the TextInputHandler processes it, otherwise it gets treated as normal 'f'
   // character input.
-  if ([theEvent keyCode] == kVK_ANSI_F &&
+  if (nsCocoaFeatures::OnLionOrLater() &&
+      [theEvent keyCode] == kVK_ANSI_F &&
       ([theEvent modifierFlags] &
        NSEventModifierFlagDeviceIndependentFlagsMask) ==
           NSEventModifierFlagFunction) {
@@ -5297,9 +5367,11 @@ nsresult nsCocoaWindow::CreateNativeWindow(const NSRect& aRect,
 
   // Make sure that window titles don't leak to disk in private browsing mode
   // due to macOS' resume feature.
-  mWindow.restorable = !aIsPrivateBrowsing;
-  if (aIsPrivateBrowsing) {
-    [mWindow disableSnapshotRestoration];
+  if (nsCocoaFeatures::OnLionOrLater()) {
+    mWindow.restorable = !aIsPrivateBrowsing;
+    if (aIsPrivateBrowsing) {
+      [mWindow disableSnapshotRestoration];
+    }
   }
 
   // setup our notification delegate. Note that setDelegate: does NOT retain.
@@ -5362,7 +5434,8 @@ nsresult nsCocoaWindow::CreateNativeWindow(const NSRect& aRect,
   // zoom glyph (they typically aren't fullscreen-capable anyway).
   // SetSupportsNativeFullscreen() can later override based on the XUL
   // `macnativefullscreen` attribute.
-  if ((mWindowType == WindowType::TopLevel ||
+  if (nsCocoaFeatures::OnLionOrLater() &&
+      (mWindowType == WindowType::TopLevel ||
        mWindowType == WindowType::Dialog) &&
       (features & NSWindowStyleMaskTitled)) {
     NSWindowCollectionBehavior fsBehavior =
@@ -5756,6 +5829,9 @@ void nsCocoaWindow::Show(bool aState) {
       } else {
         [mWindow makeKeyAndOrderFront:nil];
       }
+      if ([mWindow isKindOfClass:[ToolbarWindow class]]) {
+        [(ToolbarWindow*)mWindow shapeWindowCornersForLion];
+      }
       NS_OBJC_END_TRY_IGNORE_BLOCK;
     }
     SetSupportsNativeFullscreen(savedValueForSupportsNativeFullscreen);
@@ -5836,7 +5912,8 @@ bool nsCocoaWindow::ShouldUseOffMainThreadCompositing() {
 bool nsCocoaWindow::ShouldUseNSPopover() const {
   // Use NSPopover for panel popups when the preference is enabled
   // But not for detached popups - they should use traditional window logic
-  return mWindowType == WindowType::Popup && mPopupType == PopupType::Panel &&
+  return nsCocoaFeatures::OnLionOrLater() &&
+         mWindowType == WindowType::Popup && mPopupType == PopupType::Panel &&
          mozilla::StaticPrefs::widget_macos_native_popovers();
 }
 
@@ -6256,7 +6333,8 @@ void nsCocoaWindow::HideWindowChrome(bool aShouldHide) {
 
   // Recreate the window with the right border style.
   NSRect frameRect = mWindow.frame;
-  BOOL isPrivateWindow = !mWindow.restorable;
+  BOOL isPrivateWindow =
+      nsCocoaFeatures::OnLionOrLater() && !mWindow.restorable;
   DestroyNativeWindow();
   nsresult rv = CreateNativeWindow(
       frameRect, aShouldHide ? BorderStyle::None : mBorderStyle, true,
@@ -7792,6 +7870,10 @@ LayoutDeviceIntPoint nsCocoaWindow::GetNativeLockedPoint() {
   if (!mGeckoWindow) return;
 
   mGeckoWindow->CocoaWindowDidResize();
+  NSWindow* window = aNotification.object;
+  if ([window isKindOfClass:[ToolbarWindow class]]) {
+    [(ToolbarWindow*)window shapeWindowCornersForLion];
+  }
 }
 
 - (void)windowDidChangeScreen:(NSNotification*)aNotification {
@@ -8880,6 +8962,10 @@ static bool MaybeDropEventForModalWindow(NSEvent* aEvent, id aDelegate) {
 
 @implementation ToolbarWindow
 
+- (void)shapeWindowCornersForLion {
+  ShapeWindowCornersForLion(self);
+}
+
 - (id)initWithContentRect:(NSRect)aChildViewRect
                 styleMask:(NSUInteger)aStyle
                   backing:(NSBackingStoreType)aBufferingType
@@ -9031,6 +9117,12 @@ static bool MaybeDropEventForModalWindow(NSEvent* aEvent, id aDelegate) {
 }
 - (void)windowMainStateChanged {
   [self setTitlebarNeedsDisplay];
+  if (!nsCocoaFeatures::OnMountainLionOrLater()) {
+    [[self standardWindowButton:NSWindowCloseButton] setNeedsDisplay:YES];
+    [[self standardWindowButton:NSWindowMiniaturizeButton]
+        setNeedsDisplay:YES];
+    [[self standardWindowButton:NSWindowZoomButton] setNeedsDisplay:YES];
+  }
   [[self mainChildView] ensureNextCompositeIsAtomicWithMainThreadPaint];
 }
 

@@ -182,7 +182,9 @@ nsMacDockSupport::SetBadgeImage(imgIContainer* aImage,
                                         withSize:NSMakeSize(256, 256)
                                       svgContext:&svgContext
                                      scaleFactor:0.0];
-  image.resizingMode = NSImageResizingModeStretch;
+  if (nsCocoaFeatures::OnYosemiteOrLater()) {
+    image.resizingMode = NSImageResizingModeStretch;
+  }
   mDockBadgeView.image = image;
 
   return UpdateDockTile();
@@ -436,7 +438,8 @@ nsresult nsMacDockSupport::EnsureAppIsPinnedToDock(
       NSString* persistentAppName = [persistentAppPath lastPathComponent];
 
       if ([persistentAppName isEqual:appName]) {
-        if ([appToReplacePath hasPrefix:@"/private/var/folders/"] &&
+        if (nsCocoaFeatures::OnYosemiteOrLater() &&
+            [appToReplacePath hasPrefix:@"/private/var/folders/"] &&
             [appToReplacePath containsString:@"/AppTranslocation/"] &&
             [persistentAppPath hasPrefix:@"/Volumes/"]) {
           // This is a special case when an app with the same name was

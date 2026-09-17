@@ -418,7 +418,8 @@ bool MaybeInstallAndRelaunch() {
     bool isTranslocated = false;
     if (!isFromDmg) {
       NSString* bundlePath = [[NSBundle mainBundle] bundlePath];
-      if ([bundlePath containsString:@"/AppTranslocation/"]) {
+      if ([bundlePath rangeOfString:@"/AppTranslocation/"].location !=
+          NSNotFound) {
         isTranslocated = true;
       }
     }
@@ -432,7 +433,7 @@ bool MaybeInstallAndRelaunch() {
     // issue with novice mac users. Still, look it up correctly:
     NSArray* applicationsDirs = NSSearchPathForDirectoriesInDomains(
         NSApplicationDirectory, NSLocalDomainMask, YES);
-    NSString* applicationsDir = applicationsDirs[0];
+    NSString* applicationsDir = [applicationsDirs objectAtIndex:0];
 
     // Sanity check dir exists
     NSFileManager* fileManager = [NSFileManager defaultManager];

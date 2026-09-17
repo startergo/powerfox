@@ -2626,6 +2626,15 @@ void gfxPlatform::InitWebRenderConfig() {
   manager.Init();
   manager.ConfigureWebRender();
 
+#if defined(XP_DARWIN)
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    gfxConfig::GetFeature(Feature::WEBRENDER)
+        .ForceDisable(FeatureStatus::Unavailable,
+                      "OpenGL 3.2 is unavailable on OS X 10.6",
+                      "FEATURE_FAILURE_WEBRENDER_GL_2_1"_ns);
+  }
+#endif
+
   if (gfxConfig::IsEnabled(Feature::GPU_PROCESS)) {
     gfxVars::SetGPUProcessEnabled(true);
   }

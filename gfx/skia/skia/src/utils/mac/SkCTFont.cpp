@@ -29,6 +29,30 @@
 #endif
 
 #include <dlfcn.h>
+
+#ifdef SK_BUILD_FOR_MAC
+void SkCTFontDrawGlyphsCompat(CTFontRef font, const CGGlyph glyphs[],
+                              const CGPoint positions[], size_t count,
+                              CGContextRef context) {
+    using DrawGlyphs = void (*)(CTFontRef, const CGGlyph[], const CGPoint[], size_t, CGContextRef);
+    static const DrawGlyphs drawGlyphs =
+            reinterpret_cast<DrawGlyphs>(dlsym(RTLD_DEFAULT, "CTFontDrawGlyphs"));
+    if (drawGlyphs) {
+        drawGlyphs(font, glyphs, positions, count, context);
+        return;
+    }
+
+    // Snow Leopard has CoreText but not CTFontDrawGlyphs. Its CoreGraphics
+    // glyph-position API can draw the same CTFont's underlying graphics font.
+    SkUniqueCFRef<CGFontRef> cgFont(CTFontCopyGraphicsFont(font, nullptr));
+    CGContextSaveGState(context);
+    CGContextSetFont(context, cgFont.get());
+    CGContextSetFontSize(context, CTFontGetSize(font));
+    CGContextShowGlyphsAtPositions(context, glyphs, positions, count);
+    CGContextRestoreGState(context);
+}
+#endif
+
 template <typename T, size_t N> char (&SkArrayCountHelper(T (&array)[N]))[N];
 #define SK_ARRAY_COUNT(array) (sizeof(SkArrayCountHelper(array)))
 
@@ -273,7 +297,7 @@ SkCTFontSmoothBehavior SkCTFontGetSmoothBehavior() {
                                       colorspace.get(), kBitmapInfoRGB));
 
         SkUniqueCFRef<CTFontRef> ctFont;
-        if(isMavericks())
+        if(darwinVersion() <= 10 || isMavericks())
         {
             SkUniqueCFRef<CGDataProviderRef> data(
                     CGDataProviderCreateWithData(nullptr, kSpiderSymbol_ttf,
@@ -306,8 +330,13 @@ SkCTFontSmoothBehavior SkCTFontGetSmoothBehavior() {
 
         CGPoint point = CGPointMake(0, 3);
         CGGlyph spiderGlyph = 3;
+        #ifdef SK_BUILD_FOR_MAC
+        SkCTFontDrawGlyphsCompat(ctFont.get(), &spiderGlyph, &point, 1, noSmoothContext.get());
+        SkCTFontDrawGlyphsCompat(ctFont.get(), &spiderGlyph, &point, 1, smoothContext.get());
+        #else
         CTFontDrawGlyphs(ctFont.get(), &spiderGlyph, &point, 1, noSmoothContext.get());
         CTFontDrawGlyphs(ctFont.get(), &spiderGlyph, &point, 1, smoothContext.get());
+        #endif
 
         // For debugging.
         //SkUniqueCFRef<CGImageRef> image(CGBitmapContextCreateImage(noSmoothContext()));
@@ -412,7 +441,7 @@ SkCTFontWeightMapping& SkCTFontGetDataFontWeightMapping() {
         for (int i = 0; i < 11; ++i) {
                 os2Table->usWeightClass.value = SkEndian_SwapBE16(i * 100);
             SkUniqueCFRef<CTFontRef> ctFont;
-            if(isMavericks()){
+            if(darwinVersion() <= 10 || isMavericks()){
                 SkUniqueCFRef<CGDataProviderRef> cgdata(
                         CGDataProviderCreateWithData(nullptr, data->data(),
                             data->size(), nullptr));

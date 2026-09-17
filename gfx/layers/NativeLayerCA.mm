@@ -9,8 +9,13 @@
 #  import <AppKit/NSColor.h>
 #  import <OpenGL/gl.h>
 #endif
-#import <AVFoundation/AVFoundation.h>
-#import <QuartzCore/QuartzCore.h>
+#if !defined(MAC_OS_X_VERSION_10_8) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8
+#  import "AVFoundationCompat.h"
+#else
+#  import <AVFoundation/AVFoundation.h>
+#  import <QuartzCore/QuartzCore.h>
+#endif
 
 #include <algorithm>
 #include <fstream>

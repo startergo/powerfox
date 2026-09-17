@@ -28,7 +28,7 @@ def main(output, sdk_path):
         # stub to rewrite, and no binary carries CoreText's system install
         # name, so the empty output file leaves the dylib_file mapping
         # unused. Write nothing: the output handle may be binary.
-        return {}
+        return set()
     with open(source_path, encoding="utf-8") as source:
         contents = source.read()
 

@@ -110,8 +110,8 @@ jobs:
           cp mozconfig-macos107 mozconfig-ci
           SCC="$HOME/.mozbuild/sccache/sccache"
           sed -i '' \
-            -e "s|^export CC=\"/usr/bin/clang |export CC=\"$SCC /usr/bin/clang |" \
-            -e "s|^export CXX=\"/usr/bin/clang++ |export CXX=\"$SCC /usr/bin/clang++ |" \
+            -e "s|^export CC=\"/usr/bin/clang\"|export CC=\"$SCC /usr/bin/clang\"|" \
+            -e "s|^export CXX=\"/usr/bin/clang++\"|export CXX=\"$SCC /usr/bin/clang++\"|" \
             mozconfig-ci
           /usr/bin/python3 ./mach configure
           /usr/bin/python3 ./mach build
@@ -150,8 +150,10 @@ jobs:
           rm -rf Nightly.app
           cp -RL obj-x86_64-mac107/dist/Nightly.app Nightly.app
           tools/legacy-macos/polyfill-10.7.sh Nightly.app
-          # 10.7/10.8 ship a libc++ far too old for this tree; load the
-          # bundled 10.7-floor libc++ through @rpath instead.
+          # 10.7/10.8 ship a libc++ far too old for this tree, so every OS
+          # this artifact targets loads the bundled 10.7-floor libc++
+          # through @rpath — the same shape as the official binaries
+          # (verified launching with the bundled 5.0.1 loaded).
           tools/legacy-macos/rpath-libcxx-10.7.sh Nightly.app
           # mach package's dmg predates the polyfill; rebuild it.
           rm -f "powerfox-${VERSION}_macOS10.7-10.14.dmg"

@@ -45,7 +45,9 @@ typedef struct {
 } CMSampleTimingInfo;
 
 enum {
-  AVQueuedSampleBufferRenderingStatusRendering = 2,
+  AVQueuedSampleBufferRenderingStatusUnknown = 0,
+  AVQueuedSampleBufferRenderingStatusRendering = 1,
+  AVQueuedSampleBufferRenderingStatusFailed = 2,
 };
 
 #define kCMTimingInfoInvalid \

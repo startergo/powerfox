@@ -35,11 +35,11 @@ typedef struct {
   int64_t value;
   int32_t timescale;
   uint32_t flags;
-  uint32_t epoch;
+  int64_t epoch;
 } CMTime;
 
 typedef struct {
-  int64_t duration;
+  CMTime duration;
   CMTime presentationTimeStamp;
   CMTime decodeTimeStamp;
 } CMSampleTimingInfo;
@@ -51,7 +51,7 @@ enum {
 };
 
 #define kCMTimingInfoInvalid \
-  { 0, { 0, 0, 0, 0 }, { 0, 0, 0, 0 } }
+  { { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 } }
 
 typedef unsigned long long CACornerMask;
 

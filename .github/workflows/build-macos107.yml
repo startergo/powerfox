@@ -33,6 +33,7 @@ jobs:
           restore-keys: mozbuild107-
 
       - name: Bootstrap build deps
+        id: bootstrap
         if: steps.mozbuild.outputs.cache-hit != 'true'
         run: /usr/bin/python3 ./mach bootstrap --application-choice=browser
 
@@ -130,7 +131,9 @@ jobs:
           key: sccache107-${{ runner.os }}-${{ steps.key.outputs.key }}
 
       - name: Save bootstrap toolchains
-        if: always()
+        # Never cache a partial ~/.mozbuild from a failed bootstrap: a rerun
+        # of this run restores that exact key and skips bootstrap forever.
+        if: always() && steps.bootstrap.outcome != 'failure'
         uses: actions/cache/save@v5
         with:
           path: ~/.mozbuild

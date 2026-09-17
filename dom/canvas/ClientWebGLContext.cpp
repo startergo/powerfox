@@ -521,6 +521,8 @@ webgl::SwapChainOptions ClientWebGLContext::PrepareAsyncSwapChainOptions(
     return count > 0 && count <= 2;
   }();
   if (sFewCore && !options.forceAsyncPresent) {
+    // Clear the current remote texture id so that we disable async.
+    mRemoteTextureOwnerId = Nothing();
     return options;
   }
 #endif

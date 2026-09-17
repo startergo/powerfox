@@ -3286,7 +3286,8 @@ void gfxPlatform::InitWebGLConfig() {
       sysctlbyname("hw.ncpu", &ncpu, &len, nullptr, 0);
       if (ncpu > 0 && ncpu <= 2 &&
           !Preferences::HasUserValue("gfx.display.frame-rate-divisor")) {
-        Preferences::SetInt("gfx.display.frame-rate-divisor", 2);
+        Preferences::SetInt("gfx.display.frame-rate-divisor", 2,
+                            PrefValueKind::Default);
       }
     }
   }

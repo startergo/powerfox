@@ -210,6 +210,9 @@ jobs:
           # self-contained app and build both artifacts from it.
           rm -rf Nightly.app
           cp -RL obj-x86_64-apple-darwin/dist/Nightly.app Nightly.app
+          # Real 10.6 has no /usr/lib/libc++.1.dylib; load the bundled
+          # darwin10 libc++ through @rpath instead.
+          tools/legacy-macos/rpath-libcxx-10.6.sh Nightly.app
           hdiutil create -volname Nightly -srcfolder Nightly.app \
             -fs HFS+ -format UDBZ -imagekey zlib-level=9 \
             "powerfox-${VERSION}_macOS10.6.dmg"

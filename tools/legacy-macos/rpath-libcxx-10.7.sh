@@ -19,8 +19,19 @@ find . -type f | while read -r BIN; do
   file -b "$BIN" | grep -q "Mach-O" || continue
   otool -L "$BIN" 2>/dev/null | grep -q "/usr/lib/libc++.1.dylib" || continue
   install_name_tool -change /usr/lib/libc++.1.dylib @rpath/libc++.1.dylib "$BIN"
-  if ! otool -l "$BIN" | grep -q "path @executable_path/. "; then
-    install_name_tool -add_rpath @executable_path/. "$BIN"
+  case "$BIN" in
+    *.app/Contents/MacOS/*)
+      # Nested helper apps resolve @rpath against their own MacOS
+      # directory; point them back at the top-level one where the
+      # runtimes live.
+      RP="@executable_path/$(echo "$BIN" | awk -F/ '{ofs=""; for (i = 2; i < NF; i++) ofs = ofs "../"; print ofs}')"
+      ;;
+    *)
+      RP="@executable_path/."
+      ;;
+  esac
+  if ! otool -l "$BIN" | grep -q "path $RP "; then
+    install_name_tool -add_rpath "$RP" "$BIN"
   fi
   codesign --remove-signature "$BIN" 2>/dev/null || true
 done

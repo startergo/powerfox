@@ -8468,7 +8468,7 @@ static NSImage* GetMenuMaskImage() {
       }
       return effectView;
     }
-    return [[NSView alloc] initWithFrame:self.contentView.frame];
+    return [[NSView alloc] initWithFrame:[[self contentView] frame]];
   }();
 
   wrapper.wantsLayer = YES;
@@ -8631,7 +8631,7 @@ static const NSString* kStateCollectionBehavior = @"collectionBehavior";
 }
 
 - (NSArray*)contentViewContents {
-  return [[self.contentView.subviews copy] autorelease];
+  return [[[[self contentView] subviews] copy] autorelease];
 }
 
 - (ChildView*)mainChildView {
@@ -8701,7 +8701,7 @@ static const NSString* kStateCollectionBehavior = @"collectionBehavior";
 
 // Possibly move the titlebar buttons.
 - (void)reflowTitlebarElements {
-  NSView* frameView = self.contentView.superview;
+  NSView* frameView = [[self contentView] superview];
   if ([frameView respondsToSelector:@selector(_tileTitlebarAndRedisplay:)]) {
     [frameView _tileTitlebarAndRedisplay:NO];
   }
@@ -9195,7 +9195,7 @@ static CGFloat DefaultTitlebarHeight() {
   // if the menubar is shown or is in the process of being shown, and 0
   // otherwise. Since we are multiplying the menubar height by aShownAmount, we
   // always want the full height.
-  CGFloat menuBarHeight = NSApp.mainMenu.menuBarHeight;
+  CGFloat menuBarHeight = [[NSApp mainMenu] menuBarHeight];
   if (menuBarHeight > 0.0f) {
     mMenuBarHeight = menuBarHeight;
   }

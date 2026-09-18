@@ -74,7 +74,13 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ~/Library/Caches/Mozilla.sccache
-          key: sccache107-${{ runner.os }}-${{ steps.key.outputs.key }}
+          # A deterministic key would no-op every save after the first,
+          # so source changes never enter the cache. Save per run and
+          # restore the newest generation; rust is never cached, so
+          # prefix fallback cannot serve stale metadata.
+          key: sccache107-${{ runner.os }}-${{ steps.key.outputs.key }}-${{ github.run_id }}
+          restore-keys: |
+            sccache107-${{ runner.os }}-${{ steps.key.outputs.key }}-
 
       - name: Place the 26.5 SDK where the mozconfig expects it
         run: |
@@ -128,7 +134,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: ~/Library/Caches/Mozilla.sccache
-          key: sccache107-${{ runner.os }}-${{ steps.key.outputs.key }}
+          key: sccache107-${{ runner.os }}-${{ steps.key.outputs.key }}-${{ github.run_id }}
 
       - name: Save bootstrap toolchains
         # Never cache a partial ~/.mozbuild from a failed or cancelled

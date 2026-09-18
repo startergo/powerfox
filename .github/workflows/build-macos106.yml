@@ -120,7 +120,13 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ~/Library/Caches/Mozilla.sccache
-          key: sccache106-${{ runner.os }}-${{ steps.key.outputs.key }}
+          # A deterministic key would no-op every save after the first,
+          # so merge-touched files recompile forever. Save per run and
+          # restore the newest generation; rust is never cached, so
+          # prefix fallback cannot serve stale metadata.
+          key: sccache106-${{ runner.os }}-${{ steps.key.outputs.key }}-${{ github.run_id }}
+          restore-keys: |
+            sccache106-${{ runner.os }}-${{ steps.key.outputs.key }}-
 
       - name: Build the 10.6 support artifacts
         if: steps.cache.outputs.cache-hit != 'true'
@@ -189,7 +195,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: ~/Library/Caches/Mozilla.sccache
-          key: sccache106-${{ runner.os }}-${{ steps.key.outputs.key }}
+          key: sccache106-${{ runner.os }}-${{ steps.key.outputs.key }}-${{ github.run_id }}
 
       - name: Save bootstrap toolchains
         # Never cache a partial ~/.mozbuild from a failed or cancelled

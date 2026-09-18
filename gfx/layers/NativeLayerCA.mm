@@ -458,7 +458,7 @@ void NativeLayerRootCA::CommitRepresentation(
   // the sublayers array - layers which are completely clipped out will return
   // null from UndelyingCALayer.
   AutoCATransaction transaction;
-  NSMutableArray<CALayer*>* sublayers =
+  NSMutableArray* sublayers =
       [NSMutableArray arrayWithCapacity:aSublayers.Length()];
   bool mustRebuild = updateRequired == UpdateType::All;
   for (const auto& layer : aSublayers) {

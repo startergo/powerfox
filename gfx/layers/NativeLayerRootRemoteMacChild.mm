@@ -107,7 +107,7 @@ void NativeLayerRootRemoteMacChild::PrepareForCommit() {
   // Intentionally ignored.
 }
 
-bool NativeLayerRootRemoteMacChild::CommitToScreen(gfx::IntRect* aDirtyRect) {
+bool NativeLayerRootRemoteMacChild::CommitToScreen() {
   // Prepare and send all commands to the parent actor.
 
   // Our shared command queue has all of our CreateLayer and LayerDestroyed

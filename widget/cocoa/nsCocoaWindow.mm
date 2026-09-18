@@ -6187,7 +6187,7 @@ int32_t nsCocoaWindow::GetWorkspaceID() {
 
   CGSConnection cid = _CGSDefaultConnection();
   // Fetch all spaces that this window belongs to (in order).
-  NSArray<NSNumber*>* spaceIDs = CFBridgingRelease(CopySpacesForWindows(
+  NSArray* spaceIDs = CFBridgingRelease(CopySpacesForWindows(
       cid, kCGSAllSpacesMask,
       (__bridge CFArrayRef) @[ @([mWindow windowNumber]) ]));
   if ([spaceIDs count]) {
@@ -6260,8 +6260,8 @@ void nsCocoaWindow::MoveVisibleWindowToWorkspace(int32_t workspaceID) {
   // When we found the space we're looking for, we can bail out of the loop
   // early, which this local variable is used for.
   BOOL found = false;
-  for (NSDictionary<NSString*, id>* spacesInfo in displaySpacesInfo) {
-    NSArray<NSNumber*>* sids =
+  for (NSDictionary* spacesInfo in displaySpacesInfo) {
+    NSArray* sids =
         [spacesInfo[CGSSpacesKey] valueForKey:CGSSpaceIDKey];
     for (NSNumber* sid in sids) {
       // If we found our space in the list, we're good to go and can jump out of
@@ -6323,7 +6323,7 @@ void nsCocoaWindow::HideWindowChrome(bool aShouldHide) {
 
   // Remove the views in the old window's content view.
   // The NSArray is autoreleased and retains its NSViews.
-  NSArray<NSView*>* contentViewContents = [mWindow contentViewContents];
+  NSArray* contentViewContents = [mWindow contentViewContents];
   for (NSView* view in contentViewContents) {
     [view removeFromSuperviewWithoutNeedingDisplay];
   }
@@ -8630,7 +8630,7 @@ static const NSString* kStateCollectionBehavior = @"collectionBehavior";
   return contentView.superview ? contentView.superview : contentView;
 }
 
-- (NSArray<NSView*>*)contentViewContents {
+- (NSArray*)contentViewContents {
   return [[self.contentView.subviews copy] autorelease];
 }
 
@@ -9046,7 +9046,7 @@ static bool MaybeDropEventForModalWindow(NSEvent* aEvent, id aDelegate) {
   [super dealloc];
 }
 
-- (NSArray<NSView*>*)contentViewContents {
+- (NSArray*)contentViewContents {
   NSMutableArray<NSView*>* contents =
       [[[self contentView] subviews] mutableCopy];
   if (mTitlebarGradientView) {

@@ -9047,7 +9047,7 @@ static bool MaybeDropEventForModalWindow(NSEvent* aEvent, id aDelegate) {
 }
 
 - (NSArray*)contentViewContents {
-  NSMutableArray<NSView*>* contents =
+  NSMutableArray* contents =
       [[[self contentView] subviews] mutableCopy];
   if (mTitlebarGradientView) {
     [contents removeObject:mTitlebarGradientView];
@@ -9132,7 +9132,7 @@ static bool MaybeDropEventForModalWindow(NSEvent* aEvent, id aDelegate) {
 
 - (void)observeValueForKeyPath:(NSString*)keyPath
                       ofObject:(id)object
-                        change:(NSDictionary<NSKeyValueChangeKey, id>*)change
+                        change:(NSDictionary*)change
                        context:(void*)context {
   if ([keyPath isEqualToString:@"revealAmount"]) {
     [[self mainChildView] ensureNextCompositeIsAtomicWithMainThreadPaint];

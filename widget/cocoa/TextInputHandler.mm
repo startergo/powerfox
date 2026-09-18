@@ -5213,7 +5213,7 @@ void IMEInputHandler::OnTextSubstitution(uint32_t aStartOffset) {
   // NSTextCheckingResult.range is read only, so re-create this result object.
   NSRange candidatedRange = NSMakeRange(candidate.range.location + startFetch,
                                         candidate.range.length);
-  NSArray<NSString*>* alternativeStrings = @[];
+  NSArray* alternativeStrings = @[];
   if (nsCocoaFeatures::OnMavericksOrLater()) {
     alternativeStrings = candidate.alternativeStrings;
   }
@@ -5277,7 +5277,7 @@ void IMEInputHandler::ShowTextSubstitutionPanel() {
   if (!spellchecker) {
     return;
   }
-  NSArray<NSString *> *anotherAlternativeString;
+  NSArray* anotherAlternativeString;
   if (nsCocoaFeatures::OnMavericksOrLater()) {
     anotherAlternativeString = mCandidatedTextSubstitutionResult.alternativeStrings;
   } else {

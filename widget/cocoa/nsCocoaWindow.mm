@@ -5451,7 +5451,7 @@ nsresult nsCocoaWindow::CreateNativeWindow(const NSRect& aRect,
 
   // Make the window use CoreAnimation from the start, so that we don't
   // switch from a non-CA window to a CA-window in the middle.
-  mWindow.contentView.wantsLayer = YES;
+  [[mWindow contentView] setWantsLayer:YES];
   if (!nsCocoaFeatures::OnMavericksOrLater() &&
       windowClass == [ToolbarWindow class]) {
     [[[mWindow contentView] superview] setWantsLayer:YES];
@@ -5699,8 +5699,8 @@ void nsCocoaWindow::Show(bool aState) {
     // If we had set the activationPolicy to accessory, then right now we won't
     // have a dock icon. Make sure that we undo that and show a dock icon now
     // that we're going to show a window.
-    if (NSApp.activationPolicy != NSApplicationActivationPolicyRegular) {
-      NSApp.activationPolicy = NSApplicationActivationPolicyRegular;
+    if ([NSApp activationPolicy] != NSApplicationActivationPolicyRegular) {
+      [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
       PR_SetEnv("MOZ_APP_NO_DOCK=");
     }
 
@@ -5732,7 +5732,7 @@ void nsCocoaWindow::Show(bool aState) {
       // NSException.  These errors shouldn't be fatal.  So we need to wrap
       // calls to ...orderFront: in TRY blocks.  See bmo bug 470864.
       NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
-      mWindow.contentView.needsDisplay = YES;
+      [[mWindow contentView] setNeedsDisplay:YES];
       if (!nativeParentWindow || mPopupLevel != PopupLevel::Parent) {
         [mWindow orderFront:nil];
       }
@@ -7332,7 +7332,7 @@ void nsCocoaWindow::CaptureRollupEvents(bool aDoCapture) {
   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
   if (aDoCapture) {
-    if (!NSApp.isActive) {
+    if (![NSApp isActive]) {
       // We need to capture mouse event if we aren't
       // the active application. We only set this up when needed
       // because they cause spurious mouse event after crash
@@ -7672,7 +7672,7 @@ already_AddRefed<nsIWidget> nsIWidget::CreateChildWindow() {
 + (void)paintMenubarForWindow:(NSWindow*)aWindow {
   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
 
-  if (!NSApp.active) {
+  if (![NSApp isActive]) {
     // Early exit if the app isn't active. This is because we can't safely
     // set the NSApp.mainMenu property in such a case. We early exit so we
     // also don't invoke any side effects.
@@ -7697,7 +7697,7 @@ already_AddRefed<nsIWidget> nsIWidget::CreateChildWindow() {
       return;
     }
 
-    NSMenu* mainMenu = NSApp.mainMenu;
+    NSMenu* mainMenu = [NSApp mainMenu];
     NS_ASSERTION(
         mainMenu.numberOfItems > 0,
         "Main menu does not have any items, something is terribly wrong!");
@@ -7715,7 +7715,7 @@ already_AddRefed<nsIWidget> nsIWidget::CreateChildWindow() {
     [firstMenuItem release];
 
     // set our new menu bar as the main menu
-    NSApp.mainMenu = newMenuBar;
+    [NSApp setMainMenu:newMenuBar];
     [newMenuBar release];
   }
 
@@ -7918,7 +7918,7 @@ LayoutDeviceIntPoint nsCocoaWindow::GetNativeLockedPoint() {
   // for some reason they are, which causes bug 1069658.  The following code
   // works around this Apple bug or design flaw.
   NSWindow* window = notification.object;
-  NSView* frameView = window.contentView.superview;
+  NSView* frameView = [[window contentView] superview];
   NSView* titlebarView = nil;
   NSView* titlebarContainerView = nil;
   if ([frameView respondsToSelector:@selector(titlebarView)]) {
@@ -8003,7 +8003,7 @@ LayoutDeviceIntPoint nsCocoaWindow::GetNativeLockedPoint() {
 
   // [NSApp _isRunningAppModal] will return true if we're running an OS dialog
   // app modally. If one of those is up then we want it to retain its menu bar.
-  if (NSApp._isRunningAppModal) {
+  if ([NSApp _isRunningAppModal]) {
     return;
   }
   NSWindow* window = aNotification.object;
@@ -8439,7 +8439,7 @@ static NSImage* GetMenuMaskImage() {
       if (aStyle == WindowShadow::Menu) {
         // Menus on macOS 26 use glass instead of vibrancy.
         auto* effectView =
-            [[NSGlassEffectView alloc] initWithFrame:self.contentView.frame];
+            [[NSGlassEffectView alloc] initWithFrame:[[self contentView] frame]];
         effectView.cornerRadius = 12.0f;
         return effectView;
       }
@@ -8447,7 +8447,7 @@ static NSImage* GetMenuMaskImage() {
     if (aStyle == WindowShadow::Menu || aStyle == WindowShadow::Tooltip) {
       const bool isMenu = aStyle == WindowShadow::Menu;
       auto* effectView =
-          [[NSVisualEffectView alloc] initWithFrame:self.contentView.frame];
+          [[NSVisualEffectView alloc] initWithFrame:[[self contentView] frame]];
 
       // Tooltip and menu windows are never "key", so we need to tell the
       // vibrancy effect to look active regardless of window state.

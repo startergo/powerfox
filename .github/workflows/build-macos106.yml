@@ -175,8 +175,8 @@ jobs:
           xcrun --find ld-classic
           MAKE="$HOME/.mozbuild/mozmake/mozmake"
           [ -x "$MAKE" ] || MAKE=make
-          cd obj-x86_64-apple-darwin/toolkit/mozapps/macos-frameworks/ChannelPrefs
-          "$MAKE" ../../../../dist/bin/ChannelPrefs || true
+          cd obj-x86_64-apple-darwin/toolkit/library/build
+          "$MAKE" ../../../dist/bin/XUL || true
 
       - name: Stop sccache
         if: always()

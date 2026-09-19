@@ -60,10 +60,11 @@ static uint64_t CurrentTime() {
 #elif defined(__APPLE__) && (!defined(__MAC_OS_X_VERSION_MIN_REQUIRED) || \
                              __MAC_OS_X_VERSION_MIN_REQUIRED < 101200)
   // clock_gettime and CLOCK_MONOTONIC require macOS 10.12.
-  static mach_timebase_info_data_t timebaseInfo;
-  if (timebaseInfo.denom == 0) {
-    mach_timebase_info(&timebaseInfo);
-  }
+  static mach_timebase_info_data_t timebaseInfo = [] {
+    mach_timebase_info_data_t info;
+    mach_timebase_info(&info);
+    return info;
+  }();
   return mach_absolute_time() * timebaseInfo.numer / timebaseInfo.denom /
          1000000;
 #else

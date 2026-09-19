@@ -82,20 +82,37 @@ static NSColor* GetRGBColor(NSColor* aColor) {
 }
 
 static nscolor GetColorFromNSColor(NSColor* aColor) {
-  NSColor* rgbColor = GetRGBColor(aColor);
-  return NS_RGBA((unsigned int)round(rgbColor.redComponent * 255.0),
-                 (unsigned int)round(rgbColor.greenComponent * 255.0),
-                 (unsigned int)round(rgbColor.blueComponent * 255.0),
-                 (unsigned int)round(rgbColor.alphaComponent * 255.0));
+  // Pre-10.7 system colors can come in custom colorspaces whose component
+  // accessors throw ("need to first convert colorspace"), and conversion
+  // may return the same unconvertible object rather than nil.
+  @try {
+    NSColor* rgbColor = GetRGBColor(aColor);
+    if (!rgbColor) {
+      return NS_RGB(0, 0, 0);
+    }
+    return NS_RGBA((unsigned int)round(rgbColor.redComponent * 255.0),
+                   (unsigned int)round(rgbColor.greenComponent * 255.0),
+                   (unsigned int)round(rgbColor.blueComponent * 255.0),
+                   (unsigned int)round(rgbColor.alphaComponent * 255.0));
+  } @catch (NSException*) {
+    return NS_RGB(0, 0, 0);
+  }
 }
 
 static nscolor GetColorFromNSColorWithCustomAlpha(NSColor* aColor,
                                                   float alpha) {
-  NSColor* rgbColor = GetRGBColor(aColor);
-  return NS_RGBA((unsigned int)round(rgbColor.redComponent * 255.0),
-                 (unsigned int)round(rgbColor.greenComponent * 255.0),
-                 (unsigned int)round(rgbColor.blueComponent * 255.0),
-                 (unsigned int)round(alpha * 255.0));
+  @try {
+    NSColor* rgbColor = GetRGBColor(aColor);
+    if (!rgbColor) {
+      return NS_RGB(0, 0, 0);
+    }
+    return NS_RGBA((unsigned int)round(rgbColor.redComponent * 255.0),
+                   (unsigned int)round(rgbColor.greenComponent * 255.0),
+                   (unsigned int)round(rgbColor.blueComponent * 255.0),
+                   (unsigned int)round(alpha * 255.0));
+  } @catch (NSException*) {
+    return NS_RGB(0, 0, 0);
+  }
 }
 
 // Turns an opaque selection color into a partially transparent selection color,
@@ -139,7 +156,9 @@ static nscolor ProcessSelectionBackground(nscolor aColor, ColorScheme aScheme) {
 
 nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
                                        nscolor& aColor) {
-  NS_OBJC_BEGIN_TRY_ABORT_BLOCK
+  // Pre-10.7 AppKit throws on assorted color queries; fail the single
+  // color instead of aborting.
+  @try {
   if (@available(macOS 10.14, *)) {
     // No-op. macOS 10.14+ supports dark mode, so currentAppearance can be set
     // to either Light or Dark.
@@ -418,20 +437,19 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
   aColor = color;
   return NS_OK;
 
-  NS_OBJC_END_TRY_ABORT_BLOCK
+  } @catch (NSException*) { return NS_ERROR_FAILURE; }
 }
 
 static bool SystemWantsDarkTheme() {
   // This returns true if the macOS system appearance is set to dark mode,
   // false otherwise.
-    if (@available(macOS 10.14, *)) {
-  NSAppearanceName aquaOrDarkAqua =
-      [NSApp.effectiveAppearance bestMatchFromAppearancesWithNames:@[
-        NSAppearanceNameAqua, NSAppearanceNameDarkAqua
-      ]];
-  return [aquaOrDarkAqua isEqualToString:NSAppearanceNameDarkAqua];
-}
-    else
+  if ([NSApp respondsToSelector:@selector(effectiveAppearance)]) {
+    NSAppearanceName aquaOrDarkAqua =
+        [[NSApp effectiveAppearance] bestMatchFromAppearancesWithNames:@[
+          NSAppearanceNameAqua, NSAppearanceNameDarkAqua
+        ]];
+    return [aquaOrDarkAqua isEqualToString:NSAppearanceNameDarkAqua];
+  }
   return false;
 }
 
@@ -566,25 +584,33 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
           }
       break;
     case IntID::PrefersReducedTransparency:
-      if(@available(macOS 10.10, *))
-      aResult = NSWorkspace.sharedWorkspace
-                    .accessibilityDisplayShouldReduceTransparency;
+      if ([NSWorkspace.sharedWorkspace respondsToSelector:@selector(
+              accessibilityDisplayShouldReduceTransparency)])
+        aResult = NSWorkspace.sharedWorkspace
+                      .accessibilityDisplayShouldReduceTransparency;
       break;
     case IntID::InvertedColors:
-      if(@available(macOS 10.12, *))
-      aResult =
-          NSWorkspace.sharedWorkspace.accessibilityDisplayShouldInvertColors;
+      if ([NSWorkspace.sharedWorkspace respondsToSelector:@selector(
+              accessibilityDisplayShouldInvertColors)])
+        aResult =
+            NSWorkspace.sharedWorkspace.accessibilityDisplayShouldInvertColors;
       break;
     case IntID::UseAccessibilityTheme:
-      if(@available(macOS 10.10, *))
-      aResult = NSWorkspace.sharedWorkspace
-                    .accessibilityDisplayShouldIncreaseContrast;
+      if ([NSWorkspace.sharedWorkspace
+              respondsToSelector:@selector(
+                  accessibilityDisplayShouldIncreaseContrast)]) {
+        aResult =
+            NSWorkspace.sharedWorkspace.accessibilityDisplayShouldIncreaseContrast;
+      }
       break;
     case IntID::PanelAnimations:
       aResult = 1;
       break;
     case IntID::FullKeyboardAccess:
-      aResult = NSApp.isFullKeyboardAccessEnabled;
+      aResult = [NSApp respondsToSelector:@selector(isFullKeyboardAccessEnabled)]
+                    ? [NSApp isFullKeyboardAccessEnabled]
+                    : [[NSUserDefaults standardUserDefaults]
+                          boolForKey:@"AppleKeyboardUAccessEnabled"];
       break;
     case IntID::NativeMenubar:
       aResult = 1;
@@ -611,17 +637,17 @@ nsresult nsLookAndFeel::NativeGetFloat(FloatID aID, float& aResult) {
       aResult = 2.0f;
       break;
     case FloatID::CursorScale: {
-      id uaDefaults;
-      if(@available(macOS 10.9, *)) {
-        uaDefaults = [[NSUserDefaults alloc]
-          initWithSuiteName:@"com.apple.universalaccess"];
+      float f = 0.0f;
+      if ([[NSUserDefaults class]
+              instancesRespondToSelector:@selector(initWithSuiteName:)]) {
+        NSUserDefaults* uaDefaults = [[NSUserDefaults alloc]
+            initWithSuiteName:@"com.apple.universalaccess"];
+        f = [uaDefaults floatForKey:@"mouseDriverCursorSize"];
+        [uaDefaults release];
+      } else {
+        f = [[NSUserDefaults standardUserDefaults]
+            floatForKey:@"mouseDriverCursorSize"];
       }
-      else {
-        uaDefaults = [(id) CFPreferencesCopyAppValue(CFSTR("com.apple.universalaccess"),
-        kCFPreferencesCurrentApplication) autorelease];
-      }
-      float f = [uaDefaults floatForKey:@"mouseDriverCursorSize"];
-      [uaDefaults release];
       aResult = f > 0.0 ? f : 1.0;  // default to 1.0 if value not available
       break;
     }
@@ -764,7 +790,7 @@ nsresult nsLookAndFeel::GetKeyboardLayoutImpl(nsACString& aLayout) {
 
 - (void)observeValueForKeyPath:(NSString*)keyPath
                       ofObject:(id)object
-                        change:(NSDictionary<NSKeyValueChangeKey, id>*)change
+                        change:(NSDictionary*)change
                        context:(void*)context {
   if ([keyPath isEqualToString:@"effectiveAppearance"]) {
     [self entireThemeChanged];

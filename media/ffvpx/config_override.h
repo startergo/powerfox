@@ -115,3 +115,57 @@
 
 #define CONFIG_H264_MEDIACODEC_DECODER_EXTRADATA 0
 #define CONFIG_HEVC_MEDIACODEC_DECODER_EXTRADATA 0
+
+// Software AAC and H.264 decoding for platforms without a usable platform
+// decoder (e.g. macOS 10.6).
+#ifdef MOZ_LEGACY_MACOS_TARGET
+#undef CONFIG_AAC_DECODER
+#define CONFIG_AAC_DECODER 1
+#undef CONFIG_SINEWIN
+#define CONFIG_SINEWIN 1
+// log2f is not vendored in fdlibm; use libm.h's fallback built on the
+// vendored double-precision log2 instead.
+#undef HAVE_LOG2F
+#define HAVE_LOG2F 0
+// Components of this ffmpeg snapshot missing from the generated config.
+#undef CONFIG_H264_D3D12VA_HWACCEL
+#define CONFIG_H264_D3D12VA_HWACCEL 0
+#undef CONFIG_H264_VULKAN_HWACCEL
+#define CONFIG_H264_VULKAN_HWACCEL 0
+#undef CONFIG_HEVC_D3D12VA_HWACCEL
+#define CONFIG_HEVC_D3D12VA_HWACCEL 0
+#undef CONFIG_HEVC_VULKAN_HWACCEL
+#define CONFIG_HEVC_VULKAN_HWACCEL 0
+#undef CONFIG_MPEGVIDEODEC
+#define CONFIG_MPEGVIDEODEC 0
+
+#if !defined(MOZ_FFVPX_AUDIOONLY)
+#undef CONFIG_H264_DECODER
+#define CONFIG_H264_DECODER 1
+#undef CONFIG_H264_SEI
+#define CONFIG_H264_SEI 1
+#undef CONFIG_HEVC_DECODER
+#define CONFIG_HEVC_DECODER 1
+#undef CONFIG_HEVC_SEI
+#define CONFIG_HEVC_SEI 1
+#undef CONFIG_VVC_SEI
+#define CONFIG_VVC_SEI 0
+#undef CONFIG_CABAC
+#define CONFIG_CABAC 1
+#undef CONFIG_H264CHROMA
+#define CONFIG_H264CHROMA 1
+#undef CONFIG_H264DSP
+#define CONFIG_H264DSP 1
+#undef CONFIG_H264PARSE
+#define CONFIG_H264PARSE 1
+#undef CONFIG_H264QPEL
+#define CONFIG_H264QPEL 1
+// x86/cabac.h inline asm uses 32-bit absolute relocations for the cabac
+// tables unless this is set; unsupported in 64-bit Mach-O PIE code.
+#define BROKEN_RELOCATIONS
+#undef CONFIG_ERROR_RESILIENCE
+#define CONFIG_ERROR_RESILIENCE 1
+#undef CONFIG_ME_CMP
+#define CONFIG_ME_CMP 1
+#endif
+#endif

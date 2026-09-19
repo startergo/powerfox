@@ -13,6 +13,15 @@
 
 #include <dlfcn.h>
 
+#if !defined(MAC_OS_X_VERSION_10_8) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8
+// Missing from the pre-10.8 SDK.
+enum {
+  kLowerCaseType = 37,
+  kLowerCaseSmallCapsSelector = 1,
+};
+#endif
+
 using namespace mozilla;
 using namespace mozilla::gfx;
 

@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <Cocoa/Cocoa.h>
+#include <objc/runtime.h>
 #include <CoreServices/CoreServices.h>
 #include <crt_externs.h>
 #include <stdlib.h>
@@ -12,6 +13,25 @@
 #include <sys/types.h>
 #include <sys/sysctl.h>
 #include "readstrings.h"
+
+#if !defined(MAC_OS_X_VERSION_10_15) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_15
+__attribute__((availability(macos, introduced=10.15)))
+@interface NSWorkspaceOpenConfiguration : NSObject
++ (NSWorkspaceOpenConfiguration*)configuration;
+- (void)setArguments:(NSArray*)arguments;
+- (void)setActivates:(BOOL)activates;
+- (void)setCreatesNewApplicationInstance:(BOOL)creates;
+- (void)setEnvironment:(NSDictionary*)environment;
+@end
+
+@interface NSWorkspace (PowerFoxUpdaterCompat)
+- (void)openApplicationAtURL:(NSURL*)applicationURL
+               configuration:(NSWorkspaceOpenConfiguration*)configuration
+           completionHandler:
+               (void (^)(NSRunningApplication*, NSError*))completionHandler;
+@end
+#endif
 
 #define ARCH_PATH "/usr/bin/arch"
 #if defined(__x86_64__)
@@ -104,8 +124,8 @@ void LaunchMacApp(int argc, const char** argv) {
     // `TALAppsToRelaunchAtLogin` list and allow for macOS session resume.
     // This API only works with `.app`s.
     __block dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-    NSWorkspaceOpenConfiguration* config =
-        [NSWorkspaceOpenConfiguration configuration];
+    Class configClass = objc_getClass("NSWorkspaceOpenConfiguration");
+    NSWorkspaceOpenConfiguration* config = [configClass configuration];
     [config setArguments:arguments];
     [config setActivates:NO];
     [config setCreatesNewApplicationInstance:YES];

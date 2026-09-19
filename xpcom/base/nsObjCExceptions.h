@@ -24,15 +24,27 @@ bool ShouldIgnoreObjCException(NSException* aException);
 
 }  // namespace mozilla
 
-// For wrapping blocks of Obj-C calls which are not expected to throw exception.
-// Causes a MOZ_CRASH if an Obj-C exception is encountered.
-#define NS_OBJC_BEGIN_TRY_ABORT_BLOCK @try {
-#define NS_OBJC_END_TRY_ABORT_BLOCK                            \
-  }                                                            \
-  @catch (NSException * _exn) {                                \
-    nsObjCExceptionLog(_exn);                                  \
-    MOZ_CRASH("Encountered unexpected Objective C exception"); \
-  }
+// For wrapping blocks of Obj-C calls which are not expected to throw
+// exception. Causes a MOZ_CRASH if an Obj-C exception is encountered.
+// Pre-10.7 AppKit still throws on assorted queries modern code assumes; log
+// and continue rather than aborting the process.
+#if defined(XP_MACOSX) && defined(__MAC_OS_X_VERSION_MIN_REQUIRED) && \
+    __MAC_OS_X_VERSION_MIN_REQUIRED < 1070
+#  define NS_OBJC_BEGIN_TRY_ABORT_BLOCK @try {
+#  define NS_OBJC_END_TRY_ABORT_BLOCK \
+    }                                 \
+    @catch (NSException * _exn) {     \
+      nsObjCExceptionLog(_exn);       \
+    }
+#else
+#  define NS_OBJC_BEGIN_TRY_ABORT_BLOCK @try {
+#  define NS_OBJC_END_TRY_ABORT_BLOCK                            \
+    }                                                            \
+    @catch (NSException * _exn) {                                \
+      nsObjCExceptionLog(_exn);                                  \
+      MOZ_CRASH("Encountered unexpected Objective C exception"); \
+    }
+#endif
 
 // For wrapping blocks of Obj-C calls. Logs the exception and moves on.
 #define NS_OBJC_BEGIN_TRY_IGNORE_BLOCK @try {

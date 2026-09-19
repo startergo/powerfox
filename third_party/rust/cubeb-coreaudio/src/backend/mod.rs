@@ -17,6 +17,18 @@ mod mixer;
 mod resampler;
 mod utils;
 
+const AUDIO_UNIT_VOICE_IO_PROPERTY_MUTE_OUTPUT: u32 = 2104;
+const AUDIO_FORMAT_FLAG_IS_FLOAT: u32 = 1 << 0;
+const AUDIO_FORMAT_LINEAR_PCM: u32 = 0x6C70636D; // 'lpcm'
+const LINEAR_PCM_FORMAT_FLAG_IS_PACKED: u32 = 1 << 3;
+const AUDIO_FORMAT_FLAG_IS_BIG_ENDIAN: u32 = 1 << 1;
+const AUDIO_FORMAT_FLAG_IS_SIGNED_INTEGER: u32 = 1 << 2;
+const AUDIO_UNIT_SUB_TYPE_HAL_OUTPUT: u32 = 0x6168616C; // 'ahal'
+const AUDIO_UNIT_SUB_TYPE_REMOTE_IO: u32 = 0x72696F6D; // 'riom'
+const AUDIO_UNIT_SUB_TYPE_VOICE_PROCESSING_IO: u32 = 0x7670696F; // 'vpio'
+const AUDIO_UNIT_VOICE_IO_PROPERTY_VOICE_PROCESSING_ENABLE_AGC: u32 = 2101;
+const AUDIO_UNIT_VOICE_IO_PROPERTY_BYPASS_VOICE_PROCESSING: u32 = 2100;
+
 use self::aggregate_device::*;
 use self::auto_release::*;
 use self::buffer_manager::*;
@@ -291,27 +303,27 @@ fn create_stream_description(stream_params: &StreamParams) -> Result<AudioStream
     match stream_params.format() {
         SampleFormat::S16LE => {
             desc.mBitsPerChannel = 16;
-            desc.mFormatFlags = kAudioFormatFlagIsSignedInteger;
+            desc.mFormatFlags = AUDIO_FORMAT_FLAG_IS_SIGNED_INTEGER;
         }
         SampleFormat::S16BE => {
             desc.mBitsPerChannel = 16;
-            desc.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsBigEndian;
+            desc.mFormatFlags = AUDIO_FORMAT_FLAG_IS_SIGNED_INTEGER | AUDIO_FORMAT_FLAG_IS_BIG_ENDIAN;
         }
         SampleFormat::Float32LE => {
             desc.mBitsPerChannel = 32;
-            desc.mFormatFlags = kAudioFormatFlagIsFloat;
+            desc.mFormatFlags = AUDIO_FORMAT_FLAG_IS_FLOAT;
         }
         SampleFormat::Float32BE => {
             desc.mBitsPerChannel = 32;
-            desc.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsBigEndian;
+            desc.mFormatFlags = AUDIO_FORMAT_FLAG_IS_FLOAT | AUDIO_FORMAT_FLAG_IS_BIG_ENDIAN;
         }
         _ => {
             return Err(Error::InvalidFormat);
         }
     }
 
-    desc.mFormatID = kAudioFormatLinearPCM;
-    desc.mFormatFlags |= kLinearPCMFormatFlagIsPacked;
+    desc.mFormatID = AUDIO_FORMAT_LINEAR_PCM;
+    desc.mFormatFlags |= LINEAR_PCM_FORMAT_FLAG_IS_PACKED;
     desc.mSampleRate = f64::from(stream_params.rate());
     desc.mChannelsPerFrame = stream_params.channels();
 
@@ -366,7 +378,7 @@ fn set_input_mute(unit: AudioUnit, mute: bool) -> Result<()> {
     let mut old_mute: u32 = 0;
     let r = audio_unit_get_property(
         unit,
-        kAUVoiceIOProperty_MuteOutput,
+        AUDIO_UNIT_VOICE_IO_PROPERTY_MUTE_OUTPUT,
         kAudioUnitScope_Global,
         AU_IN_BUS,
         &mut old_mute,
@@ -374,7 +386,7 @@ fn set_input_mute(unit: AudioUnit, mute: bool) -> Result<()> {
     );
     if r != NO_ERR {
         cubeb_log!(
-            "AudioUnitGetProperty/kAUVoiceIOProperty_MuteOutput rv={}",
+            "AudioUnitGetProperty/AUDIO_UNIT_VOICE_IO_PROPERTY_MUTE_OUTPUT rv={}",
             r
         );
         return Err(Error::Error);
@@ -384,7 +396,7 @@ fn set_input_mute(unit: AudioUnit, mute: bool) -> Result<()> {
     }
     let r = audio_unit_set_property(
         unit,
-        kAUVoiceIOProperty_MuteOutput,
+        AUDIO_UNIT_VOICE_IO_PROPERTY_MUTE_OUTPUT,
         kAudioUnitScope_Global,
         AU_IN_BUS,
         &mute,
@@ -394,7 +406,7 @@ fn set_input_mute(unit: AudioUnit, mute: bool) -> Result<()> {
         Ok(())
     } else {
         cubeb_log!(
-            "AudioUnitSetProperty/kAUVoiceIOProperty_MuteOutput rv={}",
+            "AudioUnitSetProperty/AUDIO_UNIT_VOICE_IO_PROPERTY_MUTE_OUTPUT rv={}",
             r
         );
         Err(Error::Error)
@@ -411,7 +423,7 @@ fn set_input_processing_params(unit: AudioUnit, params: InputProcessingParams) -
     let mut old_agc: u32 = 0;
     let r = audio_unit_get_property(
         unit,
-        kAUVoiceIOProperty_VoiceProcessingEnableAGC,
+        AUDIO_UNIT_VOICE_IO_PROPERTY_VOICE_PROCESSING_ENABLE_AGC,
         kAudioUnitScope_Global,
         AU_IN_BUS,
         &mut old_agc,
@@ -419,7 +431,7 @@ fn set_input_processing_params(unit: AudioUnit, params: InputProcessingParams) -
     );
     if r != NO_ERR {
         cubeb_log!(
-            "AudioUnitGetProperty/kAUVoiceIOProperty_VoiceProcessingEnableAGC rv={}",
+            "AudioUnitGetProperty/AUDIO_UNIT_VOICE_IO_PROPERTY_VOICE_PROCESSING_ENABLE_AGC rv={}",
             r
         );
         return Err(Error::Error);
@@ -429,7 +441,7 @@ fn set_input_processing_params(unit: AudioUnit, params: InputProcessingParams) -
         let agc = u32::from(agc);
         let r = audio_unit_set_property(
             unit,
-            kAUVoiceIOProperty_VoiceProcessingEnableAGC,
+            AUDIO_UNIT_VOICE_IO_PROPERTY_VOICE_PROCESSING_ENABLE_AGC,
             kAudioUnitScope_Global,
             AU_IN_BUS,
             &agc,
@@ -437,7 +449,7 @@ fn set_input_processing_params(unit: AudioUnit, params: InputProcessingParams) -
         );
         if r != NO_ERR {
             cubeb_log!(
-                "AudioUnitSetProperty/kAUVoiceIOProperty_VoiceProcessingEnableAGC rv={}",
+                "AudioUnitSetProperty/AUDIO_UNIT_VOICE_IO_PROPERTY_VOICE_PROCESSING_ENABLE_AGC rv={}",
                 r
             );
             return Err(Error::Error);
@@ -452,7 +464,7 @@ fn set_input_processing_params(unit: AudioUnit, params: InputProcessingParams) -
     let mut old_bypass: u32 = 0;
     let r = audio_unit_get_property(
         unit,
-        kAUVoiceIOProperty_BypassVoiceProcessing,
+        AUDIO_UNIT_VOICE_IO_PROPERTY_BYPASS_VOICE_PROCESSING,
         kAudioUnitScope_Global,
         AU_IN_BUS,
         &mut old_bypass,
@@ -460,7 +472,7 @@ fn set_input_processing_params(unit: AudioUnit, params: InputProcessingParams) -
     );
     if r != NO_ERR {
         cubeb_log!(
-            "AudioUnitGetProperty/kAUVoiceIOProperty_BypassVoiceProcessing rv={}",
+            "AudioUnitGetProperty/AUDIO_UNIT_VOICE_IO_PROPERTY_BYPASS_VOICE_PROCESSING rv={}",
             r
         );
         return Err(Error::Error);
@@ -470,7 +482,7 @@ fn set_input_processing_params(unit: AudioUnit, params: InputProcessingParams) -
     if old_bypass != bypass {
         let r = audio_unit_set_property(
             unit,
-            kAUVoiceIOProperty_BypassVoiceProcessing,
+            AUDIO_UNIT_VOICE_IO_PROPERTY_BYPASS_VOICE_PROCESSING,
             kAudioUnitScope_Global,
             AU_IN_BUS,
             &bypass,
@@ -478,7 +490,7 @@ fn set_input_processing_params(unit: AudioUnit, params: InputProcessingParams) -
         );
         if r != NO_ERR {
             cubeb_log!(
-                "AudioUnitSetProperty/kAUVoiceIOProperty_BypassVoiceProcessing rv={}",
+                "AudioUnitSetProperty/AUDIO_UNIT_VOICE_IO_PROPERTY_BYPASS_VOICE_PROCESSING rv={}",
                 r
             );
             return Err(Error::Error);
@@ -1476,13 +1488,13 @@ fn create_typed_audiounit(sub_type: c_uint) -> Result<AudioUnit> {
 
 fn create_blank_audiounit() -> Result<AudioUnit> {
     #[cfg(not(target_os = "ios"))]
-    return create_typed_audiounit(kAudioUnitSubType_HALOutput);
+    return create_typed_audiounit(AUDIO_UNIT_SUB_TYPE_HAL_OUTPUT);
     #[cfg(target_os = "ios")]
-    return create_typed_audiounit(kAudioUnitSubType_RemoteIO);
+    return create_typed_audiounit(AUDIO_UNIT_SUB_TYPE_REMOTE_IO);
 }
 
 fn create_voiceprocessing_audiounit() -> Result<VoiceProcessingUnit> {
-    let res = create_typed_audiounit(kAudioUnitSubType_VoiceProcessingIO);
+    let res = create_typed_audiounit(AUDIO_UNIT_SUB_TYPE_VOICE_PROCESSING_IO);
     if res.is_err() {
         return Err(Error::Error);
     }

@@ -31,6 +31,11 @@ extern "C" {
 
 /* Use this for variably-sized arrays. */
 
+#if !defined(__cplusplus) && !defined(static_assert)
+// The pre-Lion SDK's assert.h predates C11.
+#define static_assert(cond, msg) _Static_assert(cond, msg)
+#endif
+
 #define vp8_copy_array(Dest, Src, N)                      \
   do {                                                    \
     static_assert(sizeof(*(Dest)) == sizeof(*(Src)), ""); \

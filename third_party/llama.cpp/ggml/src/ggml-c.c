@@ -510,6 +510,25 @@ int64_t ggml_time_us(void) {
 }
 #else
 void ggml_time_init(void) {}
+#if defined(__APPLE__) && (!defined(__MAC_OS_X_VERSION_MIN_REQUIRED) || \
+                            __MAC_OS_X_VERSION_MIN_REQUIRED < 101200)
+// clock_gettime and CLOCK_MONOTONIC require macOS 10.12.
+#include <mach/mach_time.h>
+static int64_t ggml_clock_ns(void) {
+    static mach_timebase_info_data_t tb;
+    if (tb.denom == 0) {
+        mach_timebase_info(&tb);
+    }
+    return (int64_t)(mach_absolute_time() * tb.numer / tb.denom);
+}
+int64_t ggml_time_ms(void) {
+    return ggml_clock_ns()/1000000;
+}
+
+int64_t ggml_time_us(void) {
+    return ggml_clock_ns()/1000;
+}
+#else
 int64_t ggml_time_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -521,6 +540,7 @@ int64_t ggml_time_us(void) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (int64_t)ts.tv_sec*1000000 + (int64_t)ts.tv_nsec/1000;
 }
+#endif
 #endif
 
 int64_t ggml_cycles(void) {

@@ -7,6 +7,8 @@
 #include "nsIMacFinderProgress.h"
 #include "nsCOMPtr.h"
 
+@class NSProgress;
+
 class nsMacFinderProgress : public nsIMacFinderProgress {
  public:
   nsMacFinderProgress();

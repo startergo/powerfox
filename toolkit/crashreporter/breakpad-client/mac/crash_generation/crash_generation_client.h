@@ -32,7 +32,17 @@
 
 #include "common/mac/MachIPC.h"
 
+#if __has_include(<os/lock.h>)
 #include <os/lock.h>
+#else
+// os_unfair_lock requires macOS 10.12; approximate with a spin lock.
+#include <libkern/OSAtomic.h>
+#define OS_UNFAIR_LOCK_INIT 0
+typedef OSSpinLock os_unfair_lock;
+#define os_unfair_lock_lock(l) OSSpinLockLock(l)
+#define os_unfair_lock_unlock(l) OSSpinLockUnlock(l)
+#define os_unfair_lock_trylock(l) OSSpinLockTry(l)
+#endif
 
 #include <memory>
 #include <string>

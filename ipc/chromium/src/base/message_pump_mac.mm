@@ -11,6 +11,13 @@
 #import <Foundation/Foundation.h>
 #include <IOKit/IOMessage.h>
 
+#if !defined(MAC_OS_X_VERSION_10_12) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_12
+// The NSEventType/NSEventMask spellings were introduced later.
+#define NSEventMaskAny NSAnyEventMask
+#define NSEventTypeApplicationDefined NSApplicationDefined
+#endif
+
 #include <limits>
 
 #if !defined(XP_IOS)

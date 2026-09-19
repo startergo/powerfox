@@ -566,8 +566,13 @@ class MediaDecoderStateMachine::DecodingState
 
   void HandleVideoDecoded(VideoData* aVideo) override {
     // We only do this check when we're not looping, which can be known by
-    // checking the queue's offset.
-    const auto currentTime = mMaster->GetMediaTime();
+    // checking the queue's offset. Compare against the playback clock the
+    // VideoSink uses to discard frames: the anchored media position can lag
+    // the clock by the very deficit that made frames late, hiding the
+    // lateness and preventing the skip-to-next-keyframe recovery.
+    const auto currentTime = mMaster->mMediaSink->IsStarted()
+                                 ? mMaster->GetClock()
+                                 : mMaster->GetMediaTime();
     if (aVideo->GetEndTime() < currentTime &&
         VideoQueue().GetOffset() == media::TimeUnit::Zero()) {
       if (!mVideoFirstLateTime) {

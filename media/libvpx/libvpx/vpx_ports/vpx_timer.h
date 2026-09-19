@@ -32,6 +32,9 @@
  * POSIX specific includes
  */
 #include <time.h>
+#if defined(__APPLE__)
+#include <mach/mach_time.h>
+#endif
 
 /* timersub is not provided by msys at this time. */
 #ifndef timersub_ns
@@ -55,9 +58,29 @@ struct vpx_usec_timer {
 #endif
 };
 
+#if defined(__APPLE__) && \
+    (!defined(__MAC_OS_X_VERSION_MIN_REQUIRED) || \
+     __MAC_OS_X_VERSION_MIN_REQUIRED < 101200)
+// clock_gettime and the clockid_t clocks require macOS 10.12.
+static INLINE void vpx_usec_timer_now(struct timespec *ts) {
+  static mach_timebase_info_data_t tb;
+  uint64_t now;
+  if (tb.denom == 0) {
+    mach_timebase_info(&tb);
+  }
+  now = mach_absolute_time() * tb.numer / tb.denom;
+  ts->tv_sec = now / 1000000000;
+  ts->tv_nsec = now % 1000000000;
+}
+#endif
+
 static INLINE void vpx_usec_timer_start(struct vpx_usec_timer *t) {
 #if defined(_WIN32)
   QueryPerformanceCounter(&t->begin);
+#elif defined(__APPLE__) && \
+    (!defined(__MAC_OS_X_VERSION_MIN_REQUIRED) || \
+     __MAC_OS_X_VERSION_MIN_REQUIRED < 101200)
+  vpx_usec_timer_now(&t->begin);
 #elif defined(CLOCK_MONOTONIC_RAW)
   clock_gettime(CLOCK_MONOTONIC_RAW, &t->begin);
 #else
@@ -68,6 +91,10 @@ static INLINE void vpx_usec_timer_start(struct vpx_usec_timer *t) {
 static INLINE void vpx_usec_timer_mark(struct vpx_usec_timer *t) {
 #if defined(_WIN32)
   QueryPerformanceCounter(&t->end);
+#elif defined(__APPLE__) && \
+    (!defined(__MAC_OS_X_VERSION_MIN_REQUIRED) || \
+     __MAC_OS_X_VERSION_MIN_REQUIRED < 101200)
+  vpx_usec_timer_now(&t->end);
 #elif defined(CLOCK_MONOTONIC_RAW)
   clock_gettime(CLOCK_MONOTONIC_RAW, &t->end);
 #else

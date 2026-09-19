@@ -113,14 +113,14 @@ void NativeMenuMac::ForceUpdateNativeMenuAt(const nsAString& aIndexString) {
       [NSString stringWithCharacters:reinterpret_cast<const unichar*>(
                                          aIndexString.BeginReading())
                               length:aIndexString.Length()];
-  NSArray<NSString*>* indexes =
+  NSArray* indexes =
       [locationString componentsSeparatedByString:@"|"];
   RefPtr<nsMenuX> currentMenu = mMenu.get();
 
   // now find the correct submenu
   unsigned int indexCount = indexes.count;
   for (unsigned int i = 1; currentMenu && i < indexCount; i++) {
-    int targetIndex = [indexes objectAtIndex:i].intValue;
+    int targetIndex = [[indexes objectAtIndex:i] intValue];
     int visible = 0;
     uint32_t length = currentMenu->GetItemCount();
     for (unsigned int j = 0; j < length; j++) {

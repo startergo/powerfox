@@ -241,6 +241,16 @@ nsClientAuthRememberService::RememberDecision(
 }
 
 #ifdef XP_MACOSX
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
+// SecIdentityCopyPreferred (10.7) replaces the old CSSM-based
+// SecIdentityCopyPreference, which is unusable for modern identity
+// preferences.
+extern "C" SecIdentityRef SecIdentityCopyPreferred(
+    CFStringRef name, CFTypeRef keyUsage, CFArrayRef validIssuers)
+    __attribute__((weak_import));
+#endif
+
 // On macOS, users can add "identity preference" items in the keychain. These
 // can be added via the Keychain Access tool. These specify mappings from
 // URLs/wildcards like "*.mozilla.org" to specific client certificates. This
@@ -264,8 +274,11 @@ nsresult CheckForPreferredCertificate(const nsACString& aHostName,
   if (!host) {
     return NS_ERROR_UNEXPECTED;
   }
-  ScopedCFType<SecIdentityRef> identity(
-      ::SecIdentityCopyPreferred(host.get(), nullptr, nullptr));
+  SecIdentityRef identityRef = nullptr;
+  if (__builtin_available(macOS 10.7, *)) {
+    identityRef = ::SecIdentityCopyPreferred(host.get(), nullptr, nullptr);
+  }
+  ScopedCFType<SecIdentityRef> identity(identityRef);
   if (!identity) {
     // No preferred identity for this hostname, leave aCertDBKey empty and
     // return

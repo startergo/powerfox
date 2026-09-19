@@ -1218,8 +1218,9 @@ case "$target" in
     AC_DEFINE(HAVE_POINTER_LOCALTIME_R)
     changequote(,)
     HOST_DARWIN_MAJOR=`echo "$build_os" | sed -E -e 's/^darwin([0-9]+).*$/\1/'`
+    TARGET_DARWIN_MINOR=`echo "$MACOSX_DEPLOYMENT_TARGET" | sed -E -e 's/^10\.([0-9]+).*$/\1/'`
     changequote([,])
-    if test "$HOST_DARWIN_MAJOR" -ge 15 ; then
+    if test "$HOST_DARWIN_MAJOR" -ge 15 && { test -z "$TARGET_DARWIN_MINOR" || test "$TARGET_DARWIN_MINOR" -ge 11 ; } ; then
         AC_DEFINE(HAS_CONNECTX)
     fi
     AS='$(CC) -x assembler-with-cpp'

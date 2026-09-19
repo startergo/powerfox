@@ -8,6 +8,18 @@
 #include "nsDebug.h"
 #include "nsIWidget.h"
 #include <OpenGL/gl.h>
+
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
+// Missing from the pre-Lion SDK.
+enum {
+  kCGLRendererGenericID = 0x00020200,
+  NSOpenGLPFAOpenGLProfile = 99,
+  NSOpenGLProfileVersionLegacy = 0x1000,
+  NSOpenGLProfileVersion3_2Core = 0x3200,
+  NSOpenGLProfileVersion4_1Core = 0x4100,
+};
+#endif
 #include "gfxFailure.h"
 #include "mozilla/IntegerRange.h"
 #include "mozilla/StaticPrefs_gfx.h"
@@ -193,7 +205,9 @@ static NSOpenGLPixelFormat* GetPixelFormatForContext(NSOpenGLContext* aContext) 
     return [aContext pixelFormat];
   }
   return [[[NSOpenGLPixelFormat alloc]
-      initWithCGLPixelFormatObj:CGLGetPixelFormat([aContext CGLContextObj])] autorelease];
+      initWithCGLPixelFormatObj:CGLGetPixelFormat(
+                                    (CGLContextObj)[aContext CGLContextObj])]
+      autorelease];
 }
 
 
@@ -224,7 +238,7 @@ void GLContextCGL::MigrateToActiveGPU() {
               forAttribute:NSOpenGLPFAScreenMask
           forVirtualScreen:i];
     if (IsSameGPU(displayMask, newPreferredDisplayMask)) {
-      CGLSetVirtualScreen([mContext CGLContextObj], i);
+      CGLSetVirtualScreen((CGLContextObj)[mContext CGLContextObj], i);
       return;
     }
   }

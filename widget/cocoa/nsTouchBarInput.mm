@@ -67,11 +67,11 @@
   mCallback = aCallback;
 }
 
-- (NSMutableArray<TouchBarInput*>*)children {
+- (NSMutableArray*)children {
   return mChildren;
 }
 
-- (void)setChildren:(NSMutableArray<TouchBarInput*>*)aChildren {
+- (void)setChildren:(NSMutableArray*)aChildren {
   [aChildren retain];
   for (TouchBarInput* child in mChildren) {
     [child releaseJSObjects];

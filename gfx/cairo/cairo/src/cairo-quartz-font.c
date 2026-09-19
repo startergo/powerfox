@@ -44,6 +44,14 @@
 
 #include "cairo-error-private.h"
 
+#if defined(__APPLE__) && (!defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7)
+// Renamed in later SDKs.
+#define kCTFontOrientationDefault kCTFontDefaultOrientation
+#define kCTFontOrientationHorizontal kCTFontHorizontalOrientation
+#define kCTFontOrientationVertical kCTFontVerticalOrientation
+#endif
+
 /**
  * SECTION:cairo-quartz-fonts
  * @Title: Quartz (CGFont) Fonts

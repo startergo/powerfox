@@ -28,6 +28,21 @@ nsresult GetCurrentProcessMemoryUsage(uint64_t* aResult) {
   if (!aResult) {
     return NS_ERROR_INVALID_ARG;
   }
+#if defined(XP_MACOSX) && __MAC_OS_X_VERSION_MIN_REQUIRED < 1090
+  // TASK_VM_INFO requires macOS 10.9; approximate with resident size.
+  task_basic_info_data_t info;
+  mach_msg_type_number_t count = TASK_BASIC_INFO_COUNT;
+
+  kern_return_t kr =
+      task_info(mach_task_self(), TASK_BASIC_INFO,
+                reinterpret_cast<task_info_t>(&info), &count);
+
+  if (kr != KERN_SUCCESS) {
+    return NS_ERROR_FAILURE;
+  }
+  *aResult = info.resident_size;
+  return NS_OK;
+#else
   task_vm_info_data_t info;
   mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
 
@@ -40,9 +55,37 @@ nsresult GetCurrentProcessMemoryUsage(uint64_t* aResult) {
   // phys_footprint matches Activity Monitor’s “Memory” column on macOS 10.11+
   *aResult = info.phys_footprint;
   return NS_OK;
+#endif
 }
 
 nsresult GetCpuTimeSinceProcessStartInMs(uint64_t* aResult) {
+#if defined(XP_MACOSX) && __MAC_OS_X_VERSION_MIN_REQUIRED < 1090
+  // TASK_POWER_INFO requires macOS 10.9; fall back to thread times.
+  struct task_thread_times_info_data_t_impl {
+    time_value_t user_time;
+    time_value_t system_time;
+  };
+  struct task_thread_times_info_data_t_impl times;
+  mach_msg_type_number_t count = sizeof(times) / sizeof(natural_t);
+  kern_return_t kr =
+      task_info(mach_task_self(), TASK_THREAD_TIMES_INFO,
+                reinterpret_cast<task_info_t>(&times), &count);
+  if (kr != KERN_SUCCESS) {
+    return NS_ERROR_FAILURE;
+  }
+
+  mach_timebase_info_data_t timebase;
+  GetTimeBase(&timebase);
+
+  uint64_t totalNanos =
+      ((uint64_t)times.user_time.seconds + times.system_time.seconds) *
+          PR_NSEC_PER_SEC +
+      ((uint64_t)times.user_time.microseconds +
+       times.system_time.microseconds) *
+          1000;
+  *aResult = totalNanos * timebase.numer / timebase.denom / PR_NSEC_PER_MSEC;
+  return NS_OK;
+#else
   task_power_info_data_t task_power_info;
   mach_msg_type_number_t count = TASK_POWER_INFO_COUNT;
   kern_return_t kr = task_info(mach_task_self(), TASK_POWER_INFO,
@@ -57,9 +100,14 @@ nsresult GetCpuTimeSinceProcessStartInMs(uint64_t* aResult) {
   *aResult = (task_power_info.total_user + task_power_info.total_system) *
              timebase.numer / timebase.denom / PR_NSEC_PER_MSEC;
   return NS_OK;
+#endif
 }
 
 nsresult GetGpuTimeSinceProcessStartInMs(uint64_t* aResult) {
+#if defined(XP_MACOSX) && __MAC_OS_X_VERSION_MIN_REQUIRED < 1090
+  // TASK_POWER_INFO_V2 requires macOS 10.9.
+  return NS_ERROR_NOT_IMPLEMENTED;
+#else
   task_power_info_v2_data_t task_power_info;
   mach_msg_type_number_t count = TASK_POWER_INFO_V2_COUNT;
   kern_return_t kr = task_info(mach_task_self(), TASK_POWER_INFO_V2,
@@ -70,6 +118,7 @@ nsresult GetGpuTimeSinceProcessStartInMs(uint64_t* aResult) {
 
   *aResult = task_power_info.gpu_energy.task_gpu_utilisation / PR_NSEC_PER_MSEC;
   return NS_OK;
+#endif
 }
 
 int GetCycleTimeFrequencyMHz() { return 0; }
@@ -105,6 +154,24 @@ ProcInfoPromise::ResolveOrRejectValue GetProcInfoSync(
       selectedTask = request.childTask;
     }
 
+#if defined(XP_MACOSX) && __MAC_OS_X_VERSION_MIN_REQUIRED < 1090
+    // TASK_POWER_INFO/TASK_VM_INFO require macOS 10.9.
+    task_basic_info_data_t basic_info;
+    mach_msg_type_number_t count = TASK_BASIC_INFO_COUNT;
+    kern_return_t kr =
+        task_info(selectedTask, TASK_BASIC_INFO, (task_info_t)&basic_info,
+                  &count);
+    if (kr != KERN_SUCCESS) {
+      continue;
+    }
+    info.cpuTime = ((uint64_t)basic_info.user_time.seconds +
+                    basic_info.system_time.seconds) *
+                       PR_NSEC_PER_SEC +
+                   ((uint64_t)basic_info.user_time.microseconds +
+                    basic_info.system_time.microseconds) *
+                       1000;
+    info.memory = basic_info.resident_size;
+#else
     task_power_info_data_t task_power_info;
     mach_msg_type_number_t count = TASK_POWER_INFO_COUNT;
     kern_return_t kr = task_info(selectedTask, TASK_POWER_INFO,
@@ -125,6 +192,7 @@ ProcInfoPromise::ResolveOrRejectValue GetProcInfoSync(
     kr = task_info(selectedTask, TASK_VM_INFO, (task_info_t)&task_vm_info,
                    &count);
     info.memory = kr == KERN_SUCCESS ? task_vm_info.phys_footprint : 0;
+#endif
 
     // Now getting threads info
 
@@ -160,6 +228,16 @@ ProcInfoPromise::ResolveOrRejectValue GetProcInfoSync(
 
     for (mach_msg_type_number_t i = 0; i < threadCount; i++) {
       // Basic thread info.
+#if defined(XP_MACOSX) && __MAC_OS_X_VERSION_MIN_REQUIRED < 1090
+      // THREAD_EXTENDED_INFO requires macOS 10.9.
+      thread_basic_info_data_t threadInfoData;
+      count = THREAD_BASIC_INFO_COUNT;
+      kret = thread_info(threadList[i], THREAD_BASIC_INFO,
+                         (thread_info_t)&threadInfoData, &count);
+      if (kret != KERN_SUCCESS) {
+        continue;
+      }
+#else
       thread_extended_info_data_t threadInfoData;
       count = THREAD_EXTENDED_INFO_COUNT;
       kret = thread_info(threadList[i], THREAD_EXTENDED_INFO,
@@ -167,6 +245,7 @@ ProcInfoPromise::ResolveOrRejectValue GetProcInfoSync(
       if (kret != KERN_SUCCESS) {
         continue;
       }
+#endif
 
       // Getting the thread id.
       thread_identifier_info identifierInfo;
@@ -183,9 +262,19 @@ ProcInfoPromise::ResolveOrRejectValue GetProcInfoSync(
         result.SetReject(NS_ERROR_OUT_OF_MEMORY);
         return result;
       }
+#if defined(XP_MACOSX) && __MAC_OS_X_VERSION_MIN_REQUIRED < 1090
+      thread->cpuTime = ((uint64_t)threadInfoData.user_time.seconds +
+                         threadInfoData.system_time.seconds) *
+                            PR_NSEC_PER_SEC +
+                        ((uint64_t)threadInfoData.user_time.microseconds +
+                         threadInfoData.system_time.microseconds) *
+                            1000;
+      thread->name.AssignASCII("");
+#else
       thread->cpuTime =
           threadInfoData.pth_user_time + threadInfoData.pth_system_time;
       thread->name.AssignASCII(threadInfoData.pth_name);
+#endif
       thread->tid = identifierInfo.thread_id;
     }
 #endif

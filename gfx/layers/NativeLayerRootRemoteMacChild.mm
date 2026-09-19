@@ -155,7 +155,7 @@ void NativeLayerRootRemoteMacChild::CommitForSnapshot(CALayer* aRootCALayer) {
   [CATransaction begin];
   [CATransaction setDisableActions:YES];  // disable cross-fade
 
-  NSMutableArray<CALayer*>* sublayers =
+  NSMutableArray* sublayers =
       [NSMutableArray arrayWithCapacity:mNativeLayers.Length()];
   for (const auto& layer : mNativeLayers) {
     layer->UpdateSnapshotLayer();

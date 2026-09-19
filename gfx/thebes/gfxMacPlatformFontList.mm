@@ -18,7 +18,7 @@
 
 #include "harfbuzz/hb.h"
 
-#include "AppleUtils.h"
+#include "mozilla/AutoCFTypeRef.h"
 #include "MainThreadUtils.h"
 #include "nsDirectoryServiceUtils.h"
 #include "nsDirectoryServiceDefs.h"

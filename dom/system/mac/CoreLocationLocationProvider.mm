@@ -20,6 +20,24 @@
 #include <CoreLocation/CLLocationManager.h>
 #include <CoreLocation/CLLocationManagerDelegate.h>
 
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
+// The pre-Lion SDK's CoreLocation has no authorization API.
+typedef NSInteger CLAuthorizationStatus;
+enum {
+  kCLAuthorizationStatusNotDetermined = 0,
+  kCLAuthorizationStatusRestricted = 1,
+  kCLAuthorizationStatusDenied = 2,
+  kCLAuthorizationStatusAuthorizedAlways = 3,
+  kCLAuthorizationStatusAuthorized = 3,
+  kCLAuthorizationStatusAuthorizedWhenInUse = 4,
+};
+
+@interface CLLocationManager (CLLocationManager10_15)
++ (CLAuthorizationStatus)authorizationStatus;
+@end
+#endif
+
 #include <objc/objc-runtime.h>
 #include <objc/objc.h>
 
@@ -36,6 +54,10 @@ static LazyLogModule gCoreLocationProviderLog("CoreLocation");
   MOZ_LOG(gCoreLocationProviderLog, LogLevel::Info, (__VA_ARGS__))
 
 static void LogLocationPermissionState() {
+  if (![CLLocationManager respondsToSelector:@selector(authorizationStatus)]) {
+    // The class method requires 10.7.
+    return;
+  }
   CLAuthorizationStatus authStatus = [CLLocationManager authorizationStatus];
   const char* authStatusStr = "Unknown";
   switch (authStatus) {

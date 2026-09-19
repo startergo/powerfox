@@ -3,11 +3,11 @@ version: 1
 reviews:
   ignore:
     files:
-      # Vendored FFmpeg sources — upstream code, not our changes to review.
-      - media/ffvpx/libavcodec/hevc/**
-      - media/ffvpx/libavcodec/aactab.c
-      - media/ffvpx/libavcodec/h264_cabac.c
-      - media/ffvpx/**
+      # Vendored FFmpeg upstream sources — keep Mozilla build glue
+      # (moz.build, ffvpxcommon.mozbuild, config_*.h, local patches)
+      # reviewable.
+      - media/ffvpx/libav*/**
+      - media/ffvpx/compat/**
       # Data dumps.
       - tools/legacy-macos/10.6-runtime-universe.txt
       - tools/legacy-macos/selector-sweep-report.txt

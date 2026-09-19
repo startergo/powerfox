@@ -14,20 +14,27 @@ MACOS="$APP/Contents/MacOS"
 cp "$DIST/libc++.1.0.dylib" "$MACOS/libc++.1.dylib"
 cp "$DIST/libc++abi.1.0.dylib" "$MACOS/libc++abi.1.dylib"
 
-cd "$MACOS"
-find . -type f | while read -r BIN; do
+cd "$APP"
+find Contents -type f | while read -r BIN; do
   file -b "$BIN" | grep -q "Mach-O" || continue
   otool -L "$BIN" 2>/dev/null | grep -q "/usr/lib/libc++.1.dylib" || continue
   install_name_tool -change /usr/lib/libc++.1.dylib @rpath/libc++.1.dylib "$BIN"
   case "$BIN" in
-    *.app/Contents/MacOS/*)
-      # Nested helper apps resolve @rpath against their own MacOS
-      # directory; point them back at the top-level one where the
-      # runtimes live.
-      RP="@executable_path/$(echo "$BIN" | awk -F/ '{ofs=""; for (i = 2; i < NF; i++) ofs = ofs "../"; print ofs}')"
+    Contents/MacOS/*)
+      case "$BIN" in
+        *.app/Contents/MacOS/*)
+          # Nested helper apps resolve @rpath against their own MacOS
+          # directory; point them back at the top-level one.
+          RP="@executable_path/$(echo "$BIN" | awk -F/ '{ofs=""; for (i = 3; i < NF; i++) ofs = ofs "../"; print ofs}')"
+          ;;
+        *)
+          RP="@executable_path/."
+          ;;
+      esac
       ;;
     *)
-      RP="@executable_path/."
+      # Relocated helper binaries, e.g. the LaunchServices updater.
+      RP="@executable_path/$(dirname "$BIN" | awk -F/ '{ofs=""; for (i = 1; i < NF; i++) ofs = ofs "../"; print ofs}')MacOS"
       ;;
   esac
   if ! otool -l "$BIN" | grep -q "path $RP "; then
@@ -37,4 +44,4 @@ find . -type f | while read -r BIN; do
 done
 
 echo "images still referencing /usr/lib/libc++.1.dylib:"
-otool -L XUL 2>/dev/null | grep -c "/usr/lib/libc++.1.dylib" || true
+otool -L "$MACOS/XUL" 2>/dev/null | grep -c "/usr/lib/libc++.1.dylib" || true

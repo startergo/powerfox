@@ -1,0 +1,182 @@
+name: Build PowerFox 10.7+
+
+# Builds the ESR153 tree for macOS 10.7 Lion through 10.14 Mojave
+# (x86_64, cross-compiled from the arm64 runner) with the Momiji-parity
+# recipe: SDK 26.5 with a 10.7 deployment floor, ld-classic, bundled
+# libc++, and a post-build libMacportsLegacySystem.B.dylib polyfill
+# (tools/legacy-macos/polyfill-10.7.sh).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["10.7-backporting"]
+
+jobs:
+  build:
+    name: build 10.7-10.14 x86_64
+    runs-on: macos-26
+    timeout-minutes: 300
+    env:
+      SCCACHE_IDLE_TIMEOUT: 0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Restore bootstrap toolchains
+        id: mozbuild
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.mozbuild
+          key: mozbuild107-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: mozbuild107-
+
+      - name: Bootstrap build deps
+        id: bootstrap
+        if: steps.mozbuild.outputs.cache-hit != 'true'
+        run: /usr/bin/python3 ./mach bootstrap --application-choice=browser
+
+      - name: Install nasm
+        run: brew install nasm
+
+      - name: Set up Rust (stable + rust-src for the 10.7 std rebuild)
+        run: |
+          rustup default stable
+          rustup component add rust-src
+          rustc --version
+          # Do NOT make rust-objcopy work here (e.g. by symlinking
+          # libLLVM.dylib into its @rpath): mach strips rlibs with it after
+          # each crate build, and the stripped rlibs then fail downstream
+          # with E0463. The broken binary's SIGABRT is load-bearing; rlibs
+          # just keep their debug info.
+
+      - name: Compute support-artifact cache key
+        id: key
+        run: |
+          RUSTV=$(rustc --version | tr ' /' '--')
+          SDKV=$(xcrun --sdk macosx --show-sdk-version)
+          echo "key=legacy107-${{ runner.os }}-${RUSTV}-sdk${SDKV}-${{ hashFiles('tools/legacy-macos/build-libcxx.sh', 'tools/legacy-macos/build-rust-std.sh') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore support artifacts
+        id: cache
+        uses: actions/cache/restore@v5
+        with:
+          path: tools/legacy-macos/dist-10.7
+          key: ${{ steps.key.outputs.key }}
+
+      # sccache does not hash the custom Rust std's contents, so cached
+      # rlibs from an older std pass a rebuild by (E0463 metadata
+      # mismatches). Key the cache on the support artifacts, which include
+      # the std, and restore exact matches only.
+      - name: Restore sccache
+        id: sccache
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/Library/Caches/Mozilla.sccache
+          # A deterministic key would no-op every save after the first,
+          # so source changes never enter the cache. Save per run and
+          # restore the newest generation; rust is never cached, so
+          # prefix fallback cannot serve stale metadata.
+          key: sccache107-${{ runner.os }}-${{ steps.key.outputs.key }}-${{ github.run_id }}
+          restore-keys: |
+            sccache107-${{ runner.os }}-${{ steps.key.outputs.key }}-
+
+      - name: Place the 26.5 SDK where the mozconfig expects it
+        run: |
+          SDKS=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs
+          if [ ! -d "$SDKS/MacOSX26.5.sdk" ]; then
+            sudo mkdir -p "$SDKS"
+            sudo ln -s "$(xcrun --sdk macosx --show-sdk-path)" "$SDKS/MacOSX26.5.sdk"
+          fi
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: Build libc++ bundle and Rust std for the 10.7 floor
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          SDK=$(xcrun --sdk macosx --show-sdk-path)
+          tools/legacy-macos/build-libcxx.sh "$SDK" 10.7
+          tools/legacy-macos/build-rust-std.sh 10.7
+
+      - name: Save support artifacts
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: tools/legacy-macos/dist-10.7
+          key: ${{ steps.key.outputs.key }}
+
+      - name: Build
+        env:
+          MOZCONFIG: ${{ github.workspace }}/mozconfig-ci
+        run: |
+          # Base mozconfig plus CI-only sccache for the C/C++ compilers
+          # only: bootstrap's sccache 0.15 mis-caches rustc rlibs, which
+          # then fail downstream with E0463 once restored. Fresh Rust
+          # compiles are reliable and cheap, and the C/C++ cache entries
+          # stay valid under the direct CC/CXX wrapper.
+          cp mozconfig-macos107 mozconfig-ci
+          SCC="$HOME/.mozbuild/sccache/sccache"
+          sed -i '' \
+            -e "s|^export CC=\"/usr/bin/clang\"|export CC=\"$SCC /usr/bin/clang\"|" \
+            -e "s|^export CXX=\"/usr/bin/clang++\"|export CXX=\"$SCC /usr/bin/clang++\"|" \
+            mozconfig-ci
+          /usr/bin/python3 ./mach configure
+          /usr/bin/python3 ./mach build
+
+      - name: Stop sccache
+        if: always()
+        run: |
+          sleep 60
+          "$HOME/.mozbuild/sccache/sccache" --stop-server || true
+
+      - name: Save sccache
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: ~/Library/Caches/Mozilla.sccache
+          key: sccache107-${{ runner.os }}-${{ steps.key.outputs.key }}-${{ github.run_id }}
+
+      - name: Save bootstrap toolchains
+        # Never cache a partial ~/.mozbuild from a failed or cancelled
+        # bootstrap: a rerun of this run restores that exact key and skips
+        # bootstrap forever.
+        if: always() && steps.bootstrap.outcome == 'success'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.mozbuild
+          key: mozbuild107-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Package
+        env:
+          MOZCONFIG: ${{ github.workspace }}/mozconfig-ci
+        run: /usr/bin/python3 ./mach package
+
+      - name: Polyfill and repackage
+        run: |
+          VERSION=$(cat browser/config/version.txt)
+          # mach package stages much of the bundle as absolute symlinks into
+          # the objdir; materialize them into a self-contained app (also so
+          # the polyfill's -type f find sees every executable).
+          rm -rf Nightly.app
+          cp -RL obj-x86_64-mac107/dist/Nightly.app Nightly.app
+          tools/legacy-macos/polyfill-10.7.sh Nightly.app
+          # 10.7/10.8 ship a libc++ far too old for this tree, so every OS
+          # this artifact targets loads the bundled 10.7-floor libc++
+          # through @rpath — the same shape as the official binaries
+          # (verified launching with the bundled 5.0.1 loaded).
+          tools/legacy-macos/rpath-libcxx-10.7.sh Nightly.app
+          # mach package's dmg predates the polyfill; rebuild it.
+          rm -f "powerfox-${VERSION}_macOS10.7-10.14.dmg"
+          hdiutil create -volname Nightly -srcfolder Nightly.app \
+            -fs HFS+ -format UDBZ -imagekey zlib-level=9 \
+            "powerfox-${VERSION}_macOS10.7-10.14.dmg"
+          zip -qr "powerfox-${VERSION}_macOS10.7-10.14.zip" Nightly.app
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          path: |
+            powerfox-*.zip
+            powerfox-*.dmg
+          if-no-files-found: error
+          retention-days: 14

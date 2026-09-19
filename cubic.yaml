@@ -1,0 +1,22 @@
+version: 1
+
+reviews:
+  ignore:
+    files:
+      # Vendored FFmpeg upstream sources by extension — everything else
+      # under media/ffvpx (moz.build glue, config headers, local patches)
+      # stays reviewable.
+      - media/ffvpx/libav*/**/*.c
+      - media/ffvpx/libav*/**/*.h
+      - media/ffvpx/libav*/**/*.asm
+      - media/ffvpx/libav*/**/*.S
+      - media/ffvpx/libav*/**/*.inc
+      - media/ffvpx/compat/**
+      # Data dumps.
+      - tools/legacy-macos/10.6-runtime-universe.txt
+      - tools/legacy-macos/selector-sweep-report.txt
+      # Generated overlay + dist artifacts that can appear in diffs.
+      - tools/legacy-macos/overlay-sdk/**
+      - tools/legacy-macos/dist/**
+      - tools/legacy-macos/dist-10.7/**
+      - tools/legacy-macos/downloads/**

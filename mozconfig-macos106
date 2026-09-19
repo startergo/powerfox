@@ -24,6 +24,9 @@ ac_add_options --with-macos-sdk=/Applications/Xcode.app/Contents/Developer/Platf
 ac_add_options --without-wasm-sandboxed-libraries
 # WebRTC's camera capture needs AVFoundation (10.7+).
 ac_add_options --disable-webrtc
+# The sandbox params path MOZ_CRASHes for non-packaged installs (no
+# omni.ja) outside a repo, and the sandbox is a no-op pre-10.7 anyway.
+ac_add_options --disable-sandbox
 # Lets the NSPR subconfigure know the deployment floor (connectx etc.).
 export MACOSX_DEPLOYMENT_TARGET=10.6
 

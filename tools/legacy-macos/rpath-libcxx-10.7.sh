@@ -6,10 +6,10 @@
 set -e
 APP="$1"
 DIST="${2:-$(CDPATH= cd -- "$(dirname "$0")" && pwd)/dist-10.7/lib}"
-MACOS="$APP/Contents/MacOS"
 
-[ -d "$MACOS" ] || { echo "usage: $0 <app> [dist-lib]" >&2; exit 1; }
+[ -d "$APP" ] || { echo "usage: $0 <app> [dist-lib]" >&2; exit 1; }
 APP=$(CDPATH= cd -- "$APP" && pwd)
+MACOS="$APP/Contents/MacOS"
 [ -f "$DIST/libc++.1.0.dylib" ] || { echo "libc++.1.0.dylib not found in $DIST" >&2; exit 1; }
 
 cp "$DIST/libc++.1.0.dylib" "$MACOS/libc++.1.dylib"

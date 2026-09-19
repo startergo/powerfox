@@ -1,0 +1,18 @@
+version: 1
+
+reviews:
+  ignore:
+    files:
+      # Vendored FFmpeg sources — upstream code, not our changes to review.
+      - media/ffvpx/libavcodec/hevc/**
+      - media/ffvpx/libavcodec/aactab.c
+      - media/ffvpx/libavcodec/h264_cabac.c
+      - media/ffvpx/**
+      # Data dumps.
+      - tools/legacy-macos/10.6-runtime-universe.txt
+      - tools/legacy-macos/selector-sweep-report.txt
+      # Generated overlay + dist artifacts that can appear in diffs.
+      - tools/legacy-macos/overlay-sdk/**
+      - tools/legacy-macos/dist/**
+      - tools/legacy-macos/dist-10.7/**
+      - tools/legacy-macos/downloads/**

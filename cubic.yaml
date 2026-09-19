@@ -3,10 +3,14 @@ version: 1
 reviews:
   ignore:
     files:
-      # Vendored FFmpeg upstream sources — keep Mozilla build glue
-      # (moz.build, ffvpxcommon.mozbuild, config_*.h, local patches)
-      # reviewable.
-      - media/ffvpx/libav*/**
+      # Vendored FFmpeg upstream sources by extension — everything else
+      # under media/ffvpx (moz.build glue, config headers, local patches)
+      # stays reviewable.
+      - media/ffvpx/libav*/**/*.c
+      - media/ffvpx/libav*/**/*.h
+      - media/ffvpx/libav*/**/*.asm
+      - media/ffvpx/libav*/**/*.S
+      - media/ffvpx/libav*/**/*.inc
       - media/ffvpx/compat/**
       # Data dumps.
       - tools/legacy-macos/10.6-runtime-universe.txt

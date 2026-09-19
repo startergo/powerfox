@@ -8,6 +8,10 @@
 #import <Foundation/Foundation.h>
 #import <objc/objc.h>
 
+id objc_retainBlock(id block) {
+  return [block copy];
+}
+
 id objc_autoreleaseReturnValue(id obj) {
   return obj ? [obj autorelease] : nil;
 }

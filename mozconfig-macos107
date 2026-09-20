@@ -45,7 +45,7 @@ export LEGACY_CXX_RUNTIME_DIR=$topsrcdir/tools/legacy-macos/dist-10.7/lib
 # distributed std floors at 10.12); the wrapper also overrides rustc's
 # deployment-target clamp with a trailing link arg.
 export RUSTC="$topsrcdir/tools/legacy-macos/rustc-legacy-10.7"
-mk_add_options RUSTC_BOOTSTRAP=1
+export RUSTC_BOOTSTRAP=1
 
 # No compat shims at link time: pre-10.10 symbol gaps are filled after the
 # build by rewriting /usr/lib/libSystem.B.dylib to libMacportsLegacySystem.B

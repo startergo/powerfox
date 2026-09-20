@@ -240,13 +240,24 @@ bool IsObjCSendSlotName(const char* aName) {
 void FixupCDMImage(void* aShim, const char* aLibPath) {
   const char* base = strrchr(aLibPath, '/');
   base = base ? base + 1 : aLibPath;
+  size_t baseLen = strlen(base);
   const mach_header_64* hdr = nullptr;
   intptr_t slide = 0;
   for (uint32_t i = 0; i < _dyld_image_count(); i++) {
     const char* name = _dyld_get_image_name(i);
-    if (name && (strcmp(name, aLibPath) == 0 ||
-                 (strstr(name, base) && strlen(name) >= strlen(base) &&
-                  strcmp(name + strlen(name) - strlen(base), base) == 0))) {
+    if (!name) {
+      continue;
+    }
+    size_t nameLen = strlen(name);
+    // An empty basename (trailing '/') would suffix-match every image, so
+    // require one and anchor the suffix to a path separator.
+    bool match = strcmp(name, aLibPath) == 0;
+    if (!match && baseLen > 0 && nameLen > baseLen + 1 &&
+        name[nameLen - baseLen - 1] == '/' &&
+        strcmp(name + nameLen - baseLen, base) == 0) {
+      match = true;
+    }
+    if (match) {
       hdr = (const mach_header_64*)_dyld_get_image_header(i);
       slide = _dyld_get_image_vmaddr_slide(i);
       break;

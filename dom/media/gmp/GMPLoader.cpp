@@ -307,6 +307,20 @@ void FixupCDMImage(void* aShim, const char* aLibPath) {
     for (uint32_t s = 0; s < sg->nsects; s++, sec++) {
       void* slots = (void*)(uintptr_t)(sec->addr + slide);
       size_t count = sec->size / sizeof(void*);
+      if (strcmp(sec->sectname, "__thread_vars") == 0) {
+        // Where the weak-patched TLV binds zeroed the descriptor thunks
+        // (10.6), install the shim's bootstrap; on 10.7+ dyld bound the
+        // system TLV runtime and the thunks stay untouched.
+        void** thunks = (void**)slots;
+        void* tlvBootstrap = dlsym(aShim, "__tlv_bootstrap");
+        mprotect(slots, (sec->size + 4095) & ~4095UL, PROT_READ | PROT_WRITE);
+        for (size_t k = 0; k < count / 3 && tlvBootstrap; k++) {
+          if (!thunks[k * 3]) {
+            thunks[k * 3] = tlvBootstrap;
+          }
+        }
+        continue;
+      }
       if (strcmp(sec->sectname, "__objc_selrefs") == 0) {
         // The old ObjC runtime never canonicalized this image's selector
         // references; the CDM also passes embedded name strings directly.
@@ -346,6 +360,73 @@ void FixupCDMImage(void* aShim, const char* aLibPath) {
   }
 }
 
+// dyld on 10.6 cannot bind the CDM's thread-local descriptor thunks (the
+// bind throws even when the symbol is available; 10.7+ binds them against
+// libSystem's TLV runtime). Marking those two bind entries weak makes the
+// bind silently zero them; FixupCDMImage installs our thunk afterwards.
+// Writing the one-byte flags edits into a sibling copy keeps the CDM file
+// itself untouched. Returns null when no patch is needed or it fails; the
+// caller then loads the original path.
+char* PatchCDMForTLV(const char* aLibPath) {
+  static const char* kNames[2] = {"__tlv_bootstrap", "__tlv_atexit"};
+  int fd = open(aLibPath, O_RDONLY);
+  if (fd < 0) {
+    return nullptr;
+  }
+  struct stat st;
+  if (fstat(fd, &st) != 0 || st.st_size < 0x1000 || st.st_size > 0x8000000) {
+    close(fd);
+    return nullptr;
+  }
+  size_t size = st.st_size;
+  unsigned char* data = (unsigned char*)malloc(size);
+  if (!data || read(fd, data, size) != (ssize_t)size) {
+    free(data);
+    close(fd);
+    return nullptr;
+  }
+  close(fd);
+
+  int patched = 0;
+  for (size_t n = 0; n < sizeof(kNames) / sizeof(kNames[0]); n++) {
+    size_t len = strlen(kNames[n]);
+    const unsigned char* p = data;
+    const unsigned char* end = data + size;
+    while ((p = (const unsigned char*)memmem(p, end - p, kNames[n], len)) &&
+           p + len < end && p[len] == 0) {
+      // The SET_SYMBOL_TRAILING_FLAGS opcode (0x40 | flags) directly
+      // precedes the name; flags 0x01 is a weak import.
+      if (p > data && (p[-1] & 0xf0) == 0x40 && (p[-1] & 0x0f) == 0) {
+        ((unsigned char*)p)[-1] = 0x41;
+        patched++;
+      }
+      p += len;
+    }
+  }
+  if (!patched) {
+    free(data);
+    return nullptr;
+  }
+
+  size_t outLen = strlen(aLibPath) + 32;
+  char* out = (char*)malloc(outLen);
+  if (!out) {
+    free(data);
+    return nullptr;
+  }
+  snprintf(out, outLen, "%s.legacy", aLibPath);
+  int outFd = open(out, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  if (outFd < 0 || write(outFd, data, size) != (ssize_t)size) {
+    close(outFd);
+    free(data);
+    free(out);
+    return nullptr;
+  }
+  close(outFd);
+  free(data);
+  return out;
+}
+
 PRLibrary* LoadCDMWithLegacySupport(const PRLibSpec& aSpec,
                                     const char* aLibPath) {
   void* shim = CDMShim();
@@ -356,12 +437,18 @@ PRLibrary* LoadCDMWithLegacySupport(const PRLibSpec& aSpec,
   if (!setvar) {
     return nullptr;
   }
+  char* patchedPath = PatchCDMForTLV(aLibPath);
+  const char* loadPath = patchedPath ? patchedPath : aLibPath;
+  PRLibSpec spec = aSpec;
+  spec.value.pathname = loadPath;
+
   setvar("DYLD_FORCE_FLAT_NAMESPACE", "1");
-  PRLibrary* lib = PR_LoadLibraryWithFlags(aSpec, PR_LD_NOW);
+  PRLibrary* lib = PR_LoadLibraryWithFlags(spec, PR_LD_NOW);
   setvar("DYLD_FORCE_FLAT_NAMESPACE", "0");
   if (lib) {
-    FixupCDMImage(shim, aLibPath);
+    FixupCDMImage(shim, loadPath);
   }
+  free(patchedPath);
   return lib;
 }
 

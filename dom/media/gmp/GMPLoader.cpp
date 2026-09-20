@@ -238,11 +238,15 @@ bool IsObjCSendSlotName(const char* aName) {
 }
 
 void FixupCDMImage(void* aShim, const char* aLibPath) {
+  const char* base = strrchr(aLibPath, '/');
+  base = base ? base + 1 : aLibPath;
   const mach_header_64* hdr = nullptr;
   intptr_t slide = 0;
   for (uint32_t i = 0; i < _dyld_image_count(); i++) {
     const char* name = _dyld_get_image_name(i);
-    if (name && strcmp(name, aLibPath) == 0) {
+    if (name && (strcmp(name, aLibPath) == 0 ||
+                 (strstr(name, base) && strlen(name) >= strlen(base) &&
+                  strcmp(name + strlen(name) - strlen(base), base) == 0))) {
       hdr = (const mach_header_64*)_dyld_get_image_header(i);
       slide = _dyld_get_image_vmaddr_slide(i);
       break;

@@ -23,6 +23,22 @@
 #ifdef XP_WIN
 #  include <windows.h>
 #endif
+#ifdef XP_MACOSX
+#  include <dlfcn.h>
+#  include <fcntl.h>
+#  include <limits.h>
+#  include <mach-o/dyld.h>
+#  include <mach-o/fat.h>
+#  include <mach-o/loader.h>
+#  include <mach-o/nlist.h>
+#  include <mach/mach.h>
+#  include <objc/objc.h>
+#  include <objc/runtime.h>
+#  include <string.h>
+#  include <sys/mman.h>
+#  include <sys/stat.h>
+#  include <unistd.h>
+#endif
 
 namespace mozilla::gmp {
 class PassThroughGMPAdapter : public GMPAdapter {
@@ -77,6 +93,265 @@ class PassThroughGMPAdapter : public GMPAdapter {
  private:
   PRLibrary* mLib = nullptr;
 };
+
+#ifdef XP_MACOSX
+namespace {
+
+// Widevine CDMs are built for modern macOS. On pre-10.12 systems the plain
+// load fails: the CDM hard-imports os_log-era libSystem symbols, and its
+// ObjC metadata uses patterns old runtimes don't process. The shim dylib
+// next to XUL fills the symbol gaps; loading with dyld's flat namespace
+// flipped on makes the CDM bind against it, and the fixups below repair
+// its selector references and message-send slots.
+
+void* CDMShim() {
+  static void* sShim = nullptr;
+  static bool sTried = false;
+  if (sTried) {
+    return sShim;
+  }
+  sTried = true;
+  Dl_info info;
+  if (dladdr((void*)&CDMShim, &info) && info.dli_fname) {
+    char path[PATH_MAX];
+    size_t len = strlen(info.dli_fname);
+    const char* slash = strrchr(info.dli_fname, '/');
+    if (slash && len + 32 < sizeof(path)) {
+      memcpy(path, info.dli_fname, slash + 1 - info.dli_fname);
+      strcpy(path + (slash + 1 - info.dli_fname),
+             "libWidevineLegacyShim.dylib");
+      sShim = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
+    }
+  }
+  return sShim;
+}
+
+typedef void (*DyldSetVarFn)(const char*, const char*);
+
+DyldSetVarFn FindDyldSetVariable() {
+  // dyld >= 239.4 (macOS 10.9) has a static _dyld_set_variable(key, value)
+  // that re-processes one DYLD_ variable at runtime. Resolve it through the
+  // on-disk symbol table, relocated by dyld's runtime base.
+  int fd = open("/usr/lib/dyld", O_RDONLY);
+  if (fd < 0) {
+    return nullptr;
+  }
+  struct stat st;
+  if (fstat(fd, &st) != 0 || st.st_size < 0x1000) {
+    close(fd);
+    return nullptr;
+  }
+  unsigned char* data = (unsigned char*)malloc(st.st_size);
+  if (!data || read(fd, data, st.st_size) != st.st_size) {
+    free(data);
+    close(fd);
+    return nullptr;
+  }
+  close(fd);
+
+  const unsigned char* mh = data;
+  uint32_t magic;
+  memcpy(&magic, mh, 4);
+  if (OSSwapBigToHostInt32(magic) == FAT_MAGIC) {
+    uint32_t nfat;
+    memcpy(&nfat, mh + 4, 4);
+    nfat = OSSwapBigToHostInt32(nfat);
+    const unsigned char* fa = mh + 8;
+    for (uint32_t i = 0; i < nfat; i++, fa += 20) {
+      int32_t cputype;
+      memcpy(&cputype, fa, 4);
+      if (OSSwapBigToHostInt32(cputype) == CPU_TYPE_X86_64) {
+        uint32_t off;
+        memcpy(&off, fa + 8, 4);
+        mh = data + OSSwapBigToHostInt32(off);
+        break;
+      }
+    }
+  }
+  memcpy(&magic, mh, 4);
+  if (magic != MH_MAGIC_64) {
+    free(data);
+    return nullptr;
+  }
+
+  uint32_t ncmds;
+  memcpy(&ncmds, mh + 16, 4);
+  const unsigned char* lc = mh + 32;
+  uint64_t textvm = 0;
+  uint64_t symval = 0;
+  const symtab_command* symtab = nullptr;
+  for (uint32_t i = 0; i < ncmds; i++) {
+    uint32_t cmd, cmdsize;
+    memcpy(&cmd, lc, 4);
+    memcpy(&cmdsize, lc + 4, 4);
+    if (cmd == LC_SEGMENT_64) {
+      char segname[17];
+      memcpy(segname, lc + 8, 16);
+      segname[16] = 0;
+      if (strcmp(segname, SEG_TEXT) == 0) {
+        memcpy(&textvm, lc + 24, 8);
+      }
+    } else if (cmd == LC_SYMTAB) {
+      symtab = (const symtab_command*)lc;
+    }
+    lc += cmdsize;
+  }
+  if (symtab && textvm) {
+    const nlist_64* syms = (const nlist_64*)(mh + symtab->symoff);
+    const char* strs = (const char*)(mh + symtab->stroff);
+    for (uint32_t k = 0; k < symtab->nsyms; k++) {
+      if (syms[k].n_un.n_strx < symtab->strsize &&
+          strcmp(strs + syms[k].n_un.n_strx,
+                 "__ZL18_dyld_set_variablePKcS0_") == 0) {
+        symval = syms[k].n_value;
+        break;
+      }
+    }
+  }
+  free(data);
+  if (!symval || !textvm) {
+    return nullptr;
+  }
+
+  task_t task = mach_task_self();
+  struct task_dyld_info ti;
+  mach_msg_type_number_t count = TASK_DYLD_INFO_COUNT;
+  if (task_info(task, TASK_DYLD_INFO, (task_info_t)&ti, &count) !=
+      KERN_SUCCESS) {
+    return nullptr;
+  }
+  // struct dyld_all_image_infos: dyldImageLoadAddress sits at offset 0x20.
+  uint64_t dyldHeader;
+  memcpy(&dyldHeader, (const void*)(ti.all_image_info_addr + 0x20), 8);
+  long slide = (long)dyldHeader - (long)textvm;
+  if (labs(slide) > 0x10000000 || (long)dyldHeader < 0) {
+    return nullptr;
+  }
+  return (DyldSetVarFn)(uintptr_t)(symval + slide);
+}
+
+bool IsObjCSendSlotName(const char* aName) {
+  return strcmp(aName, "_objc_msgSend") == 0 ||
+         strcmp(aName, "_objc_msgSend_stret") == 0 ||
+         strcmp(aName, "_objc_msgSend_fpret") == 0 ||
+         strcmp(aName, "_objc_msgSendSuper") == 0;
+}
+
+void FixupCDMImage(void* aShim, const char* aLibPath) {
+  const mach_header_64* hdr = nullptr;
+  intptr_t slide = 0;
+  for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+    const char* name = _dyld_get_image_name(i);
+    if (name && strcmp(name, aLibPath) == 0) {
+      hdr = (const mach_header_64*)_dyld_get_image_header(i);
+      slide = _dyld_get_image_vmaddr_slide(i);
+      break;
+    }
+  }
+  if (!hdr) {
+    return;
+  }
+
+  const load_command* lc = (const load_command*)(hdr + 1);
+  const symtab_command* symtab = nullptr;
+  const dysymtab_command* dysym = nullptr;
+  uint64_t linkeditRuntime = 0;
+  for (uint32_t i = 0; i < hdr->ncmds;
+       i++, lc = (const load_command*)((const char*)lc + lc->cmdsize)) {
+    if (lc->cmd == LC_SYMTAB) {
+      symtab = (const symtab_command*)lc;
+    } else if (lc->cmd == LC_DYSYMTAB) {
+      dysym = (const dysymtab_command*)lc;
+    } else if (lc->cmd == LC_SEGMENT_64) {
+      const segment_command_64* sg = (const segment_command_64*)lc;
+      if (strncmp(sg->segname, SEG_LINKEDIT, 16) == 0) {
+        linkeditRuntime = sg->vmaddr + slide - sg->fileoff;
+      }
+    }
+  }
+  if (!symtab || !linkeditRuntime) {
+    return;
+  }
+  const nlist_64* syms = (const nlist_64*)(linkeditRuntime + symtab->symoff);
+  const char* strs = (const char*)(linkeditRuntime + symtab->stroff);
+  const uint32_t* indirect =
+      dysym ? (const uint32_t*)(linkeditRuntime + dysym->indirectsymoff)
+            : nullptr;
+
+  lc = (const load_command*)(hdr + 1);
+  for (uint32_t i = 0; i < hdr->ncmds;
+       i++, lc = (const load_command*)((const char*)lc + lc->cmdsize)) {
+    if (lc->cmd != LC_SEGMENT_64) {
+      continue;
+    }
+    const segment_command_64* sg = (const segment_command_64*)lc;
+    if (strncmp(sg->segname, "__DATA", 6) != 0) {
+      continue;
+    }
+    const section_64* sec = (const section_64*)((const char*)sg + sizeof(*sg));
+    for (uint32_t s = 0; s < sg->nsects; s++, sec++) {
+      void* slots = (void*)(uintptr_t)(sec->addr + slide);
+      size_t count = sec->size / sizeof(void*);
+      if (strcmp(sec->sectname, "__objc_selrefs") == 0) {
+        // The old ObjC runtime never canonicalized this image's selector
+        // references; the CDM also passes embedded name strings directly.
+        mprotect(slots, (sec->size + 4095) & ~4095UL, PROT_READ | PROT_WRITE);
+        SEL* refs = (SEL*)slots;
+        for (size_t k = 0; k < count; k++) {
+          if (refs[k]) {
+            refs[k] = sel_registerName((const char*)refs[k]);
+          }
+        }
+        continue;
+      }
+      uint32_t type = sec->flags & SECTION_TYPE;
+      if (!indirect || (type != S_LAZY_SYMBOL_POINTERS &&
+                        type != S_NON_LAZY_SYMBOL_POINTERS)) {
+        continue;
+      }
+      mprotect(slots, (sec->size + 4095) & ~4095UL, PROT_READ | PROT_WRITE);
+      void** ptrs = (void**)slots;
+      for (size_t k = 0; k < count; k++) {
+        uint32_t idx = indirect[sec->reserved1 + k];
+        if (idx == INDIRECT_SYMBOL_ABS || idx == INDIRECT_SYMBOL_LOCAL) {
+          continue;
+        }
+        if (idx >= symtab->nsyms) {
+          continue;
+        }
+        const char* name = strs + syms[idx].n_un.n_strx;
+        if (IsObjCSendSlotName(name)) {
+          void* hook = dlsym(aShim, name + 1);
+          if (hook) {
+            ptrs[k] = hook;
+          }
+        }
+      }
+    }
+  }
+}
+
+PRLibrary* LoadCDMWithLegacySupport(const PRLibSpec& aSpec,
+                                    const char* aLibPath) {
+  void* shim = CDMShim();
+  if (!shim) {
+    return nullptr;
+  }
+  DyldSetVarFn setvar = FindDyldSetVariable();
+  if (!setvar) {
+    return nullptr;
+  }
+  setvar("DYLD_FORCE_FLAT_NAMESPACE", "1");
+  PRLibrary* lib = PR_LoadLibraryWithFlags(aSpec, PR_LD_NOW);
+  setvar("DYLD_FORCE_FLAT_NAMESPACE", "0");
+  if (lib) {
+    FixupCDMImage(shim, aLibPath);
+  }
+  return lib;
+}
+
+}  // namespace
+#endif  // XP_MACOSX
 
 #if defined(XP_WIN) && defined(MOZ_SANDBOX)
 // This performs the same checks for an AppLocker policy that are performed in
@@ -215,6 +490,11 @@ bool GMPLoader::Load(const char* aUTF8LibPath, uint32_t aUTF8LibPathLen,
   libSpec.type = PR_LibSpec_Pathname;
 #endif
   PRLibrary* lib = PR_LoadLibraryWithFlags(libSpec, 0);
+  if (!lib) {
+#ifdef XP_MACOSX
+    lib = LoadCDMWithLegacySupport(libSpec, aUTF8LibPath);
+#endif
+  }
   if (!lib) {
     MOZ_CRASH_UNSAFE_PRINTF("Cannot load plugin as library %d %d",
                             PR_GetError(), PR_GetOSError());

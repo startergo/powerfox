@@ -437,6 +437,32 @@ PRLibrary* LoadCDMWithLegacySupport(const PRLibSpec& aSpec,
   if (!setvar) {
     return nullptr;
   }
+  // The CDM hard-depends on LocalAuthentication, CryptoTokenKit,
+  // libpmenergy and libpmsample, which only exist from 10.10 on. Stub
+  // copies ship in the bundle; dyld's fallback search paths (settable
+  // through the same dyld helper) resolve the dependencies from there on
+  // older systems.
+  Dl_info info;
+  if (dladdr((void*)&LoadCDMWithLegacySupport, &info) && info.dli_fname) {
+    char libDir[PATH_MAX], fwDir[PATH_MAX], fwFile[PATH_MAX];
+    size_t len = strlen(info.dli_fname);
+    const char* slash = strrchr(info.dli_fname, '/');
+    if (slash && slash + 2 < info.dli_fname + len &&
+        len + 64 < sizeof(libDir)) {
+      memcpy(libDir, info.dli_fname, slash - info.dli_fname);
+      libDir[slash - info.dli_fname] = 0;
+      snprintf(fwFile, sizeof(fwFile),
+               "%s/../Frameworks/"
+               "LocalAuthentication.framework",
+               libDir);
+      struct stat fwst;
+      if (stat(fwFile, &fwst) == 0) {
+        snprintf(fwDir, sizeof(fwDir), "%s/../Frameworks", libDir);
+        setvar("DYLD_FALLBACK_FRAMEWORK_PATH", fwDir);
+        setvar("DYLD_FALLBACK_LIBRARY_PATH", libDir);
+      }
+    }
+  }
   char* patchedPath = PatchCDMForTLV(aLibPath);
   const char* loadPath = patchedPath ? patchedPath : aLibPath;
   PRLibSpec spec = aSpec;

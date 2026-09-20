@@ -167,6 +167,12 @@ jobs:
           tools/legacy-macos/widevine-cdm-support/build.sh
           cp tools/legacy-macos/dist-10.7/widevine/libWidevineLegacyShim.dylib \
             Nightly.app/Contents/MacOS/
+          cp tools/legacy-macos/dist-10.7/widevine/libpm*.dylib \
+            Nightly.app/Contents/MacOS/
+          mkdir -p Nightly.app/Contents/Frameworks
+          cp -R tools/legacy-macos/dist-10.7/widevine/LocalAuthentication.framework \
+            tools/legacy-macos/dist-10.7/widevine/CryptoTokenKit.framework \
+            Nightly.app/Contents/Frameworks/
           # 10.7/10.8 ship a libc++ far too old for this tree, so every OS
           # this artifact targets loads the bundled 10.7-floor libc++
           # through @rpath — the same shape as the official binaries

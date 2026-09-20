@@ -117,11 +117,27 @@ kern_return_t shim_mach_port_construct(mach_port_t task,
                                         const struct mach_port_options* options,
                                         mach_port_context_t context,
                                         mach_port_t* port) {
-  kern_return_t kr = mach_port_allocate(task, MACH_PORT_RIGHT_RECEIVE, port);
-  if (kr != KERN_SUCCESS || !context) {
+  mach_port_t name;
+  kern_return_t kr = mach_port_allocate(task, MACH_PORT_RIGHT_RECEIVE, &name);
+  if (kr != KERN_SUCCESS) {
     return kr;
   }
-  return mach_port_set_context(task, *port, context);
+  if (options && (options->flags & MPO_INSERT_SEND_RIGHT)) {
+    kr = mach_port_insert_right(task, name, name, MACH_MSG_TYPE_MAKE_SEND);
+    if (kr != KERN_SUCCESS) {
+      mach_port_destroy(task, name);
+      return kr;
+    }
+  }
+  if (context) {
+    kr = mach_port_set_context(task, name, context);
+    if (kr != KERN_SUCCESS) {
+      mach_port_destroy(task, name);
+      return kr;
+    }
+  }
+  *port = name;
+  return KERN_SUCCESS;
 }
 kern_return_t shim_mach_port_destruct(mach_port_t task, mach_port_t name,
                                       mach_port_delta_t srdelta,
@@ -196,8 +212,9 @@ void objc_destroyWeak(id* addr) { objc_storeStrong(addr, 0); }
 id objc_loadWeak(id* addr) { return *addr; }
 id objc_loadWeakRetained(id* addr) { return objc_retain(*addr); }
 void objc_copyWeak(id* dest, id* src) {
-  objc_initWeak(dest, objc_loadWeakRetained(src));
-  objc_destroyWeak(src);
+  id obj = objc_loadWeakRetained(src);
+  objc_initWeak(dest, obj);
+  objc_release(obj);
 }
 void objc_setProperty_nonatomic(id self, SEL sel, id value,
                                 ptrdiff_t offset) {
@@ -230,7 +247,27 @@ struct tlv_image_block {
 };
 
 static pthread_key_t g_tlv_key;
+static pthread_key_t g_tlv_terms_key;
 static pthread_once_t g_tlv_once = PTHREAD_ONCE_INIT;
+
+struct tlv_term {
+  void (*func)(void*);
+  void* obj;
+};
+struct tlv_term_list {
+  size_t n, cap;
+  struct tlv_term* v;
+};
+
+static void tlv_terms_free(void* p) {
+  struct tlv_term_list* l = p;
+  if (!l) return;
+  for (size_t i = l->n; i > 0; i--) {
+    l->v[i - 1].func(l->v[i - 1].obj);
+  }
+  free(l->v);
+  free(l);
+}
 
 static void tlv_thread_free(void* head) {
   struct tlv_image_block* b = head;
@@ -242,7 +279,10 @@ static void tlv_thread_free(void* head) {
   }
 }
 
-static void tlv_key_init(void) { pthread_key_create(&g_tlv_key, tlv_thread_free); }
+static void tlv_key_init(void) {
+  pthread_key_create(&g_tlv_terms_key, tlv_terms_free);
+  pthread_key_create(&g_tlv_key, tlv_thread_free);
+}
 
 static void tlv_locate(const struct tlv_descriptor* aDesc, const void** aTmpl,
                        size_t* aTmplSize, size_t* aBssSize,
@@ -312,7 +352,25 @@ void* __tlv_bootstrap(struct tlv_descriptor* d) {
   return (char*)block + d->offset;
 }
 
-void __tlv_atexit(void (*func)(void*), void* obj) {}
+void __tlv_atexit(void (*func)(void*), void* obj) {
+  pthread_once(&g_tlv_once, tlv_key_init);
+  struct tlv_term_list* l = pthread_getspecific(g_tlv_terms_key);
+  if (!l) {
+    l = calloc(1, sizeof(*l));
+    if (!l) return;
+    pthread_setspecific(g_tlv_terms_key, l);
+  }
+  if (l->n == l->cap) {
+    size_t cap = l->cap ? l->cap * 2 : 4;
+    struct tlv_term* v = realloc(l->v, cap * sizeof(*v));
+    if (!v) return;
+    l->v = v;
+    l->cap = cap;
+  }
+  l->v[l->n].func = func;
+  l->v[l->n].obj = obj;
+  l->n++;
+}
 
 
 // The __atomic_* libcall family ships in libSystem only from ~10.12 (and in
@@ -329,7 +387,13 @@ void __tlv_atexit(void (*func)(void*), void* obj) {}
   T __atomic_fetch_and_##N(T* p, T v) { return __sync_fetch_and_and(p, v); } \
   T __atomic_fetch_or_##N(T* p, T v) { return __sync_fetch_and_or(p, v); } \
   T __atomic_fetch_xor_##N(T* p, T v) { return __sync_fetch_and_xor(p, v); } \
-  T __atomic_fetch_nand_##N(T* p, T v) { T o = *p; __sync_synchronize(); *p = ~o & v; return o; } \
+  T __atomic_fetch_nand_##N(T* p, T v) {                                      \
+    T o = *p;                                                                 \
+    do {                                                                      \
+      T d = ~(o & v);                                                         \
+      if (__atomic_compare_exchange_n(p, &o, d, 0, 5, 5)) return o;           \
+    } while (1);                                                              \
+  } \
   bool __atomic_compare_exchange_##N(T* p, T* e, T d) {                      \
     return __atomic_compare_exchange_n(p, e, d, 0, 5, 5);                       \
   }
@@ -338,6 +402,8 @@ ATOMIC_N(1, uint8_t)
 ATOMIC_N(2, uint16_t)
 ATOMIC_N(4, uint32_t)
 ATOMIC_N(8, uint64_t)
+
+static pthread_mutex_t g_big_atomic_lock = PTHREAD_MUTEX_INITIALIZER;
 
 struct __atomic16 { unsigned long long a, b; };
 
@@ -378,9 +444,15 @@ void shim_atomic_load(uint64_t size, const void* ptr, void* ret, int order) {
   else if (size == 2) *(uint16_t*)ret = __atomic_load_2((const uint16_t*)ptr);
   else if (size <= 4) *(uint32_t*)ret = __atomic_load_4((const uint32_t*)ptr);
   else if (size <= 8) *(uint64_t*)ret = __atomic_load_8((const uint64_t*)ptr);
-  else {
+  else if (size == 16) {
     struct __atomic16 r = __atomic_load_16((const struct __atomic16*)ptr);
-    memcpy(ret, &r, size);
+    memcpy(ret, &r, 16);
+  } else {
+    // Sizes the lock-free paths can't serve exactly; a lock is the only
+    // correct emulation.
+    pthread_mutex_lock(&g_big_atomic_lock);
+    memcpy(ret, ptr, size);
+    pthread_mutex_unlock(&g_big_atomic_lock);
   }
 }
 void shim_atomic_store(uint64_t size, void* ptr, const void* val, int order)
@@ -390,7 +462,12 @@ void shim_atomic_store(uint64_t size, void* ptr, const void* val, int order) {
   else if (size == 2) __atomic_store_2((uint16_t*)ptr, *(const uint16_t*)val);
   else if (size <= 4) __atomic_store_4((uint32_t*)ptr, *(const uint32_t*)val);
   else if (size <= 8) __atomic_store_8((uint64_t*)ptr, *(const uint64_t*)val);
-  else __atomic_store_16((void*)ptr, *(const struct __atomic16*)val);
+  else if (size == 16) __atomic_store_16((void*)ptr, *(const struct __atomic16*)val);
+  else {
+    pthread_mutex_lock(&g_big_atomic_lock);
+    memcpy(ptr, val, size);
+    pthread_mutex_unlock(&g_big_atomic_lock);
+  }
 }
 void shim_atomic_exchange(uint64_t size, void* ptr, const void* val, void* ret,
                           int order) __asm("___atomic_exchange");
@@ -401,9 +478,14 @@ void shim_atomic_exchange(uint64_t size, void* ptr, const void* val, void* ret,
     else if (size == 2) *(uint16_t*)ret = __atomic_exchange_2((uint16_t*)ptr, *(const uint16_t*)val);
     else if (size <= 4) *(uint32_t*)ret = __atomic_exchange_4((uint32_t*)ptr, *(const uint32_t*)val);
     else *(uint64_t*)ret = __atomic_exchange_8((uint64_t*)ptr, *(const uint64_t*)val);
-  } else {
+  } else if (size == 16) {
     struct __atomic16 r = __atomic_exchange_16((void*)ptr, *(const struct __atomic16*)val);
-    memcpy(ret, &r, size);
+    memcpy(ret, &r, 16);
+  } else {
+    pthread_mutex_lock(&g_big_atomic_lock);
+    memcpy(ret, ptr, size);
+    memcpy((void*)ptr, val, size);
+    pthread_mutex_unlock(&g_big_atomic_lock);
   }
 }
 bool shim_atomic_cas(uint64_t size, void* ptr, void* expected,
@@ -417,7 +499,15 @@ bool shim_atomic_cas(uint64_t size, void* ptr, void* expected,
     if (size <= 4) return __atomic_compare_exchange_4((uint32_t*)ptr, (uint32_t*)expected, *(const uint32_t*)desired);
     return __atomic_compare_exchange_8((uint64_t*)ptr, (uint64_t*)expected, *(const uint64_t*)desired);
   }
-  return cas16((void*)ptr, (void*)expected, *(const struct __atomic16*)desired);
+  if (size == 16) {
+    return cas16((void*)ptr, (void*)expected, *(const struct __atomic16*)desired);
+  }
+  pthread_mutex_lock(&g_big_atomic_lock);
+  bool eq = memcmp(ptr, expected, size) == 0;
+  if (eq) memcpy(ptr, desired, size);
+  else memcpy(expected, ptr, size);
+  pthread_mutex_unlock(&g_big_atomic_lock);
+  return eq;
 }
 
 void shim_atomic_thread_fence(int order) __asm("___atomic_thread_fence");

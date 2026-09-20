@@ -367,6 +367,19 @@ void FixupCDMImage(void* aShim, const char* aLibPath) {
 // Writing the one-byte flags edits into a sibling copy keeps the CDM file
 // itself untouched. Returns null when no patch is needed or it fails; the
 // caller then loads the original path.
+const unsigned char* FindBytes(const unsigned char* aHaystack, size_t aHayLen,
+                               const char* aNeedle, size_t aNeedleLen) {
+  if (aNeedleLen == 0 || aHayLen < aNeedleLen) {
+    return nullptr;
+  }
+  for (size_t i = 0; i + aNeedleLen <= aHayLen; i++) {
+    if (memcmp(aHaystack + i, aNeedle, aNeedleLen) == 0) {
+      return aHaystack + i;
+    }
+  }
+  return nullptr;
+}
+
 char* PatchCDMForTLV(const char* aLibPath) {
   static const char* kNames[2] = {"__tlv_bootstrap", "__tlv_atexit"};
   int fd = open(aLibPath, O_RDONLY);
@@ -392,8 +405,8 @@ char* PatchCDMForTLV(const char* aLibPath) {
     size_t len = strlen(kNames[n]);
     const unsigned char* p = data;
     const unsigned char* end = data + size;
-    while ((p = (const unsigned char*)memmem(p, end - p, kNames[n], len)) &&
-           p + len < end && p[len] == 0) {
+    while ((p = FindBytes(p, end - p, kNames[n], len)) && p + len < end &&
+           p[len] == 0) {
       // The SET_SYMBOL_TRAILING_FLAGS opcode (0x40 | flags) directly
       // precedes the name; flags 0x01 is a weak import.
       if (p > data && (p[-1] & 0xf0) == 0x40 && (p[-1] & 0x0f) == 0) {

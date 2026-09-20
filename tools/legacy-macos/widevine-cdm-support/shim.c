@@ -253,6 +253,7 @@ static pthread_once_t g_tlv_once = PTHREAD_ONCE_INIT;
 // block instead of crashing on key 0.
 static int g_tlv_shared = 0;
 static void* g_tlv_shared_block;
+static pthread_mutex_t g_tlv_shared_lock = PTHREAD_MUTEX_INITIALIZER;
 
 struct tlv_term {
   void (*func)(void*);
@@ -327,6 +328,7 @@ static void tlv_locate(const struct tlv_descriptor* aDesc, const void** aTmpl,
 void* __tlv_bootstrap(struct tlv_descriptor* d) {
   pthread_once(&g_tlv_once, tlv_key_init);
   if (g_tlv_shared) {
+    pthread_mutex_lock(&g_tlv_shared_lock);
     if (!g_tlv_shared_block) {
       const void* tmpl2 = 0;
       const void* vars2 = 0;
@@ -337,7 +339,9 @@ void* __tlv_bootstrap(struct tlv_descriptor* d) {
         memcpy(g_tlv_shared_block, tmpl2, ts);
       }
     }
-    return (char*)g_tlv_shared_block + d->offset;
+    void* block = g_tlv_shared_block;
+    pthread_mutex_unlock(&g_tlv_shared_lock);
+    return (char*)block + d->offset;
   }
   struct tlv_image_block* head = pthread_getspecific(g_tlv_key);
 

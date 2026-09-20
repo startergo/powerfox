@@ -57,6 +57,7 @@ export RANLIB=/usr/bin/ranlib
 export RUSTFLAGS="-Ztls-model=emulated --cfg=pfx_pre_10_7_sdk"
 export RUSTC="$topsrcdir/tools/legacy-macos/rustc-emutls"
 # Let the stable toolchain accept the -Z flags above (and -Zbuild-std in the
-# objdir cargo config).
-mk_add_options RUSTC_BOOTSTRAP=1
+# objdir cargo config). The rustc-emutls wrapper sets this too; the export
+# covers any unwrapped rustc invocation.
+export RUSTC_BOOTSTRAP=1
 ac_add_options --disable-install-strip

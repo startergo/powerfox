@@ -249,6 +249,10 @@ struct tlv_image_block {
 static pthread_key_t g_tlv_key;
 static pthread_key_t g_tlv_terms_key;
 static pthread_once_t g_tlv_once = PTHREAD_ONCE_INIT;
+// Set when pthread keys are exhausted; TLS then resolves to one shared
+// block instead of crashing on key 0.
+static int g_tlv_shared = 0;
+static void* g_tlv_shared_block;
 
 struct tlv_term {
   void (*func)(void*);
@@ -280,8 +284,10 @@ static void tlv_thread_free(void* head) {
 }
 
 static void tlv_key_init(void) {
-  pthread_key_create(&g_tlv_terms_key, tlv_terms_free);
-  pthread_key_create(&g_tlv_key, tlv_thread_free);
+  if (pthread_key_create(&g_tlv_terms_key, tlv_terms_free) != 0 ||
+      pthread_key_create(&g_tlv_key, tlv_thread_free) != 0) {
+    g_tlv_shared = 1;
+  }
 }
 
 static void tlv_locate(const struct tlv_descriptor* aDesc, const void** aTmpl,
@@ -320,6 +326,19 @@ static void tlv_locate(const struct tlv_descriptor* aDesc, const void** aTmpl,
 
 void* __tlv_bootstrap(struct tlv_descriptor* d) {
   pthread_once(&g_tlv_once, tlv_key_init);
+  if (g_tlv_shared) {
+    if (!g_tlv_shared_block) {
+      const void* tmpl2 = 0;
+      const void* vars2 = 0;
+      size_t ts = 0, bs = 0;
+      tlv_locate(d, &tmpl2, &ts, &bs, &vars2);
+      g_tlv_shared_block = calloc(1, ts + bs ? ts + bs : 1);
+      if (tmpl2 && ts) {
+        memcpy(g_tlv_shared_block, tmpl2, ts);
+      }
+    }
+    return (char*)g_tlv_shared_block + d->offset;
+  }
   struct tlv_image_block* head = pthread_getspecific(g_tlv_key);
 
   const void* tmpl = 0;
@@ -354,6 +373,7 @@ void* __tlv_bootstrap(struct tlv_descriptor* d) {
 
 void __tlv_atexit(void (*func)(void*), void* obj) {
   pthread_once(&g_tlv_once, tlv_key_init);
+  if (g_tlv_shared) return;
   struct tlv_term_list* l = pthread_getspecific(g_tlv_terms_key);
   if (!l) {
     l = calloc(1, sizeof(*l));

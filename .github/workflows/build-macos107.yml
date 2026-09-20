@@ -11,6 +11,9 @@ on:
   push:
     branches: ["10.7-backporting"]
 
+permissions:
+  actions: write
+
 jobs:
   build:
     name: build 10.7-10.14 x86_64
@@ -184,6 +187,23 @@ jobs:
             -fs HFS+ -format UDBZ -imagekey zlib-level=9 \
             "powerfox-${VERSION}_macOS10.7-10.14.dmg"
           zip -qr "powerfox-${VERSION}_macOS10.7-10.14.zip" Nightly.app
+
+      - name: Prune stale cache generations
+        # Per-run cache keys (mozbuild/sccache) bank a fresh ~1.3 GB
+        # generation every run while only the newest is ever restored; the
+        # 10 GiB quota then evicts the other branch's less-frequently-used
+        # entries (sccache106 was wiped this way, forcing cold 10.6 builds).
+        # Keep only the newest generation per prefix.
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh cache list --repo "$GITHUB_REPOSITORY" --limit 100 \
+            --json key,createdAt --jq 'sort_by(.createdAt) | group_by(.key | sub("-[0-9]+$"; "")) | .[] | .[:-1][] | .key' \
+            | while read -r K; do
+                echo "pruning $K"
+                gh cache delete "$K" --repo "$GITHUB_REPOSITORY" || true
+              done
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7

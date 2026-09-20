@@ -20,8 +20,11 @@ make_fw() {
   NAME="$1" SRC="$2" EXTRA="$3"
   FW="$OUT/$NAME.framework"
   mkdir -p "$FW/Versions/A/Resources"
+  # The CDM enforces compatibility versions on its dependencies; mirror the
+  # real 10.10-era numbers so dyld accepts the stubs.
   cc -arch x86_64 -mmacosx-version-min=10.7 -dynamiclib $EXTRA \
     -install_name "/System/Library/Frameworks/$NAME.framework/Versions/A/$NAME" \
+    -Wl,-compatibility_version,1.0.0 -Wl,-current_version,1.0.0 \
     -o "$FW/Versions/A/$NAME" "$SRC" -lobjc -framework Foundation
   ln -sf A "$FW/Versions/Current"
   ln -sf Versions/Current/$NAME "$FW/$NAME"
@@ -36,6 +39,7 @@ make_fw CryptoTokenKit "$OUT/empty.c" ""
 for PM in libpmenergy libpmsample; do
   cc -arch x86_64 -mmacosx-version-min=10.7 -dynamiclib \
     -install_name "/usr/lib/$PM.dylib" \
+    -Wl,-compatibility_version,1.0.0 -Wl,-current_version,2.0.0 \
     -o "$OUT/$PM.dylib" "$OUT/empty.c"
 done
 rm -f "$OUT/empty.c"

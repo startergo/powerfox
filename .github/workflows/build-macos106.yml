@@ -223,6 +223,18 @@ jobs:
           # Real 10.6 has no /usr/lib/libc++.1.dylib; load the bundled
           # darwin10 libc++ through @rpath instead.
           tools/legacy-macos/rpath-libcxx-10.6.sh Nightly.app
+          # Legacy Widevine CDM support: GMPLoader loads this next to XUL
+          # when a GMP dylib fails the plain load, plus the stub
+          # frameworks/dylibs the CDM hard-depends on.
+          tools/legacy-macos/widevine-cdm-support/build.sh \
+            tools/legacy-macos/dist/widevine
+          cp tools/legacy-macos/dist/widevine/libWidevineLegacyShim.dylib \
+            tools/legacy-macos/dist/widevine/libpm*.dylib \
+            Nightly.app/Contents/MacOS/
+          mkdir -p Nightly.app/Contents/Frameworks
+          cp -R tools/legacy-macos/dist/widevine/LocalAuthentication.framework \
+            tools/legacy-macos/dist/widevine/CryptoTokenKit.framework \
+            Nightly.app/Contents/Frameworks/
           hdiutil create -volname Nightly -srcfolder Nightly.app \
             -fs HFS+ -format UDBZ -imagekey zlib-level=9 \
             "powerfox-${VERSION}_macOS10.6.dmg"

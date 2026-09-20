@@ -6,7 +6,7 @@ set -e
 DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 OUT="${1:-$DIR/../dist-10.7/widevine}"
 mkdir -p "$OUT"
-cc -arch x86_64 -mmacosx-version-min=10.7 -dynamiclib \
+cc -arch x86_64 -mcx16 -mmacosx-version-min=10.7 -dynamiclib \
   -Wl,-reexport_library,/usr/lib/libSystem.B.dylib \
   -Wl,-current_version,1351.0.0 -Wl,-compatibility_version,1.0.0 \
   -install_name @loader_path/libWidevineLegacyShim.dylib \

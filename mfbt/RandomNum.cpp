@@ -83,10 +83,13 @@ static_assert(GRND_NONBLOCK == 1,
 
 namespace mozilla {
 
-#if defined(XP_DARWIN) && \
+#if defined(XP_DARWIN) &&               \
     (!defined(MAC_OS_X_VERSION_10_7) || \
      MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7)
-// Present in 10.6's libSystem but not declared in its SDK headers.
+// Not exported by 10.6's libSystem (arc4random_buf first shipped in 10.7) and
+// not declared in its SDK headers; this declaration matches the strong
+// definition in tools/legacy-macos/compat-10.6.c that mozconfig-macos106
+// force-loads into every link.
 extern "C" void arc4random_buf(void* __buf, size_t __n);
 #endif
 

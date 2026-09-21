@@ -121,6 +121,15 @@ void* CDMShim() {
       strcpy(path + (slash + 1 - info.dli_fname),
              "libWidevineLegacyShim.dylib");
       sShim = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
+      if (sShim) {
+        // The shim creates its TLS keys in a constructor; this explicit
+        // call covers shim builds predating that.
+        typedef void (*InitFn)(void);
+        InitFn init = (InitFn)dlsym(sShim, "WidevineLegacyShimInit");
+        if (init) {
+          init();
+        }
+      }
     }
   }
   return sShim;

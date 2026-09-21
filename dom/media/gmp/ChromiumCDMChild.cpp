@@ -17,6 +17,10 @@
 #include "WidevineVideoFrame.h"
 #include "base/time.h"
 #include "mozilla/ScopeExit.h"
+
+#ifdef XP_MACOSX
+#  include "nsCocoaFeatures.h"
+#endif
 #include "nsPrintfCString.h"
 #include "nsReadableUtils.h"
 
@@ -599,14 +603,14 @@ mozilla::ipc::IPCResult ChromiumCDMChild::RecvGetStatusForPolicy(
 #ifdef XP_MACOSX
   // The CDM's HDCP policy evaluation wedges its worker thread on pre-10.10
   // libSystem (it dies holding the global pthread lock, hanging every
-  // subsequent pthread call in the process). The host knows the display
-  // path; answer from here and never enter that code.
-  if (mCDM) {
-    mCDM->OnResolveKeyStatusPromise(
-        aPromiseId,
-        aMinHdcpVersion == cdm::kHdcpVersionNone
-            ? cdm::KeyStatus::kUsable
-            : cdm::KeyStatus::kOutputRestricted);
+  // subsequent pthread call in the process). Answer from the host there --
+  // these match what the CDM reports where its evaluation does run -- and
+  // let the CDM evaluate policy itself on 10.10 and later.
+  if (mCDM && !nsCocoaFeatures::OnYosemiteOrLater()) {
+    mCDM->OnResolveKeyStatusPromise(aPromiseId,
+                                    aMinHdcpVersion == cdm::kHdcpVersionNone
+                                        ? cdm::KeyStatus::kUsable
+                                        : cdm::KeyStatus::kOutputRestricted);
     return IPC_OK();
   }
 #endif

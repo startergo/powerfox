@@ -318,9 +318,28 @@ static void tlv_locate(const struct tlv_descriptor* aDesc, const void** aTmpl,
     return;
   }
   const struct mach_header_64* hdr = (const struct mach_header_64*)di.dli_fbase;
-  intptr_t slide = _dyld_get_image_vmaddr_slide(
-      _dyld_image_containing_address((void*)aDesc));
   const struct load_command* lc = (const struct load_command*)(hdr + 1);
+  // Position-independent images carry a zero __TEXT vmaddr, so a found
+  // flag replaces a nonzero check for the slide base.
+  uintptr_t textvm = 0;
+  int textFound = 0;
+  for (uint32_t i = 0; i < hdr->ncmds;
+       i++, lc = (const struct load_command*)((const char*)lc + lc->cmdsize)) {
+    if (lc->cmd != LC_SEGMENT_64) {
+      continue;
+    }
+    const struct segment_command_64* sg = (const struct segment_command_64*)lc;
+    if (!strcmp(sg->segname, SEG_TEXT)) {
+      textvm = sg->vmaddr;
+      textFound = 1;
+      break;
+    }
+  }
+  if (!textFound) {
+    return;
+  }
+  intptr_t slide = (uintptr_t)hdr - (intptr_t)textvm;
+  lc = (const struct load_command*)(hdr + 1);
   for (uint32_t i = 0; i < hdr->ncmds;
        i++, lc = (const struct load_command*)((const char*)lc + lc->cmdsize)) {
     if (lc->cmd != LC_SEGMENT_64) {
@@ -344,19 +363,72 @@ static void tlv_locate(const struct tlv_descriptor* aDesc, const void** aTmpl,
   }
 }
 
+static uintptr_t tlv_image_extent(const void* aAddr) {
+  Dl_info di;
+  if (!dladdr((void*)aAddr, &di) || !di.dli_fbase) {
+    return 0;
+  }
+  const struct mach_header_64* hdr = (const struct mach_header_64*)di.dli_fbase;
+  intptr_t slide = 0;
+  uintptr_t end = 0;
+  const struct load_command* lc = (const struct load_command*)(hdr + 1);
+  for (uint32_t i = 0; i < hdr->ncmds;
+       i++, lc = (const struct load_command*)((const char*)lc + lc->cmdsize)) {
+    if (lc->cmd != LC_SEGMENT_64) {
+      continue;
+    }
+    const struct segment_command_64* sg = (const struct segment_command_64*)lc;
+    if (!strcmp(sg->segname, SEG_TEXT)) {
+      slide = (uintptr_t)hdr - (intptr_t)sg->vmaddr;
+    }
+  }
+  lc = (const struct load_command*)(hdr + 1);
+  for (uint32_t i = 0; i < hdr->ncmds;
+       i++, lc = (const struct load_command*)((const char*)lc + lc->cmdsize)) {
+    if (lc->cmd != LC_SEGMENT_64) {
+      continue;
+    }
+    const struct segment_command_64* sg = (const struct segment_command_64*)lc;
+    uintptr_t segEnd = (uintptr_t)(sg->vmaddr + sg->vmsize + slide);
+    if (segEnd > end) {
+      end = segEnd;
+    }
+  }
+  return end;
+}
+
 static void tlv_resolve(const struct tlv_descriptor* d) {
   pthread_mutex_lock(&g_tlv_info_lock);
   if (!g_tlv_info.resolved) {
+    Dl_info di3;
+    const char* di_f =
+        dladdr((void*)d, &di3) && di3.dli_fname ? di3.dli_fname : NULL;
     tlv_locate(d, &g_tlv_info.tmpl, &g_tlv_info.ts, &g_tlv_info.bs,
                &g_tlv_info.vars);
     size_t total = g_tlv_info.ts + g_tlv_info.bs;
-    g_tlv_info.valid = g_tlv_info.vars && total > 0 && total <= 4096 &&
-                       (g_tlv_info.ts == 0 || g_tlv_info.tmpl);
+    uintptr_t base = (uintptr_t)d;
+    g_tlv_info.valid = 0;
+    if (g_tlv_info.vars && total > 0 && total <= 4096 &&
+        (g_tlv_info.ts == 0 || g_tlv_info.tmpl)) {
+      uintptr_t lo = (uintptr_t)0, hi = tlv_image_extent(d);
+      Dl_info di2;
+      if (hi && dladdr((void*)d, &di2) && di2.dli_fbase) {
+        lo = (uintptr_t)di2.dli_fbase;
+        int vars_ok = (uintptr_t)g_tlv_info.vars >= lo &&
+                      (uintptr_t)g_tlv_info.vars < hi;
+        int tmpl_ok = g_tlv_info.ts == 0 ||
+                      ((uintptr_t)g_tlv_info.tmpl >= lo &&
+                       (uintptr_t)g_tlv_info.tmpl < hi);
+        g_tlv_info.valid = vars_ok && tmpl_ok;
+      }
+    }
     g_tlv_info.resolved = 1;
     if (!g_tlv_info.valid) {
-      fprintf(stderr, "tlv: invalid layout vars=%p tmpl=%p ts=%zu bs=%zu\n",
-              g_tlv_info.vars, g_tlv_info.tmpl, g_tlv_info.ts,
-              g_tlv_info.bs);
+      fprintf(stderr,
+              "tlv: invalid layout desc=%p image=%s vars=%p tmpl=%p ts=%zu "
+              "bs=%zu\n",
+              (void*)d, di_f ? di_f : "?", g_tlv_info.vars, g_tlv_info.tmpl,
+              g_tlv_info.ts, g_tlv_info.bs);
     }
   }
   pthread_mutex_unlock(&g_tlv_info_lock);

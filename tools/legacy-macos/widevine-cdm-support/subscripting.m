@@ -29,11 +29,8 @@
 
 @implementation NSMutableArray (LegacySubscripting)
 - (void)setObject:(id)obj atIndexedSubscript:(NSUInteger)idx {
-  NSUInteger count = [self count];
-  if (idx < count) {
-    [self replaceObjectAtIndex:idx withObject:obj];
-  } else if (idx == count) {
-    [self addObject:obj];
-  }
+  // Match NSMutableArray semantics: out-of-range indices raise, they are
+  // never silently dropped.
+  [self replaceObjectAtIndex:idx withObject:obj];
 }
 @end

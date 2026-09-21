@@ -607,10 +607,10 @@ mozilla::ipc::IPCResult ChromiumCDMChild::RecvGetStatusForPolicy(
   // these match what the CDM reports where its evaluation does run -- and
   // let the CDM evaluate policy itself on 10.10 and later.
   if (mCDM && !nsCocoaFeatures::OnYosemiteOrLater()) {
-    mCDM->OnResolveKeyStatusPromise(aPromiseId,
-                                    aMinHdcpVersion == cdm::kHdcpVersionNone
-                                        ? cdm::KeyStatus::kUsable
-                                        : cdm::KeyStatus::kOutputRestricted);
+    OnResolveKeyStatusPromise(aPromiseId,
+                              aMinHdcpVersion == cdm::kHdcpVersionNone
+                                  ? cdm::KeyStatus::kUsable
+                                  : cdm::KeyStatus::kOutputRestricted);
     return IPC_OK();
   }
 #endif

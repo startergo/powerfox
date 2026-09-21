@@ -19,7 +19,6 @@
 #include "mozilla/ScopeExit.h"
 
 #ifdef XP_MACOSX
-#  include "GMPLoader.h"
 #  include "nsCocoaFeatures.h"
 #endif
 #include "nsPrintfCString.h"
@@ -297,11 +296,6 @@ void ChromiumCDMChild::OnSessionMessage(const char* aSessionId,
                                         uint32_t aMessageSize) {
   GMP_LOG_DEBUG("ChromiumCDMChild::OnSessionMessage(sid={}, type={} size={})",
                 aSessionId, static_cast<int>(aMessageType), aMessageSize);
-#ifdef XP_MACOSX
-  // Late enough that the CDM's identity table is decrypted, early enough
-  // that its next license request is signed with the rewritten value.
-  PatchWidevineArchIdentity();
-#endif
   if (NS_WARN_IF(
           !IPC::CDMMessageTypeEnumValidator::IsLegalValue(aMessageType))) {
     GMP_LOG_DEBUG("ChromiumCDMChild::OnSessionMessage: unhandled message {}",
@@ -486,9 +480,6 @@ mozilla::ipc::IPCResult ChromiumCDMChild::RecvInit(
     mCDM->Initialize(aAllowDistinctiveIdentifier, aAllowPersistentState,
                      // We do not yet support hardware secure codecs
                      false);
-#ifdef XP_MACOSX
-    PatchWidevineArchIdentity();
-#endif
   } else {
     GMP_LOG_DEBUG(
         "ChromiumCDMChild::RecvInit() mCDM not set! Is GMP shutting down?");
@@ -521,9 +512,6 @@ mozilla::ipc::IPCResult ChromiumCDMChild::RecvCreateSessionAndGenerateRequest(
       aPromiseId, static_cast<uint32_t>(aSessionType),
       static_cast<uint32_t>(aInitDataType), aInitData.Length());
   if (mCDM) {
-#ifdef XP_MACOSX
-    PatchWidevineArchIdentity();
-#endif
     mCDM->CreateSessionAndGenerateRequest(aPromiseId, aSessionType,
                                           aInitDataType, aInitData.Elements(),
                                           aInitData.Length());

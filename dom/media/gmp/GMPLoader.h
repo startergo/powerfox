@@ -74,12 +74,6 @@ class GMPLoader {
   UniquePtr<GMPAdapter> mAdapter;
 };
 
-#ifdef XP_MACOSX
-// Rewrites the Widevine CDM's decrypted x86-64 identity string to arm64 so
-// its license requests are built and signed as a supported architecture.
-void PatchWidevineArchIdentity();
-#endif
-
 }  // namespace mozilla::gmp
 
 #endif  // GMP_LOADER_H_

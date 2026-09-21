@@ -32,7 +32,6 @@
 #  include <mach-o/loader.h>
 #  include <mach-o/nlist.h>
 #  include <mach/mach.h>
-#  include <mach/mach_vm.h>
 #  include <objc/objc.h>
 #  include <objc/runtime.h>
 #  include <string.h>
@@ -502,55 +501,6 @@ PRLibrary* LoadCDMWithLegacySupport(const PRLibSpec& aSpec,
 }
 
 }  // namespace
-#endif  // XP_MACOSX
-
-#ifdef XP_MACOSX
-// The x86 Widevine CDM reports "x86-64" as its license requests'
-// architecture_name: a compiled-in constant decrypted into a heap table at
-// first use, and the only machine identity the request carries (its bytes are
-// otherwise identical across OS versions). Services that have dropped x86 Mac
-// clients reject the license on it. Rewrite the decrypted string to the arm64
-// value before the CDM builds and signs its next request; hits are scoped by
-// requiring the table's sibling client_info strings on the same page so no
-// unrelated "x86-64" bytes are touched. The table persists, so the first
-// request of a session may race the rewrite while later ones cannot.
-void PatchWidevineArchIdentity() {
-  mach_vm_address_t addr = 0;
-  mach_vm_size_t size = 0;
-  for (;;) {
-    vm_region_basic_info_data_64_t info;
-    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-    mach_port_t object;
-    if (mach_vm_region(mach_task_self(), &addr, &size, VM_REGION_BASIC_INFO_64,
-                       (vm_region_info_t)&info, &count,
-                       &object) != KERN_SUCCESS) {
-      return;
-    }
-    if ((info.protection & VM_PROT_WRITE) && size < 0x8000000) {
-      unsigned char* base = (unsigned char*)addr;
-      for (size_t o = 0; o + 6 <= size; o++) {
-        if (memcmp(base + o, "x86-64", 6) != 0) {
-          continue;
-        }
-        uintptr_t pageStart = (uintptr_t)(base + o) & ~(uintptr_t)4095;
-        size_t pageAvail = addr + size - (mach_vm_address_t)pageStart;
-        size_t pageLen = pageAvail < 4096 ? pageAvail : 4096;
-        if (!FindBytes((const unsigned char*)pageStart, pageLen, "MacOSX", 6) &&
-            !FindBytes((const unsigned char*)pageStart, pageLen, "ChromeCDM",
-                       9)) {
-          continue;
-        }
-        base[o] = 'a';
-        base[o + 1] = 'r';
-        base[o + 2] = 'm';
-        base[o + 3] = '6';
-        base[o + 4] = '4';
-        base[o + 5] = 0;
-      }
-    }
-    addr += size;
-  }
-}
 #endif  // XP_MACOSX
 
 #if defined(XP_WIN) && defined(MOZ_SANDBOX)

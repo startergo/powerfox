@@ -596,6 +596,20 @@ mozilla::ipc::IPCResult ChromiumCDMChild::RecvGetStatusForPolicy(
   GMP_LOG_DEBUG(
       "ChromiumCDMChild::RecvGetStatusForPolicy(pid={}, MinHdcpVersion={})",
       aPromiseId, static_cast<uint32_t>(aMinHdcpVersion));
+#ifdef XP_MACOSX
+  // The CDM's HDCP policy evaluation wedges its worker thread on pre-10.10
+  // libSystem (it dies holding the global pthread lock, hanging every
+  // subsequent pthread call in the process). The host knows the display
+  // path; answer from here and never enter that code.
+  if (mCDM) {
+    mCDM->OnResolveKeyStatusPromise(
+        aPromiseId,
+        aMinHdcpVersion == cdm::kHdcpVersionNone
+            ? cdm::KeyStatus::kUsable
+            : cdm::KeyStatus::kOutputRestricted);
+    return IPC_OK();
+  }
+#endif
   if (mCDM) {
     cdm::Policy policy;
     policy.min_hdcp_version = aMinHdcpVersion;

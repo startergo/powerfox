@@ -253,6 +253,18 @@ static pthread_once_t g_tlv_once = PTHREAD_ONCE_INIT;
 // block instead of crashing on key 0.
 static int g_tlv_shared = 0;
 static void* g_tlv_shared_block;
+static pthread_mutex_t g_tlv_shared_lock = PTHREAD_MUTEX_INITIALIZER;
+// TLS layout of the CDM image, resolved once; a botched section walk can
+// yield garbage sizes, so the result is validated and cached.
+static struct {
+  const void* vars;
+  const void* tmpl;
+  size_t ts, bs;
+  int resolved;
+  int valid;
+} g_tlv_info;
+static pthread_mutex_t g_tlv_info_lock = PTHREAD_MUTEX_INITIALIZER;
+static char g_tlv_zero_block[4096];
 
 struct tlv_term {
   void (*func)(void*);
@@ -324,30 +336,47 @@ static void tlv_locate(const struct tlv_descriptor* aDesc, const void** aTmpl,
   }
 }
 
+static void tlv_resolve(const struct tlv_descriptor* d) {
+  pthread_mutex_lock(&g_tlv_info_lock);
+  if (!g_tlv_info.resolved) {
+    tlv_locate(d, &g_tlv_info.tmpl, &g_tlv_info.ts, &g_tlv_info.bs,
+               &g_tlv_info.vars);
+    size_t total = g_tlv_info.ts + g_tlv_info.bs;
+    g_tlv_info.valid = g_tlv_info.vars && total > 0 && total <= 4096 &&
+                       (g_tlv_info.ts == 0 || g_tlv_info.tmpl);
+    g_tlv_info.resolved = 1;
+    if (!g_tlv_info.valid) {
+      fprintf(stderr, "tlv: invalid layout vars=%p tmpl=%p ts=%zu bs=%zu\n",
+              g_tlv_info.vars, g_tlv_info.tmpl, g_tlv_info.ts,
+              g_tlv_info.bs);
+    }
+  }
+  pthread_mutex_unlock(&g_tlv_info_lock);
+}
+
 void* __tlv_bootstrap(struct tlv_descriptor* d) {
   pthread_once(&g_tlv_once, tlv_key_init);
+  tlv_resolve(d);
+  if (!g_tlv_info.valid || d->offset >= sizeof(g_tlv_zero_block)) {
+    return g_tlv_zero_block;
+  }
   if (g_tlv_shared) {
+    pthread_mutex_lock(&g_tlv_shared_lock);
     if (!g_tlv_shared_block) {
-      const void* tmpl2 = 0;
-      const void* vars2 = 0;
-      size_t ts = 0, bs = 0;
-      tlv_locate(d, &tmpl2, &ts, &bs, &vars2);
-      g_tlv_shared_block = calloc(1, ts + bs ? ts + bs : 1);
-      if (tmpl2 && ts) {
-        memcpy(g_tlv_shared_block, tmpl2, ts);
+      g_tlv_shared_block = calloc(1, g_tlv_info.ts + g_tlv_info.bs);
+      if (g_tlv_info.tmpl && g_tlv_info.ts) {
+        memcpy(g_tlv_shared_block, g_tlv_info.tmpl, g_tlv_info.ts);
       }
     }
-    return (char*)g_tlv_shared_block + d->offset;
+    void* block = g_tlv_shared_block;
+    pthread_mutex_unlock(&g_tlv_shared_lock);
+    return (char*)block + d->offset;
   }
   struct tlv_image_block* head = pthread_getspecific(g_tlv_key);
 
-  const void* tmpl = 0;
-  const void* vars = 0;
-  size_t tmplSize = 0, bssSize = 0;
-  tlv_locate(d, &tmpl, &tmplSize, &bssSize, &vars);
-  if (!vars) {
-    return 0;
-  }
+  const void* tmpl = g_tlv_info.tmpl;
+  const void* vars = g_tlv_info.vars;
+  size_t tmplSize = g_tlv_info.ts, bssSize = g_tlv_info.bs;
   for (struct tlv_image_block* b = head; b; b = b->next) {
     if (b->vars == vars) {
       return (char*)b->block + d->offset;

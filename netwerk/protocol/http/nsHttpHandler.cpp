@@ -1216,13 +1216,12 @@ void nsHttpHandler::InitUserAgentComponents() {
 #  endif
 
 #elif defined(XP_MACOSX)
-  int32_t majorVersion = nsCocoaFeatures::macOSVersionMajor();
-  int32_t minorVersion = nsCocoaFeatures::macOSVersionMinor();
-
-  // Cap the reported macOS version at 10.15 (like Safari) to avoid breaking
-  // sites that assume the UA's macOS version always begins with "10.".
-  int32_t uaVersion =
-      (majorVersion >= 11 || minorVersion > 15) ? 15 : minorVersion;
+  // Report the frozen 10.15 on every system: current Firefox caps the
+  // reported macOS version at 10.15 (like Safari) so the UA never claims
+  // an 11+ numbering, and reporting an older true version (e.g. 10.6 on
+  // this build's deployment targets) gets the browser gated out by
+  // services that only know the frozen value.
+  int32_t uaVersion = 15;
 
   // Always return an "Intel" UA string, even on ARM64 macOS like Safari does.
   mOscpu = nsPrintfCString("Intel Mac OS X 10.%d", uaVersion);

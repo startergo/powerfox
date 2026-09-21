@@ -438,7 +438,10 @@ void* __tlv_bootstrap(struct tlv_descriptor* d) {
   pthread_once(&g_tlv_once, tlv_key_init);
   tlv_resolve(d);
   if (!g_tlv_info.valid || d->offset >= sizeof(g_tlv_zero_block)) {
-    return g_tlv_zero_block;
+    // Degraded path (validated to never trigger on a loadable CDM):
+    // keep distinct variables at distinct addresses so they don't alias.
+    return g_tlv_zero_block +
+           (d->offset < sizeof(g_tlv_zero_block) ? d->offset : 0);
   }
   if (g_tlv_shared) {
     pthread_mutex_lock(&g_tlv_shared_lock);
@@ -481,8 +484,8 @@ void* __tlv_bootstrap(struct tlv_descriptor* d) {
   b->block = block;
   b->next = head;
   if (pthread_setspecific(g_tlv_key, b) != 0) {
-    // Per-thread storage unavailable; degrade to one shared block rather
-    // than re-allocating on every access.
+    // Per-thread storage unavailable; latch shared mode so later accesses
+    // take the shared path instead of re-allocating and discarding.
     if (!g_tlv_shared_block) {
       g_tlv_shared_block = block;
     } else {
@@ -490,6 +493,7 @@ void* __tlv_bootstrap(struct tlv_descriptor* d) {
     }
     free(b);
     block = g_tlv_shared_block;
+    g_tlv_shared = 1;
   }
   pthread_mutex_unlock(&g_tlv_shared_lock);
   return (char*)block + d->offset;

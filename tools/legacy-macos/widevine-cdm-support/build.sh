@@ -14,7 +14,7 @@ cc -arch x86_64 -mcx16 -mmacosx-version-min=10.7 -dynamiclib \
   -Wl,-current_version,1351.0.0 -Wl,-compatibility_version,1.0.0 \
   -install_name @loader_path/libWidevineLegacyShim.dylib \
   -o "$OUT/libWidevineLegacyShim.dylib" \
-  "$DIR/shim.c" "$DIR/hooks.s" -lobjc
+  "$DIR/shim.c" "$DIR/subscripting.m" "$DIR/hooks.s" -lobjc -framework Foundation
 
 make_fw() {
   NAME="$1" SRC="$2" EXTRA="$3"

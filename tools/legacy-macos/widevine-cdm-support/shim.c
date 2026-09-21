@@ -296,8 +296,12 @@ static void tlv_thread_free(void* head) {
 }
 
 static void tlv_key_init(void) {
-  if (pthread_key_create(&g_tlv_terms_key, tlv_terms_free) != 0 ||
-      pthread_key_create(&g_tlv_key, tlv_thread_free) != 0) {
+  // 10.6 pthread runs key destructors while holding the global pthread
+  // lock; running CDM destructors there can orphan that lock and wedge
+  // the process. Accept the bounded per-thread leak instead: keys with
+  // no destructor, terminators never invoked.
+  if (pthread_key_create(&g_tlv_terms_key, NULL) != 0 ||
+      pthread_key_create(&g_tlv_key, NULL) != 0) {
     g_tlv_shared = 1;
   }
 }

@@ -302,6 +302,14 @@ static void tlv_key_init(void) {
   }
 }
 
+// Called by GMPLoader right after dlopening the shim, before any CDM code
+// can run: creating the keys lazily from a CDM worker would let racing
+// threads see g_tlv_key == 0, which is a valid (foreign) key id, and their
+// per-thread lookups would miss forever.
+void WidevineLegacyShimInit(void) {
+  pthread_once(&g_tlv_once, tlv_key_init);
+}
+
 static void tlv_locate(const struct tlv_descriptor* aDesc, const void** aTmpl,
                        size_t* aTmplSize, size_t* aBssSize,
                        const void** aVars) {
@@ -383,12 +391,16 @@ void* __tlv_bootstrap(struct tlv_descriptor* d) {
     }
   }
   size_t total = tmplSize + bssSize;
+  pthread_mutex_lock(&g_tlv_shared_lock);
   void* block = calloc(1, total ? total : 1);
   struct tlv_image_block* b = malloc(sizeof(*b));
   if (!block || !b) {
     free(block);
     free(b);
-    return 0;
+    pthread_mutex_unlock(&g_tlv_shared_lock);
+    return (char*)g_tlv_zero_block + (d->offset < sizeof(g_tlv_zero_block)
+                                           ? d->offset
+                                           : 0);
   }
   if (tmpl && tmplSize) {
     memcpy(block, tmpl, tmplSize);
@@ -396,7 +408,18 @@ void* __tlv_bootstrap(struct tlv_descriptor* d) {
   b->vars = vars;
   b->block = block;
   b->next = head;
-  pthread_setspecific(g_tlv_key, b);
+  if (pthread_setspecific(g_tlv_key, b) != 0) {
+    // Per-thread storage unavailable; degrade to one shared block rather
+    // than re-allocating on every access.
+    if (!g_tlv_shared_block) {
+      g_tlv_shared_block = block;
+    } else {
+      free(block);
+    }
+    free(b);
+    block = g_tlv_shared_block;
+  }
+  pthread_mutex_unlock(&g_tlv_shared_lock);
   return (char*)block + d->offset;
 }
 
@@ -566,3 +589,10 @@ void shim_atomic_signal_fence(int order) { __asm__ volatile("" ::: "memory"); }
 bool shim_atomic_is_lock_free(uint64_t size, const void* ptr)
     __asm("___atomic_is_lock_free");
 bool shim_atomic_is_lock_free(uint64_t size, const void* ptr) { return size <= 16; }
+
+// Runs at dlopen, before any CDM thread exists: creating the TLS keys
+// lazily from a racing worker lets threads see g_tlv_key == 0 (a valid
+// foreign id) and miss their per-thread block forever.
+__attribute__((constructor)) static void init_tlv_keys(void) {
+  pthread_once(&g_tlv_once, tlv_key_init);
+}

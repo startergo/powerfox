@@ -48,7 +48,7 @@ void os_release(void* object) {}
 uint64_t clock_gettime_nsec_np(uint32_t clk) {
   static mach_timebase_info_data_t tb;
   if (tb.denom == 0) mach_timebase_info(&tb);
-  return mach_absolute_time() * tb.numer / tb.denom;
+  return (uint64_t)((__uint128_t)mach_absolute_time() * tb.numer / tb.denom);
 }
 
 extern void arc4random_buf(void*, size_t);

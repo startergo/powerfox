@@ -34,6 +34,7 @@
 #  include <mach/mach.h>
 #  include <objc/objc.h>
 #  include <objc/runtime.h>
+#  include <stdio.h>
 #  include <string.h>
 #  include <sys/mman.h>
 #  include <sys/stat.h>
@@ -493,6 +494,11 @@ PRLibrary* LoadCDMWithLegacySupport(const PRLibSpec& aSpec,
   setvar("DYLD_FORCE_FLAT_NAMESPACE", "1");
   PRLibrary* lib = PR_LoadLibraryWithFlags(spec, PR_LD_NOW);
   setvar("DYLD_FORCE_FLAT_NAMESPACE", "0");
+  fprintf(stderr,
+          "PF-DEBUG: legacy CDM load path=%s patched=%d flat-load=%s pr=%d "
+          "os=%d\n",
+          loadPath, patchedPath ? 1 : 0, lib ? "ok" : "FAIL", PR_GetError(),
+          PR_GetOSError());
   if (lib) {
     FixupCDMImage(shim, loadPath);
   }
@@ -642,6 +648,10 @@ bool GMPLoader::Load(const char* aUTF8LibPath, uint32_t aUTF8LibPathLen,
   PRLibrary* lib = PR_LoadLibraryWithFlags(libSpec, 0);
   if (!lib) {
 #ifdef XP_MACOSX
+    fprintf(stderr,
+            "PF-DEBUG: plain CDM load failed path=%s pr=%d os=%d dl=%s\n",
+            aUTF8LibPath, PR_GetError(), PR_GetOSError(),
+            dlerror() ? dlerror() : "(none)");
     lib = LoadCDMWithLegacySupport(libSpec, aUTF8LibPath);
 #endif
   }

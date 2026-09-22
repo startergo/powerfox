@@ -68,7 +68,7 @@ static INLINE void vpx_usec_timer_now(struct timespec *ts) {
   if (tb.denom == 0) {
     mach_timebase_info(&tb);
   }
-  now = mach_absolute_time() * tb.numer / tb.denom;
+  now = (uint64_t)((__uint128_t)mach_absolute_time() * tb.numer / tb.denom);
   ts->tv_sec = now / 1000000000;
   ts->tv_nsec = now % 1000000000;
 }

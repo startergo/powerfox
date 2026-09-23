@@ -45,6 +45,7 @@
 #include "nsXPCOM.h"
 #include "nsXPCOMPrivate.h"  // for XUL_DLL
 #include "nsXULAppAPI.h"
+#include "prenv.h"
 #include "prio.h"
 #ifdef XP_WIN
 #  include <stdlib.h>  // for _exit()
@@ -464,6 +465,24 @@ GMPChild::MakeCDMHostVerificationPaths(const nsACString& aPluginLibPath) {
   // Plugin binary path.
   paths.AppendElement(
       std::make_pair(nsCString(aPluginLibPath), aPluginLibPath + ".sig"_ns));
+
+  // Diagnostic only: when PF_VMP_SPOOF_DIR points at another build's .app,
+  // present that build's host binaries and sigs for verification instead of
+  // ours, to test whether the CDM cross-checks the running process.
+  if (const char* spoofDir = PR_GetEnv("PF_VMP_SPOOF_DIR")) {
+    nsCString dir(spoofDir);
+    nsTArray<std::pair<nsCString, nsCString>> spoofPaths = {
+        {dir + "/Contents/MacOS/firefox"_ns,
+         dir + "/Contents/Resources/firefox.sig"_ns},
+        {dir + "/Contents/MacOS/XUL"_ns,
+         dir + "/Contents/Resources/XUL.sig"_ns},
+        {dir + "/Contents/MacOS/plugin-container.app/Contents/MacOS/"
+           "plugin-container"_ns,
+         dir + "/Contents/MacOS/plugin-container.app/Contents/Resources/"
+           "plugin-container.sig"_ns}};
+    paths.AppendElements(std::move(spoofPaths));
+    return paths;
+  }
 
   // Current process binary path.
   // Note: clang won't let us initialize an nsString from a wstring, so we

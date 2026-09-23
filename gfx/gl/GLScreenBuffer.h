@@ -77,6 +77,16 @@ class SwapChain final {
     }
   }
 
+  void EnablePool(size_t aLimit) {
+    MOZ_ASSERT(aLimit > 0);
+    if (mPoolLimit) {
+      MOZ_ASSERT(mPoolLimit == aLimit);
+      return;
+    }
+    MOZ_ASSERT(mPool.empty());
+    mPoolLimit = aLimit;
+  }
+
   void ClearPool();
   bool StoreRecycledSurface(const std::shared_ptr<SharedSurface>& surf);
   const auto& FrontBuffer() const { return mFrontBuffer; }

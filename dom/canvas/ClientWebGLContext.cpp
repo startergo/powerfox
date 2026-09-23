@@ -25,6 +25,9 @@
 #include "mozilla/ResultVariant.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_webgl.h"
+#if defined(XP_MACOSX)
+#  include <sys/sysctl.h>
+#endif
 #include "mozilla/dom/BufferSourceBinding.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/GeneratePlaceholderCanvasData.h"
@@ -506,6 +509,23 @@ webgl::SwapChainOptions ClientWebGLContext::PrepareAsyncSwapChainOptions(
   if (fb || webvr) {
     return options;
   }
+#if defined(XP_MACOSX)
+  // On few-core Macs, synchronous present provides natural IPC backpressure
+  // that throttles the rAF loop to sustainable throughput — the same effect
+  // UXP gets from its GPU-compositor bottleneck. Without it, the producer
+  // free-runs at 60fps which 2 cores cannot sustain.
+  static const bool sFewCore = []() {
+    int count = 0;
+    size_t len = sizeof(count);
+    sysctlbyname("hw.ncpu", &count, &len, nullptr, 0);
+    return count > 0 && count <= 2;
+  }();
+  if (sFewCore && !options.forceAsyncPresent) {
+    // Clear the current remote texture id so that we disable async.
+    mRemoteTextureOwnerId = Nothing();
+    return options;
+  }
+#endif
   if (!IsContextLost() && (options.forceAsyncPresent ||
                            StaticPrefs::webgl_out_of_process_async_present())) {
     if (!mRemoteTextureOwnerId) {

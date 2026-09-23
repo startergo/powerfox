@@ -63,10 +63,12 @@ mozilla::detail::MutexImpl::MutexImpl() {
                     "mozilla::detail::MutexImpl::MutexImpl: "
                     "pthread_mutexattr_settype failed");
 #  elif defined(POLICY_KIND)
-    if (__builtin_available(macOS 10.14, *)) {
-  TRY_CALL_PTHREADS(pthread_mutexattr_setpolicy_np(&attr, POLICY_KIND),
-                    "mozilla::detail::MutexImpl::MutexImpl: "
-                    "pthread_mutexattr_setpolicy_np failed");
+    // The private symbol exists on old systems (weak import: check it)
+    // but rejects the FIRSTFIT policy there; the policy is a performance
+    // nicety, so tolerate failure rather than crashing — the first mutex
+    // is constructed during static initialization.
+    if (&pthread_mutexattr_setpolicy_np != nullptr) {
+      (void)pthread_mutexattr_setpolicy_np(&attr, POLICY_KIND);
     }
 #  endif
   attrp = &attr;

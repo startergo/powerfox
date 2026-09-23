@@ -4,6 +4,9 @@
 
 #include "TaskController.h"
 #include "IdleTaskRunner.h"
+#include <pthread.h>
+#include <unistd.h>
+#include <cstdio>
 #include "nsIIdleRunnable.h"
 #include "nsIRunnable.h"
 #include "nsThreadUtils.h"
@@ -333,6 +336,57 @@ void ThreadFuncPoolThread(void* aData) {
   TaskController::Get()->RunPoolThread(thread);
 }
 
+// Diagnostic for the 10.6 RDD main-thread wedge: _pthread_cond_wait spins
+// forever trying to acquire the interlock at pthread_cond_t + 8 (the "COND"
+// signature sits at +0). A healthy interlock is only ever held for
+// microseconds, so one that reads nonzero across three 5s checks is the
+// anomaly. Dump the lock word, both canaries, and the raw cond bytes; the
+// word decodes as owner-held (inversion/missing unlock) vs garbage
+// (corruption), and the canaries separate stomps from logic bugs.
+static void PFHex(char* aOut, uint64_t aV) {
+  static const char kHex[] = "0123456789abcdef";
+  for (int i = 0; i < 16; i++) {
+    aOut[i] = kHex[(aV >> (60 - 4 * i)) & 0xf];
+  }
+}
+
+struct PFCVWatch {
+  const uint8_t* mCond;
+  const uint64_t* mCanary1;
+  const uint64_t* mCanary2;
+};
+static PFCVWatch sPFCVWatch;
+
+static void* PFCVWatchdog(void* aArg) {
+  const uint8_t* cond = static_cast<const uint8_t*>(aArg);
+  uint32_t held = 0;
+  for (;;) {
+    usleep(5 * 1000 * 1000);
+    if (*(const uint32_t volatile*)(cond + 8) != 0) {
+      if (++held >= 3) {
+        char b[512];
+        int n = 0;
+        n += snprintf(b + n, sizeof(b) - n, "%s", "PFCVDIAG lockword=");
+        PFHex(b + n, *(const uint32_t volatile*)(cond + 8)); n += 8;
+        n += snprintf(b + n, sizeof(b) - n, "%s", " canary1=");
+        PFHex(b + n, *sPFCVWatch.mCanary1); n += 16;
+        n += snprintf(b + n, sizeof(b) - n, "%s", " canary2=");
+        PFHex(b + n, *sPFCVWatch.mCanary2); n += 16;
+        n += snprintf(b + n, sizeof(b) - n, "%s", " cond=");
+        for (int i = 0; i < 32; i++) {
+          PFHex(b + n, *(const uint8_t volatile*)(cond + i)); n += 2;
+        }
+        n += snprintf(b + n, sizeof(b) - n, "%s", "
+");
+        Unused << write(2, b, n);
+        return nullptr;
+      }
+    } else {
+      held = 0;
+    }
+  }
+}
+
 TaskController::TaskController()
     : mGraphMutex("TaskController::mGraphMutex"),
       mMainThreadCV(mGraphMutex, "TaskController::mMainThreadCV"),
@@ -348,6 +402,14 @@ TaskController::TaskController()
   mMTBlockingProcessingRunnable = NS_NewRunnableFunction(
       "TaskController::ExecutePendingMTTasks()",
       []() { TaskController::Get()->ProcessPendingMTTask(true); });
+
+  sPFCVWatch = {static_cast<const uint8_t*>(mMainThreadCV.RawCondPtr()),
+                &mCvCanary1, &mCvCanary2};
+  pthread_t t;
+  if (pthread_create(&t, nullptr, PFCVWatchdog,
+                     const_cast<uint8_t*>(sPFCVWatch.mCond)) == 0) {
+    pthread_detach(t);
+  }
 }
 
 void TaskController::InitializeThreadPool() {

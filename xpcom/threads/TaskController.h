@@ -428,7 +428,9 @@ class TaskController {
   // thread, so no locking is needed to access this.
   std::vector<UniquePtr<PoolThread>> mPoolThreads;
 
+  uint64_t mCvCanary1 = 0x1122334455667788ULL;
   CondVar mMainThreadCV;
+  uint64_t mCvCanary2 = 0x99aabbccddeeff00ULL;
 
   // Variables below are protected by mGraphMutex.
 

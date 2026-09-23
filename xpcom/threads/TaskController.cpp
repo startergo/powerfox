@@ -7,6 +7,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <cstdio>
+#include "mozilla/Atomics.h"
 #include "nsIIdleRunnable.h"
 #include "nsIRunnable.h"
 #include "nsThreadUtils.h"
@@ -343,10 +344,13 @@ void ThreadFuncPoolThread(void* aData) {
 // anomaly. Dump the lock word, both canaries, and the raw cond bytes; the
 // word decodes as owner-held (inversion/missing unlock) vs garbage
 // (corruption), and the canaries separate stomps from logic bugs.
-static void PFHex(char* aOut, uint64_t aV) {
+#if defined(XP_MACOSX) && __MAC_OS_X_VERSION_MIN_REQUIRED < 1070
+static mozilla::Atomic<bool> sPFCVStopped(false);
+
+static void PFHex(char* aOut, uint64_t aV, int aChars) {
   static const char kHex[] = "0123456789abcdef";
-  for (int i = 0; i < 16; i++) {
-    aOut[i] = kHex[(aV >> (60 - 4 * i)) & 0xf];
+  for (int i = 0; i < aChars; i++) {
+    aOut[i] = kHex[(aV >> (4 * (aChars - 1 - i))) & 0xf];
   }
 }
 
@@ -360,24 +364,30 @@ static PFCVWatch sPFCVWatch;
 static void* PFCVWatchdog(void* aArg) {
   const uint8_t* cond = static_cast<const uint8_t*>(aArg);
   uint32_t held = 0;
-  for (;;) {
+  while (!sPFCVStopped) {
     usleep(5 * 1000 * 1000);
+    if (sPFCVStopped) {
+      return nullptr;
+    }
     if (*(const uint32_t volatile*)(cond + 8) != 0) {
       if (++held >= 3) {
         char b[512];
         int n = 0;
         n += snprintf(b + n, sizeof(b) - n, "%s", "PFCVDIAG lockword=");
-        PFHex(b + n, *(const uint32_t volatile*)(cond + 8)); n += 8;
+        PFHex(b + n, *(const uint32_t volatile*)(cond + 8), 8);
+        n += 8;
         n += snprintf(b + n, sizeof(b) - n, "%s", " canary1=");
-        PFHex(b + n, *sPFCVWatch.mCanary1); n += 16;
+        PFHex(b + n, *sPFCVWatch.mCanary1, 16);
+        n += 16;
         n += snprintf(b + n, sizeof(b) - n, "%s", " canary2=");
-        PFHex(b + n, *sPFCVWatch.mCanary2); n += 16;
+        PFHex(b + n, *sPFCVWatch.mCanary2, 16);
+        n += 16;
         n += snprintf(b + n, sizeof(b) - n, "%s", " cond=");
         for (int i = 0; i < 32; i++) {
-          PFHex(b + n, *(const uint8_t volatile*)(cond + i)); n += 2;
+          PFHex(b + n, *(const uint8_t volatile*)(cond + i), 2);
+          n += 2;
         }
-        n += snprintf(b + n, sizeof(b) - n, "%s", "
-");
+        n += snprintf(b + n, sizeof(b) - n, "%s", "\n");
         Unused << write(2, b, n);
         return nullptr;
       }
@@ -385,7 +395,9 @@ static void* PFCVWatchdog(void* aArg) {
       held = 0;
     }
   }
+  return nullptr;
 }
+#endif
 
 TaskController::TaskController()
     : mGraphMutex("TaskController::mGraphMutex"),
@@ -403,6 +415,7 @@ TaskController::TaskController()
       "TaskController::ExecutePendingMTTasks()",
       []() { TaskController::Get()->ProcessPendingMTTask(true); });
 
+#if defined(XP_MACOSX) && __MAC_OS_X_VERSION_MIN_REQUIRED < 1070
   sPFCVWatch = {static_cast<const uint8_t*>(mMainThreadCV.RawCondPtr()),
                 &mCvCanary1, &mCvCanary2};
   pthread_t t;
@@ -410,6 +423,7 @@ TaskController::TaskController()
                      const_cast<uint8_t*>(sPFCVWatch.mCond)) == 0) {
     pthread_detach(t);
   }
+#endif
 }
 
 void TaskController::InitializeThreadPool() {
@@ -444,6 +458,9 @@ void TaskController::SetPerformanceCounterState(
 
 /* static */
 void TaskController::Shutdown() {
+#if defined(XP_MACOSX) && __MAC_OS_X_VERSION_MIN_REQUIRED < 1070
+  sPFCVStopped = true;
+#endif
   InputTaskManager::Cleanup();
   VsyncTaskManager::Cleanup();
   if (sSingleton) {

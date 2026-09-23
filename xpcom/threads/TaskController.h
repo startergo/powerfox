@@ -428,9 +428,13 @@ class TaskController {
   // thread, so no locking is needed to access this.
   std::vector<UniquePtr<PoolThread>> mPoolThreads;
 
+#if defined(XP_MACOSX) && __MAC_OS_X_VERSION_MIN_REQUIRED < 1070
   uint64_t mCvCanary1 = 0x1122334455667788ULL;
   CondVar mMainThreadCV;
   uint64_t mCvCanary2 = 0x99aabbccddeeff00ULL;
+#else
+  CondVar mMainThreadCV;
+#endif
 
   // Variables below are protected by mGraphMutex.
 

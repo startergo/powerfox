@@ -242,7 +242,7 @@ jobs:
           hdiutil create -volname Nightly -srcfolder Nightly.app \
             -fs HFS+ -format UDBZ -imagekey zlib-level=9 \
             "powerfox-${VERSION}_macOS10.6.dmg"
-          zip -qr "powerfox-${VERSION}_macOS10.6.zip" Nightly.app
+          zip -qyr "powerfox-${VERSION}_macOS10.6.zip" Nightly.app
 
       - name: Prune stale cache generations
         # Per-run cache keys (mozbuild/sccache) bank a fresh ~1.3 GB

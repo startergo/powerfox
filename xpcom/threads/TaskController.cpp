@@ -344,7 +344,9 @@ void ThreadFuncPoolThread(void* aData) {
 // anomaly. Dump the lock word, both canaries, and the raw cond bytes; the
 // word decodes as owner-held (inversion/missing unlock) vs garbage
 // (corruption), and the canaries separate stomps from logic bugs.
-#if defined(XP_MACOSX) && __MAC_OS_X_VERSION_MIN_REQUIRED < 1070
+#if defined(XP_MACOSX) && \
+    (!defined(MAC_OS_X_VERSION_10_8) || \
+     MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8)
 static mozilla::Atomic<bool> sPFCVStopped(false);
 
 static void PFHex(char* aOut, uint64_t aV, int aChars) {
@@ -415,7 +417,9 @@ TaskController::TaskController()
       "TaskController::ExecutePendingMTTasks()",
       []() { TaskController::Get()->ProcessPendingMTTask(true); });
 
-#if defined(XP_MACOSX) && __MAC_OS_X_VERSION_MIN_REQUIRED < 1070
+#if defined(XP_MACOSX) && \
+    (!defined(MAC_OS_X_VERSION_10_8) || \
+     MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8)
   sPFCVWatch = {static_cast<const uint8_t*>(mMainThreadCV.RawCondPtr()),
                 &mCvCanary1, &mCvCanary2};
   pthread_t t;
@@ -458,7 +462,9 @@ void TaskController::SetPerformanceCounterState(
 
 /* static */
 void TaskController::Shutdown() {
-#if defined(XP_MACOSX) && __MAC_OS_X_VERSION_MIN_REQUIRED < 1070
+#if defined(XP_MACOSX) && \
+    (!defined(MAC_OS_X_VERSION_10_8) || \
+     MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8)
   sPFCVStopped = true;
 #endif
   InputTaskManager::Cleanup();

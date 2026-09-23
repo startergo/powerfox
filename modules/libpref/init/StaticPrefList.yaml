@@ -18867,6 +18867,8 @@
   value: true
   mirror: always
 
+# Disabled unconditionally so our client hello matches current Firefox's
+# suite composition; upstream gates this by channel.
 - name: security.ssl3.ecdhe_ecdsa_aes_256_sha
   type: RelaxedAtomicBool
   value: false

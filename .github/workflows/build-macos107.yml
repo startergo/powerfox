@@ -8,12 +8,6 @@ name: Build PowerFox 10.7+
 
 on:
   workflow_dispatch:
-    inputs:
-      mode:
-        description: 'modern = stock-like build (diagnostic; 10.15 floor, no polyfill)'
-        type: choice
-        default: legacy
-        options: [legacy, modern]
   push:
     branches: ["10.7-backporting"]
 
@@ -54,7 +48,6 @@ jobs:
         run: |
           rustup default stable
           rustup component add rust-src
-          rustup target add x86_64-apple-darwin
           rustc --version
           # Do NOT make rust-objcopy work here (e.g. by symlinking
           # libLLVM.dylib into its @rpath): mach strips rlibs with it after
@@ -71,7 +64,6 @@ jobs:
 
       - name: Restore support artifacts
         id: cache
-        if: inputs.mode != 'modern'
         uses: actions/cache/restore@v5
         with:
           path: tools/legacy-macos/dist-10.7
@@ -104,14 +96,14 @@ jobs:
           xcrun --sdk macosx --show-sdk-version
 
       - name: Build libc++ bundle and Rust std for the 10.7 floor
-        if: inputs.mode != 'modern' && steps.cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           SDK=$(xcrun --sdk macosx --show-sdk-path)
           tools/legacy-macos/build-libcxx.sh "$SDK" 10.7
           tools/legacy-macos/build-rust-std.sh 10.7
 
       - name: Save support artifacts
-        if: inputs.mode != 'modern' && steps.cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: tools/legacy-macos/dist-10.7
@@ -120,28 +112,13 @@ jobs:
       - name: Build
         env:
           MOZCONFIG: ${{ github.workspace }}/mozconfig-ci
-          MODE: ${{ inputs.mode }}
         run: |
           # Base mozconfig plus CI-only sccache for the C/C++ compilers
           # only: bootstrap's sccache 0.15 mis-caches rustc rlibs, which
           # then fail downstream with E0463 once restored. Fresh Rust
           # compiles are reliable and cheap, and the C/C++ cache entries
           # stay valid under the direct CC/CXX wrapper.
-          if [ "$MODE" = "modern" ]; then
-            # Diagnostic stock-like build: current toolchain defaults, no
-            # legacy runtime, sandbox on. Not shippable for 10.7-10.14.
-            sed -e 's|^ac_add_options --enable-macos-target=10.7|ac_add_options --enable-macos-target=10.15|' \
-                -e '/with-macos-sdk/d' \
-                -e '/enable-linker=ld-classic/d' \
-                -e '/disable-sandbox/d' \
-                -e '/LEGACY_CXX_RUNTIME_DIR/d' \
-                -e '/RUSTC=/d' \
-                -e '/RUSTC_BOOTSTRAP/d' \
-                -e '/^export MACOSX_DEPLOYMENT_TARGET=10.7/d' \
-                mozconfig-macos107 > mozconfig-ci
-          else
-            cp mozconfig-macos107 mozconfig-ci
-          fi
+          cp mozconfig-macos107 mozconfig-ci
           SCC="$HOME/.mozbuild/sccache/sccache"
           sed -i '' \
             -e "s|^export CC=\"/usr/bin/clang\"|export CC=\"$SCC /usr/bin/clang\"|" \
@@ -179,8 +156,6 @@ jobs:
         run: /usr/bin/python3 ./mach package
 
       - name: Polyfill and repackage
-        env:
-          MODE: ${{ inputs.mode }}
         run: |
           VERSION=$(cat browser/config/version.txt)
           # mach package stages much of the bundle as absolute symlinks into
@@ -188,36 +163,31 @@ jobs:
           # the polyfill's -type f find sees every executable).
           rm -rf Nightly.app
           cp -RL obj-x86_64-mac107/dist/Nightly.app Nightly.app
-          if [ "$MODE" != "modern" ]; then
-            tools/legacy-macos/polyfill-10.7.sh Nightly.app
-            # Legacy Widevine CDM support: GMPLoader loads this next to XUL
-            # when a GMP dylib fails the plain load on pre-10.12 systems.
-            # Copied after the polyfill so its libSystem reexport stays
-            # direct.
-            tools/legacy-macos/widevine-cdm-support/build.sh
-            cp tools/legacy-macos/dist-10.7/widevine/libWidevineLegacyShim.dylib \
-              Nightly.app/Contents/MacOS/
-            cp tools/legacy-macos/dist-10.7/widevine/libpm*.dylib \
-              Nightly.app/Contents/MacOS/
-            mkdir -p Nightly.app/Contents/Frameworks
-            cp -R tools/legacy-macos/dist-10.7/widevine/LocalAuthentication.framework \
-              tools/legacy-macos/dist-10.7/widevine/CryptoTokenKit.framework \
-              Nightly.app/Contents/Frameworks/
-            # 10.7/10.8 ship a libc++ far too old for this tree, so every OS
-            # this artifact targets loads the bundled 10.7-floor libc++
-            # through @rpath — the same shape as the official binaries
-            # (verified launching with the bundled 5.0.1 loaded).
-            tools/legacy-macos/rpath-libcxx-10.7.sh Nightly.app
-          fi
+          tools/legacy-macos/polyfill-10.7.sh Nightly.app
+          # Legacy Widevine CDM support: GMPLoader loads this next to XUL
+          # when a GMP dylib fails the plain load on pre-10.12 systems.
+          # Copied after the polyfill so its libSystem reexport stays
+          # direct.
+          tools/legacy-macos/widevine-cdm-support/build.sh
+          cp tools/legacy-macos/dist-10.7/widevine/libWidevineLegacyShim.dylib \
+            Nightly.app/Contents/MacOS/
+          cp tools/legacy-macos/dist-10.7/widevine/libpm*.dylib \
+            Nightly.app/Contents/MacOS/
+          mkdir -p Nightly.app/Contents/Frameworks
+          cp -R tools/legacy-macos/dist-10.7/widevine/LocalAuthentication.framework \
+            tools/legacy-macos/dist-10.7/widevine/CryptoTokenKit.framework \
+            Nightly.app/Contents/Frameworks/
+          # 10.7/10.8 ship a libc++ far too old for this tree, so every OS
+          # this artifact targets loads the bundled 10.7-floor libc++
+          # through @rpath — the same shape as the official binaries
+          # (verified launching with the bundled 5.0.1 loaded).
+          tools/legacy-macos/rpath-libcxx-10.7.sh Nightly.app
           # mach package's dmg predates the polyfill; rebuild it.
-          rm -f "powerfox-${VERSION}_macOS10.7-10.14.dmg" \
-                "powerfox-${VERSION}_macOS10.7-10.14-modern.dmg"
-          OUT="powerfox-${VERSION}_macOS10.7-10.14"
-          [ "$MODE" = "modern" ] && OUT="${OUT}-modern"
+          rm -f "powerfox-${VERSION}_macOS10.7-10.14.dmg"
           hdiutil create -volname Nightly -srcfolder Nightly.app \
             -fs HFS+ -format UDBZ -imagekey zlib-level=9 \
-            "${OUT}.dmg"
-          zip -qr "${OUT}.zip" Nightly.app
+            "powerfox-${VERSION}_macOS10.7-10.14.dmg"
+          zip -qr "powerfox-${VERSION}_macOS10.7-10.14.zip" Nightly.app
 
       - name: Prune stale cache generations
         # Per-run cache keys (mozbuild/sccache) bank a fresh ~1.3 GB

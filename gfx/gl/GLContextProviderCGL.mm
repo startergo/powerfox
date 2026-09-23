@@ -35,6 +35,12 @@ enum {
 
 #include <OpenGL/OpenGL.h>
 
+#if !defined(MAC_OS_X_VERSION_10_8) ||     MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8
+@interface NSOpenGLContext (PowerFoxPre10_8PixelFormat)
+- (NSOpenGLPixelFormat*)pixelFormat;
+@end
+#endif
+
 namespace mozilla {
 namespace gl {
 
@@ -198,12 +204,6 @@ static bool IsSameGPU(CGOpenGLDisplayMask mask1, CGOpenGLDisplayMask mask2) {
   // Both masks can be zero, when using the Apple software renderer.
   return !mask1 && !mask2;
 }
-
-#if !defined(MAC_OS_X_VERSION_10_8) ||     MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8
-@interface NSOpenGLContext (PowerFoxPre10_8PixelFormat)
-- (NSOpenGLPixelFormat*)pixelFormat;
-@end
-#endif
 
 static NSOpenGLPixelFormat* GetPixelFormatForContext(NSOpenGLContext* aContext) {
   // -[NSOpenGLContext pixelFormat] is macOS 10.8+

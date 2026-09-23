@@ -78,6 +78,7 @@ class SwapChain final {
   }
 
   void EnablePool(size_t aLimit) {
+    MOZ_ASSERT(aLimit > 0);
     if (mPoolLimit) {
       MOZ_ASSERT(mPoolLimit == aLimit);
       return;

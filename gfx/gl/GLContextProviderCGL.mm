@@ -199,8 +199,14 @@ static bool IsSameGPU(CGOpenGLDisplayMask mask1, CGOpenGLDisplayMask mask2) {
   return !mask1 && !mask2;
 }
 
+#if !defined(MAC_OS_X_VERSION_10_8) ||     MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8
+@interface NSOpenGLContext (PowerFoxPre10_8PixelFormat)
+- (NSOpenGLPixelFormat*)pixelFormat;
+@end
+#endif
+
 static NSOpenGLPixelFormat* GetPixelFormatForContext(NSOpenGLContext* aContext) {
-  // -[NSOpenGLContext pixelFormat] is macOS 10.10+
+  // -[NSOpenGLContext pixelFormat] is macOS 10.8+
   if ([aContext respondsToSelector:@selector(pixelFormat)]) {
     return [aContext pixelFormat];
   }

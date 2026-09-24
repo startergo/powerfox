@@ -387,6 +387,10 @@ static mozilla::Atomic<uintptr_t> sPFSpinRIP(0);
 
 static mach_port_t sPFMainThread = MACH_PORT_NULL;
 static const uint8_t* sPFMainPthread = nullptr;
+// __pthread_testcancel locks pthread_t + 0x10 (its own disassembly); the
+// thread signature sits at offset 0.
+constexpr size_t kPFPthreadLockOff = 0x10;
+constexpr uint32_t kPFPthreadSig = 0x54485244;
 
 // v4: catch the write. The corrupt value lands in the pthread struct's lock
 // word; poll it from process start and, on a stable bad value, dump the word,
@@ -456,11 +460,13 @@ static void* PFCVWatchdog(void* aArg) {
   uint64_t lastE = 0;
   uint64_t lastR = 0;
   while (!sPFCVStopped && dumps < 6) {
-    // 1ms word poll for ~1s, folded with 100ms-spaced thread-set snapshots.
-    for (int ms = 0; ms < 10 && !sPFCVStopped && !sPFWritten; ms++) {
+    // 1ms word polls for ~100ms, then one thread-set snapshot.
+    for (int ms = 0; ms < 100 && !sPFCVStopped && !sPFWritten;
+         ms++) {
       usleep(1000);
       if (sPFMainPthread) {
-        uint32_t w = *(const uint32_t volatile*)sPFMainPthread;
+        uint32_t w =
+            *(const uint32_t volatile*)(sPFMainPthread + kPFPthreadLockOff);
         if (w != 0 && w != 0xffffffff) {
           if (++badStreak >= 20) {
             sPFWritten = 1;
@@ -515,8 +521,9 @@ static void* PFCVWatchdog(void* aArg) {
     if (sPFWritten && dumps < 6) {
       char b[1024];
       int n = 0;
-      n += snprintf(b + n, sizeof(b) - n, "%s", "PFWRITE word=");
-      PFHex(b + n, *(const uint32_t volatile*)sPFMainPthread, 8);
+      n += snprintf(b + n, sizeof(b) - n, "%s", "PFWRITE lock=");
+      PFHex(b + n,
+           *(const uint32_t volatile*)(sPFMainPthread + kPFPthreadLockOff), 8);
       n += 8;
       n += snprintf(b + n, sizeof(b) - n, " pthread=");
       PFHex(b + n, (uintptr_t)sPFMainPthread, 12);
@@ -569,6 +576,9 @@ TaskController::TaskController()
      MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8)
   sPFMainThread = mach_thread_self();
   sPFMainPthread = (const uint8_t*)pthread_self();
+  if (*(const uint32_t*)sPFMainPthread != kPFPthreadSig) {
+    sPFMainPthread = nullptr;  // unexpected layout; arm nothing
+  }
   sPFCVWatch = {static_cast<const uint8_t*>(mMainThreadCV.RawCondPtr()),
                 &mCvCanary1, &mCvCanary2, mGraphMutex.RawMutexPtr()};
   pthread_t t;

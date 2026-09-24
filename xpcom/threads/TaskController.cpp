@@ -5,6 +5,8 @@
 #include "TaskController.h"
 #include "IdleTaskRunner.h"
 #include <mach/mach_init.h>
+#include <mach/task.h>
+#include <mach/vm_map.h>
 #include <mach/mach_time.h>
 #include <mach/thread_act.h>
 #include <pthread.h>
@@ -382,8 +384,6 @@ static uint32_t sPFCVCallerIdx = 0;
 // address naming the caller that asked for the lock). Compared against the
 // logged cond and mGraphMutex addresses, this identifies the lock directly.
 static mozilla::Atomic<uintptr_t> sPFSpinRIP(0);
-static mozilla::Atomic<uintptr_t> sPFSpinRA(0);
-static mozilla::Atomic<uintptr_t> sPFSpinLock(0);
 
 static mach_port_t sPFMainThread = MACH_PORT_NULL;
 
@@ -408,8 +408,6 @@ static uint32_t PFGrabMainSpin(uintptr_t* aRA, uintptr_t* aLock) {
     thread_resume(mt);
     if (rip >= 0x7fffffe00260 && rip <= 0x7fffffe00296) {
       sPFSpinRIP = rip;
-      sPFSpinRA = ra;
-      sPFSpinLock = lock;
       *aRA = ra;
       *aLock = lock;
       hits++;
@@ -478,6 +476,34 @@ static void* PFCVWatchdog(void* aArg) {
     uintptr_t spinLock = 0;
     uint32_t spinHits = PFGrabMainSpin(&spinRA, &spinLock);
     if (spinHits >= 3) {
+      // The commpage lock encodes no owner (acquire writes 0xFFFFFFFF,
+      // release 0), so the word's value splits held-forever / garbage /
+      // flickering. Sample it repeatedly for stability.
+      uint32_t wordVals[8];
+      uint32_t distinct = 0;
+      for (int i = 0; i < 8; i++) {
+        wordVals[i] = spinLock ? *(const uint32_t volatile*)spinLock : 0;
+        bool seen = false;
+        for (int j = 0; j < i; j++) {
+          seen |= wordVals[j] == wordVals[i];
+        }
+        distinct += !seen;
+        usleep(1000);
+      }
+      thread_act_array_t threads;
+      mach_msg_type_number_t tcount = 0;
+      uintptr_t tids[8] = {0};
+      uint32_t nTids = 0;
+      if (task_threads(mach_task_self(), &threads, &tcount) == KERN_SUCCESS) {
+        for (uint32_t i = 0; i < tcount && nTids < 8; i++) {
+          tids[nTids++] = (uintptr_t)threads[i];
+        }
+        for (uint32_t i = 0; i < tcount; i++) {
+          mach_port_deallocate(mach_task_self(), threads[i]);
+        }
+        vm_deallocate(mach_task_self(), (vm_address_t)threads,
+                      tcount * sizeof(thread_act_t));
+      }
       char b[512];
       int n = 0;
       n += snprintf(b + n, sizeof(b) - n, "%s", "PFSPIN rip=");
@@ -495,7 +521,17 @@ static void* PFCVWatchdog(void* aArg) {
       n += snprintf(b + n, sizeof(b) - n, "%s", " mutex=");
       PFHex(b + n, (uintptr_t)sPFCVWatch.mMutex, 12);
       n += 12;
-      n += snprintf(b + n, sizeof(b) - n, " hits=%u\n", spinHits);
+      n += snprintf(b + n, sizeof(b) - n,
+                    " hits=%u word=%08x distinct=%u mtid=", spinHits,
+                    wordVals[7], distinct);
+      PFHex(b + n, (uintptr_t)sPFMainThread, 8);
+      n += 8;
+      n += snprintf(b + n, sizeof(b) - n, "%s", " tids=");
+      for (uint32_t i = 0; i < nTids; i++) {
+        PFHex(b + n, tids[i], 8);
+        n += 8;
+      }
+      n += snprintf(b + n, sizeof(b) - n, "\n");
       (void)write(2, b, n);
     }
 

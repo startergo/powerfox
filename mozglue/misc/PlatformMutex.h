@@ -24,6 +24,8 @@ class MutexImpl {
   explicit MFBT_API MutexImpl();
   MFBT_API ~MutexImpl();
 
+  const void* RawMutexPtr() const { return &mMutex; }
+
  protected:
   MFBT_API void lock();
   MFBT_API void unlock();

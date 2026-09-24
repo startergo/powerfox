@@ -4,7 +4,9 @@
 
 #include "TaskController.h"
 #include "IdleTaskRunner.h"
+#include <mach/mach_init.h>
 #include <mach/mach_time.h>
+#include <mach/thread_act.h>
 #include <pthread.h>
 #include <unistd.h>
 #include <cstdio>
@@ -361,6 +363,7 @@ struct PFCVWatch {
   const uint8_t* mCond;
   const uint64_t* mCanary1;
   const uint64_t* mCanary2;
+  const void* mMutex;
 };
 static PFCVWatch sPFCVWatch;
 
@@ -372,6 +375,49 @@ static mozilla::Atomic<uint64_t> sPFCVEntries(0);
 static mozilla::Atomic<uint64_t> sPFCVReturns(0);
 static mozilla::Atomic<uintptr_t> sPFCVCallers[4];
 static uint32_t sPFCVCallerIdx = 0;
+
+// v3: the main thread's actual spin site. Suspending the main thread briefly
+// and reading its registers gives RIP (inside the commpage __spin_lock we
+// disassembled), R8 (the lock word it is spinning on), and [RSP] (the return
+// address naming the caller that asked for the lock). Compared against the
+// logged cond and mGraphMutex addresses, this identifies the lock directly.
+static mozilla::Atomic<uintptr_t> sPFSpinRIP(0);
+static mozilla::Atomic<uintptr_t> sPFSpinRA(0);
+static mozilla::Atomic<uintptr_t> sPFSpinLock(0);
+
+static mach_port_t sPFMainThread = MACH_PORT_NULL;
+
+static uint32_t PFGrabMainSpin(uintptr_t* aRA, uintptr_t* aLock) {
+  mach_port_t mt = sPFMainThread;
+  uint32_t hits = 0;
+  for (int i = 0; i < 20; i++) {
+    if (thread_suspend(mt) != KERN_SUCCESS) {
+      break;
+    }
+    x86_thread_state64_t st;
+    mach_msg_type_number_t cnt = x86_THREAD_STATE64_COUNT;
+    uintptr_t rip = 0, ra = 0, lock = 0;
+    if (thread_get_state(mt, x86_THREAD_STATE64, (thread_state_t)&st, &cnt) ==
+        KERN_SUCCESS) {
+      rip = st.__rip;
+      if (rip >= 0x7fffffe00260 && rip <= 0x7fffffe00296) {
+        ra = st.__rsp ? *(volatile uint64_t*)st.__rsp : 0;
+        lock = st.__r8;
+      }
+    }
+    thread_resume(mt);
+    if (rip >= 0x7fffffe00260 && rip <= 0x7fffffe00296) {
+      sPFSpinRIP = rip;
+      sPFSpinRA = ra;
+      sPFSpinLock = lock;
+      *aRA = ra;
+      *aLock = lock;
+      hits++;
+    }
+    usleep(1000);
+  }
+  return hits;
+}
 
 static void* PFCVWatchdog(void* aArg) {
   const uint8_t* cond = static_cast<const uint8_t*>(aArg);
@@ -427,6 +473,31 @@ static void* PFCVWatchdog(void* aArg) {
       }
     }
     uint64_t dutyPermille = total ? (nonzero * 1000) / total : 0;
+
+    uintptr_t spinRA = 0;
+    uintptr_t spinLock = 0;
+    uint32_t spinHits = PFGrabMainSpin(&spinRA, &spinLock);
+    if (spinHits >= 3) {
+      char b[512];
+      int n = 0;
+      n += snprintf(b + n, sizeof(b) - n, "%s", "PFSPIN rip=");
+      PFHex(b + n, (uintptr_t)sPFSpinRIP, 12);
+      n += 12;
+      n += snprintf(b + n, sizeof(b) - n, "%s", " ra=");
+      PFHex(b + n, spinRA, 12);
+      n += 12;
+      n += snprintf(b + n, sizeof(b) - n, "%s", " lock=");
+      PFHex(b + n, spinLock, 12);
+      n += 12;
+      n += snprintf(b + n, sizeof(b) - n, "%s", " cond=");
+      PFHex(b + n, (uintptr_t)sPFCVWatch.mCond, 12);
+      n += 12;
+      n += snprintf(b + n, sizeof(b) - n, "%s", " mutex=");
+      PFHex(b + n, (uintptr_t)sPFCVWatch.mMutex, 12);
+      n += 12;
+      n += snprintf(b + n, sizeof(b) - n, " hits=%u\n", spinHits);
+      (void)write(2, b, n);
+    }
 
     if (eRate > 10000 || dutyPermille > 50 ||
         ToNs(maxHold) > 100 * 1000) {
@@ -485,8 +556,9 @@ TaskController::TaskController()
 #if defined(XP_MACOSX) && \
     (!defined(MAC_OS_X_VERSION_10_8) || \
      MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8)
+  sPFMainThread = mach_thread_self();
   sPFCVWatch = {static_cast<const uint8_t*>(mMainThreadCV.RawCondPtr()),
-                &mCvCanary1, &mCvCanary2};
+                &mCvCanary1, &mCvCanary2, mGraphMutex.RawMutexPtr()};
   pthread_t t;
   if (pthread_create(&t, nullptr, PFCVWatchdog,
                      const_cast<uint8_t*>(sPFCVWatch.mCond)) == 0) {

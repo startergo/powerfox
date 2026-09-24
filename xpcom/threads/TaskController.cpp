@@ -390,7 +390,7 @@ static void* PFCVWatchdog(void* aArg) {
           n += 2;
         }
         n += snprintf(b + n, sizeof(b) - n, "%s", "\n");
-        Unused << write(2, b, n);
+        (void)write(2, b, n);
         return nullptr;
       }
     } else {

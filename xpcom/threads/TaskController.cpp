@@ -4,6 +4,7 @@
 
 #include "TaskController.h"
 #include "IdleTaskRunner.h"
+#include <mach/mach_time.h>
 #include <pthread.h>
 #include <unistd.h>
 #include <cstdio>
@@ -363,19 +364,80 @@ struct PFCVWatch {
 };
 static PFCVWatch sPFCVWatch;
 
+// v2: split Wait entry/return counters (entry==return at high rate => the
+// wait is completing without parking, a predicate loop; entry>>return => a
+// true storm colliding with a real waiter), plus round-robin caller capture
+// and an interlock duty-cycle probe with max contiguous hold time.
+static mozilla::Atomic<uint64_t> sPFCVEntries(0);
+static mozilla::Atomic<uint64_t> sPFCVReturns(0);
+static void* sPFCVCallers[4] = {nullptr, nullptr, nullptr, nullptr};
+static uint32_t sPFCVCallerIdx = 0;
+
 static void* PFCVWatchdog(void* aArg) {
   const uint8_t* cond = static_cast<const uint8_t*>(aArg);
-  uint32_t held = 0;
-  while (!sPFCVStopped) {
+  static mach_timebase_info_data_t tb;
+  if (tb.denom == 0) {
+    mach_timebase_info(&tb);
+  }
+  auto ToNs = [](uint64_t aTicks) {
+    return aTicks * tb.numer / tb.denom;
+  };
+  uint32_t anomaly = 0;
+  uint32_t dumps = 0;
+  uint64_t lastE = 0;
+  uint64_t lastR = 0;
+  while (!sPFCVStopped && dumps < 6) {
     usleep(5 * 1000 * 1000);
     if (sPFCVStopped) {
       return nullptr;
     }
-    if (*(const uint32_t volatile*)(cond + 8) != 0) {
-      if (++held >= 3) {
-        char b[512];
+    uint64_t e = sPFCVEntries;
+    uint64_t r = sPFCVReturns;
+    uint64_t eRate = (e - lastE) / 5;
+    uint64_t rRate = (r - lastR) / 5;
+    lastE = e;
+    lastR = r;
+
+    // 50ms busy window: duty cycle and max contiguous hold of the
+    // interlock at cond+8, in nanoseconds.
+    uint64_t nonzero = 0;
+    uint64_t total = 0;
+    uint64_t holdStart = 0;
+    uint64_t maxHold = 0;
+    uint64_t winStart = mach_absolute_time();
+    while (ToNs(mach_absolute_time() - winStart) < 50 * 1000 * 1000) {
+      total++;
+      if (*(const uint32_t volatile*)(cond + 8)) {
+        nonzero++;
+        if (!holdStart) {
+          holdStart = mach_absolute_time();
+        }
+      } else if (holdStart) {
+        uint64_t held = mach_absolute_time() - holdStart;
+        if (held > maxHold) {
+          maxHold = held;
+        }
+        holdStart = 0;
+      }
+    }
+    uint64_t dutyPermille = total ? (nonzero * 1000) / total : 0;
+
+    if (eRate > 1000 || dutyPermille > 0) {
+      if (++anomaly >= 3) {
+        char b[640];
         int n = 0;
-        n += snprintf(b + n, sizeof(b) - n, "%s", "PFCVDIAG lockword=");
+        n += snprintf(b + n, sizeof(b) - n,
+                      "PFCVDIAG eRate=%llu rRate=%llu duty=%lluppm ",
+                      (unsigned long long)eRate, (unsigned long long)rRate,
+                      (unsigned long long)dutyPermille);
+        n += snprintf(b + n, sizeof(b) - n, "maxHoldNs=%llu ",
+                      (unsigned long long)ToNs(maxHold));
+        n += snprintf(b + n, sizeof(b) - n, "%s", "callers=");
+        for (int i = 0; i < 4; i++) {
+          PFHex(b + n, (uintptr_t)sPFCVCallers[i], 12);
+          n += 12;
+        }
+        n += snprintf(b + n, sizeof(b) - n, "%s", " lockword=");
         PFHex(b + n, *(const uint32_t volatile*)(cond + 8), 8);
         n += 8;
         n += snprintf(b + n, sizeof(b) - n, "%s", " canary1=");
@@ -384,17 +446,13 @@ static void* PFCVWatchdog(void* aArg) {
         n += snprintf(b + n, sizeof(b) - n, "%s", " canary2=");
         PFHex(b + n, *sPFCVWatch.mCanary2, 16);
         n += 16;
-        n += snprintf(b + n, sizeof(b) - n, "%s", " cond=");
-        for (int i = 0; i < 32; i++) {
-          PFHex(b + n, *(const uint8_t volatile*)(cond + i), 2);
-          n += 2;
-        }
         n += snprintf(b + n, sizeof(b) - n, "%s", "\n");
         (void)write(2, b, n);
-        return nullptr;
+        dumps++;
+        anomaly = 2;  // keep dumping on subsequent checks
       }
     } else {
-      held = 0;
+      anomaly = 0;
     }
   }
   return nullptr;
@@ -852,7 +910,18 @@ nsIRunnable* TaskController::GetRunnableForMTTask(bool aReallyWait) {
     }
 
     AUTO_PROFILER_LABEL("TaskController::GetRunnableForMTTask::Wait", IDLE);
+#if defined(XP_MACOSX) &&                                          \
+    (!defined(MAC_OS_X_VERSION_10_8) ||                            \
+     MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8)
+    sPFCVEntries++;
+    if ((sPFCVEntries & 0xFFFF) == 0) {
+      sPFCVCallers[(sPFCVCallerIdx++) & 3] = __builtin_return_address(1);
+    }
     mMainThreadCV.Wait();
+    sPFCVReturns++;
+#else
+    mMainThreadCV.Wait();
+#endif
   }
 
   return aReallyWait ? mMTBlockingProcessingRunnable : mMTProcessingRunnable;

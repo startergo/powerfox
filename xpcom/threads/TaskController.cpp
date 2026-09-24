@@ -386,6 +386,26 @@ static uint32_t sPFCVCallerIdx = 0;
 static mozilla::Atomic<uintptr_t> sPFSpinRIP(0);
 
 static mach_port_t sPFMainThread = MACH_PORT_NULL;
+static const uint8_t* sPFMainPthread = nullptr;
+
+// v4: catch the write. The corrupt value lands in the pthread struct's lock
+// word; poll it from process start and, on a stable bad value, dump the word,
+// all thread register states, and the recent thread-create/exit history.
+static mozilla::Atomic<uint32_t> sPFWritten(0);
+struct PFThreadEvent {
+  uintptr_t mPort;
+  char mKind;  // '+' create, '-' exit
+};
+static PFThreadEvent sPFThreadLog[64];
+static uint32_t sPFThreadLogN = 0;
+
+static void PFLogThreadEvent(uintptr_t aPort, char aKind) {
+  if (sPFThreadLogN < 64) {
+    sPFThreadLog[sPFThreadLogN].mPort = aPort;
+    sPFThreadLog[sPFThreadLogN].mKind = aKind;
+    sPFThreadLogN++;
+  }
+}
 
 static uint32_t PFGrabMainSpin(uintptr_t* aRA, uintptr_t* aLock) {
   mach_port_t mt = sPFMainThread;
@@ -426,147 +446,102 @@ static void* PFCVWatchdog(void* aArg) {
   auto ToNs = [](uint64_t aTicks) {
     return aTicks * tb.numer / tb.denom;
   };
-  uint32_t anomaly = 0;
+
+  // Previous thread set for create/exit detection.
+  uintptr_t prevTids[16] = {0};
+  uint32_t prevN = 0;
+
+  uint32_t badStreak = 0;
   uint32_t dumps = 0;
   uint64_t lastE = 0;
   uint64_t lastR = 0;
   while (!sPFCVStopped && dumps < 6) {
-    usleep(5 * 1000 * 1000);
+    // 1ms word poll for ~1s, folded with 100ms-spaced thread-set snapshots.
+    for (int ms = 0; ms < 10 && !sPFCVStopped && !sPFWritten; ms++) {
+      usleep(1000);
+      if (sPFMainPthread) {
+        uint32_t w = *(const uint32_t volatile*)sPFMainPthread;
+        if (w != 0 && w != 0xffffffff) {
+          if (++badStreak >= 20) {
+            sPFWritten = 1;
+          }
+        } else {
+          badStreak = 0;
+        }
+      }
+    }
     if (sPFCVStopped) {
       return nullptr;
     }
-    uint64_t e = sPFCVEntries;
-    uint64_t r = sPFCVReturns;
-    uint64_t eRate = (e - lastE) / 5;
-    uint64_t rRate = (r - lastR) / 5;
-    lastE = e;
-    lastR = r;
 
-    // 50ms busy window: duty cycle and max contiguous hold of the
-    // interlock at cond+8, in nanoseconds.
-    uint64_t nonzero = 0;
-    uint64_t total = 0;
-    uint64_t holdStart = 0;
-    uint64_t maxHold = 0;
-    uint64_t winStart = mach_absolute_time();
-    while (ToNs(mach_absolute_time() - winStart) < 50 * 1000 * 1000) {
-      total++;
-      if (*(const uint32_t volatile*)(cond + 8)) {
-        nonzero++;
-        if (!holdStart) {
-          holdStart = mach_absolute_time();
-        }
-      } else if (holdStart) {
-        uint64_t held = mach_absolute_time() - holdStart;
-        if (held > maxHold) {
-          maxHold = held;
-        }
-        holdStart = 0;
+    // Thread lifecycle snapshot.
+    thread_act_array_t threads;
+    mach_msg_type_number_t tcount = 0;
+    uintptr_t tids[16] = {0};
+    uint32_t nTids = 0;
+    if (task_threads(mach_task_self(), &threads, &tcount) == KERN_SUCCESS) {
+      for (uint32_t i = 0; i < tcount && nTids < 16; i++) {
+        tids[nTids++] = (uintptr_t)threads[i];
       }
-    }
-    if (holdStart) {
-      uint64_t held = mach_absolute_time() - holdStart;
-      if (held > maxHold) {
-        maxHold = held;
+      for (uint32_t i = 0; i < tcount; i++) {
+        mach_port_deallocate(mach_task_self(), threads[i]);
       }
-    }
-    uint64_t dutyPermille = total ? (nonzero * 1000) / total : 0;
-
-    uintptr_t spinRA = 0;
-    uintptr_t spinLock = 0;
-    uint32_t spinHits = PFGrabMainSpin(&spinRA, &spinLock);
-    if (spinHits >= 3) {
-      // The commpage lock encodes no owner (acquire writes 0xFFFFFFFF,
-      // release 0), so the word's value splits held-forever / garbage /
-      // flickering. Sample it repeatedly for stability.
-      uint32_t wordVals[8];
-      uint32_t distinct = 0;
-      for (int i = 0; i < 8; i++) {
-        wordVals[i] = spinLock ? *(const uint32_t volatile*)spinLock : 0;
-        bool seen = false;
-        for (int j = 0; j < i; j++) {
-          seen |= wordVals[j] == wordVals[i];
-        }
-        distinct += !seen;
-        usleep(1000);
-      }
-      thread_act_array_t threads;
-      mach_msg_type_number_t tcount = 0;
-      uintptr_t tids[8] = {0};
-      uint32_t nTids = 0;
-      if (task_threads(mach_task_self(), &threads, &tcount) == KERN_SUCCESS) {
-        for (uint32_t i = 0; i < tcount && nTids < 8; i++) {
-          tids[nTids++] = (uintptr_t)threads[i];
-        }
-        for (uint32_t i = 0; i < tcount; i++) {
-          mach_port_deallocate(mach_task_self(), threads[i]);
-        }
-        vm_deallocate(mach_task_self(), (vm_address_t)threads,
-                      tcount * sizeof(thread_act_t));
-      }
-      char b[512];
-      int n = 0;
-      n += snprintf(b + n, sizeof(b) - n, "%s", "PFSPIN rip=");
-      PFHex(b + n, (uintptr_t)sPFSpinRIP, 12);
-      n += 12;
-      n += snprintf(b + n, sizeof(b) - n, "%s", " ra=");
-      PFHex(b + n, spinRA, 12);
-      n += 12;
-      n += snprintf(b + n, sizeof(b) - n, "%s", " lock=");
-      PFHex(b + n, spinLock, 12);
-      n += 12;
-      n += snprintf(b + n, sizeof(b) - n, "%s", " cond=");
-      PFHex(b + n, (uintptr_t)sPFCVWatch.mCond, 12);
-      n += 12;
-      n += snprintf(b + n, sizeof(b) - n, "%s", " mutex=");
-      PFHex(b + n, (uintptr_t)sPFCVWatch.mMutex, 12);
-      n += 12;
-      n += snprintf(b + n, sizeof(b) - n,
-                    " hits=%u word=%08x distinct=%u mtid=", spinHits,
-                    wordVals[7], distinct);
-      PFHex(b + n, (uintptr_t)sPFMainThread, 8);
-      n += 8;
-      n += snprintf(b + n, sizeof(b) - n, "%s", " tids=");
+      vm_deallocate(mach_task_self(), (vm_address_t)threads,
+                    tcount * sizeof(thread_act_t));
       for (uint32_t i = 0; i < nTids; i++) {
-        PFHex(b + n, tids[i], 8);
-        n += 8;
+        bool existed = false;
+        for (uint32_t j = 0; j < prevN; j++) {
+          existed |= prevTids[j] == tids[i];
+        }
+        if (!existed) {
+          PFLogThreadEvent(tids[i], '+');
+        }
+      }
+      for (uint32_t j = 0; j < prevN; j++) {
+        bool alive = false;
+        for (uint32_t i = 0; i < nTids; i++) {
+          alive |= tids[i] == prevTids[j];
+        }
+        if (!alive) {
+          PFLogThreadEvent(prevTids[j], '-');
+        }
+      }
+      for (uint32_t i = 0; i < nTids; i++) {
+        prevTids[i] = tids[i];
+      }
+      prevN = nTids;
+    }
+
+    if (sPFWritten && dumps < 6) {
+      char b[1024];
+      int n = 0;
+      n += snprintf(b + n, sizeof(b) - n, "%s", "PFWRITE word=");
+      PFHex(b + n, *(const uint32_t volatile*)sPFMainPthread, 8);
+      n += 8;
+      n += snprintf(b + n, sizeof(b) - n, " pthread=");
+      PFHex(b + n, (uintptr_t)sPFMainPthread, 12);
+      n += 12;
+      n += snprintf(b + n, sizeof(b) - n, "%s", " struct=");
+      for (int i = 0; i < 32; i++) {
+        PFHex(b + n, *(const uint8_t volatile*)(sPFMainPthread + i), 2);
+        n += 2;
+      }
+      uintptr_t ra = 0, lockw = 0;
+      PFGrabMainSpin(&ra, &lockw);
+      n += snprintf(b + n, sizeof(b) - n, "%s", " spinlock=");
+      PFHex(b + n, lockw, 12);
+      n += 12;
+      n += snprintf(b + n, sizeof(b) - n, "%s", " events=");
+      for (uint32_t i = 0; i < sPFThreadLogN; i++) {
+        b[n++] = sPFThreadLog[i].mKind;
+        PFHex(b + n, sPFThreadLog[i].mPort, 4);
+        n += 4;
       }
       n += snprintf(b + n, sizeof(b) - n, "\n");
       (void)write(2, b, n);
-    }
-
-    if (eRate > 10000 || dutyPermille > 50 ||
-        ToNs(maxHold) > 100 * 1000) {
-      if (++anomaly >= 3) {
-        char b[640];
-        int n = 0;
-        n += snprintf(b + n, sizeof(b) - n,
-                      "PFCVDIAG eRate=%llu rRate=%llu duty=%lluppm ",
-                      (unsigned long long)eRate, (unsigned long long)rRate,
-                      (unsigned long long)dutyPermille);
-        n += snprintf(b + n, sizeof(b) - n, "maxHoldNs=%llu ",
-                      (unsigned long long)ToNs(maxHold));
-        n += snprintf(b + n, sizeof(b) - n, "%s", "callers=");
-        for (int i = 0; i < 4; i++) {
-          PFHex(b + n, (uintptr_t)sPFCVCallers[i], 12);
-          n += 12;
-        }
-        n += snprintf(b + n, sizeof(b) - n, "%s", " lockword=");
-        PFHex(b + n, *(const uint32_t volatile*)(cond + 8), 8);
-        n += 8;
-        n += snprintf(b + n, sizeof(b) - n, "%s", " canary1=");
-        PFHex(b + n, *sPFCVWatch.mCanary1, 16);
-        n += 16;
-        n += snprintf(b + n, sizeof(b) - n, "%s", " canary2=");
-        PFHex(b + n, *sPFCVWatch.mCanary2, 16);
-        n += 16;
-        n += snprintf(b + n, sizeof(b) - n, "%s", "\n");
-        (void)write(2, b, n);
-        dumps++;
-        anomaly = 2;  // keep dumping on subsequent checks
-      }
-    } else {
-      anomaly = 0;
+      dumps++;
+      badStreak = 0;
+      sPFWritten = 0;  // allow re-arm if it changes again
     }
   }
   return nullptr;
@@ -593,6 +568,7 @@ TaskController::TaskController()
     (!defined(MAC_OS_X_VERSION_10_8) || \
      MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8)
   sPFMainThread = mach_thread_self();
+  sPFMainPthread = (const uint8_t*)pthread_self();
   sPFCVWatch = {static_cast<const uint8_t*>(mMainThreadCV.RawCondPtr()),
                 &mCvCanary1, &mCvCanary2, mGraphMutex.RawMutexPtr()};
   pthread_t t;

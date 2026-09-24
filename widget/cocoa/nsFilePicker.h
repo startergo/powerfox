@@ -11,6 +11,8 @@
 #include "nsCOMArray.h"
 #include "nsTArray.h"
 
+#import "SDKDeclarations.h"
+
 class nsIFile;
 class nsILocalFileMac;
 @class NSArray;

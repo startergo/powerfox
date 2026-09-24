@@ -335,9 +335,10 @@ CFTypeRefPtr<CFURLRef> GetProductDirectory(bool aLocal) {
   NSSearchPathDirectory folderType =
       aLocal ? NSCachesDirectory : NSLibraryDirectory;
   NSFileManager* manager = [NSFileManager defaultManager];
-  return CFTypeRefPtr<CFURLRef>::WrapUnderGetRule((__bridge CFURLRef)[[manager
-      URLsForDirectory:folderType
-             inDomains:NSUserDomainMask] firstObject]);
+  NSArray* URLs = [manager URLsForDirectory:folderType inDomains:NSUserDomainMask];
+  NSURL* firstURL = [URLs count] ? [URLs objectAtIndex:0] : nil;
+  return CFTypeRefPtr<CFURLRef>::WrapUnderGetRule(
+      (__bridge CFURLRef)firstURL);
 }
 
 }  // namespace CocoaFileUtils

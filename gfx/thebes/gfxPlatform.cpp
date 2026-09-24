@@ -160,6 +160,10 @@ static const uint32_t kDefaultGlyphCacheSize = -1;
 #include "mozilla/gfx/GPUParent.h"
 #include "prsystem.h"
 
+#if defined(MOZ_WIDGET_COCOA)
+#  include <sys/sysctl.h>
+#endif
+
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/SourceSurfaceCairo.h"
 
@@ -2499,6 +2503,20 @@ void gfxPlatform::InitAcceleration() {
 }
 
 void gfxPlatform::InitGPUProcessPrefs() {
+#if defined(XP_MACOSX)
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    // The GPU process can run on 10.6 now that the bundled libc++
+    // re-exports libc++abi: its original failure was a dyld load error
+    // misread as GL context creation (verified working 2026-09-11 on a
+    // Macmini3,1 — the gpu-helper composites and pages render). Keep it
+    // disabled pending a validation pass of the cross-process
+    // presentation; the in-process compositor is the tested path.
+    gfxConfig::GetFeature(Feature::GPU_PROCESS)
+        .DisableByDefault(FeatureStatus::Blocked, "macOS version too old",
+                          "FEATURE_FAILURE_MACOS_TOO_OLD"_ns);
+    return;
+  }
+#endif
   // We want to hide this from about:support, so only set a default if the
   // pref is known to be true.
   if (!StaticPrefs::layers_gpu_process_enabled_AtStartup() &&
@@ -2640,6 +2658,14 @@ void gfxPlatform::InitWebRenderConfig() {
   }
 
   bool hasHardware = gfxConfig::IsEnabled(Feature::WEBRENDER);
+#if defined(XP_MACOSX)
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    // WebRender's desktop shaders require GLSL 1.50 (ShaderVersion::Gl in
+    // webrender_build), but 10.6 only provides GL 2.1 / GLSL 1.20, so
+    // hardware WebRender cannot run; composite with software WebRender.
+    hasHardware = false;
+  }
+#endif
 
 #ifdef MOZ_WIDGET_GTK
   // We require a hardware driver to back the GL context unless the user forced
@@ -3009,6 +3035,26 @@ void gfxPlatform::InitHardwareVideoConfig() {
     return;
   }
 
+#ifdef MOZ_LEGACY_MACOS_TARGET
+  // The graphics sanity test never runs on this target, so a persisted
+  // failure latch can only predate this fix; clear it once. A value set
+  // afterwards is a deliberate user choice and is preserved.
+  if (!Preferences::GetBool(
+          "media.hardware-video-decoding.failed.latch-cleared", false)) {
+    if (Preferences::HasUserValue("media.hardware-video-decoding.failed")) {
+      Preferences::ClearUser("media.hardware-video-decoding.failed");
+    }
+    Preferences::SetBool("media.hardware-video-decoding.failed.latch-cleared",
+                         true);
+    // Persist the marker now: losing it to a crash before the shutdown
+    // save would re-clear a deliberate user choice on the next startup.
+    nsCOMPtr<nsIPrefService> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
+    if (prefs) {
+      prefs->SavePrefFile(nullptr);
+    }
+  }
+#endif
+
 #ifdef XP_MACOSX
   const bool isXpcshell = !!PR_GetEnv("XPCSHELL_TEST_PROFILE_DIR");
 #endif
@@ -3267,6 +3313,22 @@ void gfxPlatform::InitWebGLConfig() {
          deviceID.EqualsLiteral("0x0126"))) {
       gfxVars::SetWebglAllowCoreProfile(false);
     }
+    if (!nsCocoaFeatures::OnLionOrLater()) {
+      // 10.6 tops out at GL 2.1 / GLSL 1.20: force the legacy profile and
+      // drop WebGL2 (it requires a 3.2 core context).
+      gfxVars::SetWebglAllowCoreProfile(false);
+      gfxVars::SetAllowWebgl2(false);
+      // Two cores cannot sustain a 60Hz frame pipeline; pacing to every other
+      // vsync gives uniform 30fps delivery where free-running jitters.
+      int ncpu = 0;
+      size_t len = sizeof(ncpu);
+      sysctlbyname("hw.ncpu", &ncpu, &len, nullptr, 0);
+      if (ncpu > 0 && ncpu <= 2 &&
+          !Preferences::HasUserValue("gfx.display.frame-rate-divisor")) {
+        Preferences::SetInt("gfx.display.frame-rate-divisor", 2,
+                            PrefValueKind::Default);
+      }
+    }
   }
 
 #ifdef MOZ_WIDGET_ANDROID
@@ -3276,8 +3338,15 @@ void gfxPlatform::InitWebGLConfig() {
 
   // Until bug 1999136 lands and the GPU process works with headless, we should
   // allow WebGL in the parent process when headless.
+  bool allowInParent = StaticPrefs::webgl_allow_in_parent_AtStartup();
+#if defined(XP_MACOSX)
+  // The GPU process cannot exist below 10.7, so WebGL must run in the parent.
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    allowInParent = true;
+  }
+#endif
   if (!gfxConfig::IsEnabled(Feature::GPU_PROCESS) && !IsHeadless() &&
-      !StaticPrefs::webgl_allow_in_parent_AtStartup()) {
+      !allowInParent) {
     featureWebGL.Disable(FeatureStatus::UnavailableNoGpuProcess,
                          "Disabled without GPU process",
                          "FEATURE_WEBGL_NO_GPU_PROCESS"_ns);

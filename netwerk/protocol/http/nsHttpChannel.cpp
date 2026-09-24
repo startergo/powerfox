@@ -149,7 +149,7 @@
 #ifdef XP_WIN
 #  include "HttpWinUtils.h"
 #endif
-#ifdef XP_MACOSX
+#if defined(XP_MACOSX) && defined(MOZ_MACOS_PLATFORM_WEBAUTHN)
 #  include "MicrosoftEntraSSOUtils.h"
 #endif
 #ifdef FUZZING
@@ -768,7 +768,6 @@ nsresult nsHttpChannel::PrepareToConnect() {
 #endif
 
 #ifdef XP_MACOSX
-
   auto isUriMSAuthority = [&]() {
     nsAutoCString endPoint;
     nsresult rv = mURI->GetHost(endPoint);
@@ -785,7 +784,13 @@ nsresult nsHttpChannel::PrepareToConnect() {
   // (SUBDOCUMENTs) that aren't anonymous or private browsing.
   if (StaticPrefs::network_http_microsoft_entra_sso_enabled() &&
       mURI->SchemeIs("https") && !(mLoadFlags & LOAD_ANONYMOUS) &&
-      !mPrivateBrowsing) {
+      !mPrivateBrowsing)
+#if defined(XP_MACOSX) && !defined(MOZ_MACOS_PLATFORM_WEBAUTHN)
+  {
+    // AuthenticationServices requires macOS 12.
+  }
+#else
+  {
     ExtContentPolicyType type = mLoadInfo->GetExternalContentPolicyType();
     if ((type == ExtContentPolicy::TYPE_DOCUMENT ||
          type == ExtContentPolicy::TYPE_SUBDOCUMENT) &&
@@ -811,7 +816,7 @@ nsresult nsHttpChannel::PrepareToConnect() {
       }
     }
   }
-
+#endif
 #endif
 
   return ContinuePrepareToConnect();

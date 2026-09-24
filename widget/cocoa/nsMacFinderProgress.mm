@@ -4,6 +4,8 @@
 
 #import <Cocoa/Cocoa.h>
 
+#import "SDKDeclarations.h"
+
 #include "nsMacFinderProgress.h"
 #include "nsProxyRelease.h"
 #include "nsThreadUtils.h"

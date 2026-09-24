@@ -14,6 +14,40 @@
 #include <signal.h>
 #include <libkern/OSAtomic.h>
 #include <mach/mach.h>
+
+#if defined(__APPLE__) && (!defined(__MAC_OS_X_VERSION_MIN_REQUIRED) || \
+                           __MAC_OS_X_VERSION_MIN_REQUIRED < 109000)
+// THREAD_EXTENDED_INFO/TASK_POWER_INFO require macOS 10.9. The extended
+// thread struct mirrors the kernel layout of the fields we read; thread
+// names are unavailable through these flavors pre-10.9.
+struct powerfox_thread_extended_info {
+  uint64_t pth_user_time;
+  uint64_t pth_system_time;
+  int32_t pth_cpu_usage;
+  int32_t pth_policy;
+  int32_t pth_run_state;
+  int32_t pth_flags;
+  int32_t pth_suspend_count;
+  int32_t pth_sleep_time;
+  char pth_name[64];
+};
+typedef struct powerfox_thread_extended_info thread_extended_info_data_t;
+#define THREAD_EXTENDED_INFO 5
+#define THREAD_EXTENDED_INFO_COUNT \
+  (sizeof(thread_extended_info_data_t) / sizeof(natural_t))
+struct powerfox_task_power_info {
+  uint64_t total_user;
+  uint64_t total_system;
+  uint64_t task_interrupt_wakeups;
+  uint64_t task_platform_idle_wakeups;
+  uint64_t task_timer_wakeups_bin_1;
+  uint64_t task_timer_wakeups_bin_2;
+};
+typedef struct powerfox_task_power_info task_power_info_data_t;
+#define TASK_POWER_INFO 21
+#define TASK_POWER_INFO_COUNT \
+  (sizeof(task_power_info_data_t) / sizeof(natural_t))
+#endif
 #include <mach/semaphore.h>
 #include <mach/task.h>
 #include <mach/thread_act.h>

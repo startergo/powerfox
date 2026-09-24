@@ -8,6 +8,12 @@
 #import <AppKit/NSEvent.h>
 #import <IOKit/hidsystem/ev_keymap.h>
 
+#if !defined(MAC_OS_X_VERSION_10_12) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_12
+// The NSEventType spelling was introduced later.
+#define NSEventTypeSystemDefined NSSystemDefined
+#endif
+
 #include "mozilla/dom/MediaControlUtils.h"
 
 using namespace mozilla::dom;

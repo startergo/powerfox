@@ -792,11 +792,44 @@ set_define("MOZ_HAVE_FREETYPE2", depends_if(freetype2_info)(lambda _: True))
 @depends(toolkit)
 def applemedia(toolkit):
     if toolkit in ("cocoa", "uikit"):
+        # CoreMedia/VideoToolbox are 10.8+, but the apple module carries a
+        # VideoDecodeAcceleration path (H.264, 10.6+) that compiles on older
+        # SDKs; the VT paths are __has_include-guarded.
         return True
 
 
 set_config("MOZ_APPLEMEDIA", applemedia)
 set_define("MOZ_APPLEMEDIA", applemedia)
+
+
+# Apple platform WebAuthn support
+# ==============================================================
+@depends(macos_target)
+def macos_platform_webauthn(macos_target):
+    # The AuthenticationServices framework requires macOS 12+.
+    # macos_target is None on non-macOS platforms (the option is defined
+    # under only_when(target_is_osx)); don't enable it there either.
+    return bool(macos_target) and Version(macos_target) >= Version("12.0")
+
+
+set_config("MOZ_MACOS_PLATFORM_WEBAUTHN", macos_platform_webauthn)
+# Emit "1"/nothing rather than True/False: a falsy set_define value produces
+# an empty -DFOO that breaks #if FOO but satisfies #if defined(FOO).
+set_define("MOZ_MACOS_PLATFORM_WEBAUTHN", "1", when=macos_platform_webauthn)
+
+
+# Legacy macOS (pre-10.7 deployment target) link strategy, used to weak-link
+# frameworks missing from the old SDKs and to leave undefined symbols to
+# dyld; see toolkit/library/moz.build.
+@depends(macos_target)
+def macos_legacy_target(macos_target):
+    return bool(macos_target) and Version(macos_target) < Version("10.7")
+
+
+set_config("MOZ_LEGACY_MACOS_TARGET", macos_legacy_target)
+# Emit "1"/nothing rather than True/False: a falsy set_define value produces
+# an empty -DFOO that breaks #if FOO but satisfies #if defined(FOO).
+set_define("MOZ_LEGACY_MACOS_TARGET", "1", when=macos_legacy_target)
 
 # Windows Media Foundation support
 # ==============================================================

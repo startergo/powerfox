@@ -13,6 +13,9 @@
 #elif defined(XP_MACOSX)
 #  include <sys/types.h>
 #  include <sys/fcntl.h>
+#  if !defined(O_CLOEXEC)
+#    define O_CLOEXEC 0
+#  endif
 #  include <unistd.h>
 #  include <dlfcn.h>  // For dlsym()
 // See https://github.com/apple/darwin-xnu/blob/main/bsd/sys/guarded.h

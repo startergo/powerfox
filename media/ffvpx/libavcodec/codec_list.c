@@ -8,6 +8,15 @@ static const FFCodec * const codec_list[] = {
 #if CONFIG_FLAC_DECODER
     &ff_flac_decoder,
 #endif
+#if CONFIG_AAC_DECODER
+    &ff_aac_decoder,
+#endif
+#if CONFIG_H264_DECODER
+    &ff_h264_decoder,
+#endif
+#if CONFIG_HEVC_DECODER
+    &ff_hevc_decoder,
+#endif
 #if CONFIG_MP3_DECODER
     &ff_mp3_decoder,
 #endif

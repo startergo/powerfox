@@ -1,0 +1,271 @@
+name: Build PowerFox 10.6
+
+# Builds the ESR153 tree for Mac OS X 10.6 Snow Leopard (x86_64,
+# cross-compiled from the arm64 runner): the 10.6 SDK (fetched from
+# phracker/MacOSX-SDKs at a pinned commit, plus the runtime .o overlay),
+# patched header overlay, bundled darwin10 libc++ and an emulated-TLS
+# Rust std (see tools/legacy-macos/ in this branch).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["10.6-backporting"]
+
+env:
+  SDK_SHA: 041600eda65c6a668f66cb7d56b7d1da3e8bcc93
+  RUNTIME_OBJECTS_SHA256: ac284acacd6c32dbc94544ce47abece0e6ee2a658b0e13d95b988d31dbdf4aca
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  build:
+    name: build 10.6 x86_64
+    runs-on: macos-26
+    timeout-minutes: 300
+    env:
+      SCCACHE_IDLE_TIMEOUT: 0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Restore the 10.6 SDK
+        id: sdk
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/MacOSX-SDKs
+          key: sdk106-${{ env.SDK_SHA }}-${{ env.RUNTIME_OBJECTS_SHA256 }}
+
+      - name: Fetch MacOSX10.6.sdk (pinned)
+        if: steps.sdk.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          mkdir -p "$HOME/MacOSX-SDKs"
+          cd "$HOME/MacOSX-SDKs"
+          git init -q
+          git remote add origin https://github.com/phracker/MacOSX-SDKs.git
+          git sparse-checkout init --cone
+          git sparse-checkout set MacOSX10.6.sdk
+          git fetch -q --depth 1 origin "$SDK_SHA"
+          git checkout -q FETCH_HEAD
+          [ -d MacOSX10.6.sdk ] || { echo "SDK missing at $SDK_SHA"; exit 1; }
+
+          # phracker's SDK omits the binary .o files (crt1.o etc.); overlay
+          # them from the public release asset on startergo/powerfox-browser,
+          # verified against a pinned digest.
+          curl -fsSL -o /tmp/runtime-objects.tar.gz \
+            https://github.com/startergo/powerfox-browser/releases/download/sdk-runtime-objects-10.6/MacOSX10.6.sdk-runtime-objects.tar.gz
+          echo "$RUNTIME_OBJECTS_SHA256  /tmp/runtime-objects.tar.gz" | shasum -a 256 -c -
+          tar -xzf /tmp/runtime-objects.tar.gz -C MacOSX10.6.sdk
+
+          # Keep the sparse-checkout git dir out of the cache.
+          rm -rf .git
+
+      - name: Save the 10.6 SDK
+        if: steps.sdk.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/MacOSX-SDKs
+          key: sdk106-${{ env.SDK_SHA }}-${{ env.RUNTIME_OBJECTS_SHA256 }}
+
+      - name: Link the SDK where the mozconfig expects it
+        run: |
+          SDKS=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs
+          sudo mkdir -p "$SDKS"
+          sudo ln -sfn "$HOME/MacOSX-SDKs/MacOSX10.6.sdk" "$SDKS/MacOSX10.6.sdk"
+
+      - name: Restore bootstrap toolchains
+        id: mozbuild
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.mozbuild
+          key: mozbuild106-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: mozbuild106-
+
+      - name: Bootstrap build deps
+        id: bootstrap
+        if: steps.mozbuild.outputs.cache-hit != 'true'
+        run: /usr/bin/python3 ./mach bootstrap --application-choice=browser
+
+      - name: Install nasm
+        run: brew install nasm
+
+      - name: Set up Rust (stable + rust-src for the emutls std rebuild)
+        run: |
+          rustup default stable
+          rustup component add rust-src
+          rustc --version
+
+      - name: Compute support-artifact cache key
+        id: key
+        run: |
+          RUSTV=$(rustc --version | tr ' /' '--')
+          echo "key=legacy106-${{ runner.os }}-${RUSTV}-${SDK_SHA}-${{ hashFiles('tools/legacy-macos/build-libcxx.sh', 'tools/legacy-macos/build-rust-std.sh', 'tools/legacy-macos/make-sdk-overlay.sh', 'tools/legacy-macos/compat-10.6.c', 'tools/legacy-macos/emutls.c', 'tools/legacy-macos/arc-shim.m') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore support artifacts
+        id: cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            tools/legacy-macos/dist
+            tools/legacy-macos/downloads
+            tools/legacy-macos/overlay-sdk
+          key: ${{ steps.key.outputs.key }}
+
+      # sccache does not hash the custom Rust std's contents, so cached
+      # rlibs from an older std pass a rebuild by (E0463 metadata
+      # mismatches). Key the cache on the support artifacts, which include
+      # the std, and restore exact matches only.
+      - name: Restore sccache
+        id: sccache
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/Library/Caches/Mozilla.sccache
+          # A deterministic key would no-op every save after the first,
+          # so merge-touched files recompile forever. Save per run and
+          # restore the newest generation; rust is never cached, so
+          # prefix fallback cannot serve stale metadata.
+          key: sccache106-${{ runner.os }}-${{ steps.key.outputs.key }}-${{ github.run_id }}
+          restore-keys: |
+            sccache106-${{ runner.os }}-${{ steps.key.outputs.key }}-
+
+      - name: Build the 10.6 support artifacts
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          tools/legacy-macos/make-sdk-overlay.sh
+          tools/legacy-macos/build-libcxx.sh
+          tools/legacy-macos/build-rust-std.sh 10.6
+
+      - name: Save support artifacts
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            tools/legacy-macos/dist
+            tools/legacy-macos/downloads
+            tools/legacy-macos/overlay-sdk
+          key: ${{ steps.key.outputs.key }}
+
+      # The CI SDK has no libc++ stub dylibs; install the ones generated by
+      # build-libcxx.sh so -lc++ resolves at link time (ld-classic rejects
+      # text-based .tbd stubs).
+      - name: Install the libc++ link stubs into the 10.6 SDK
+        run: |
+          cp tools/legacy-macos/dist/lib/libc++.dylib \
+             tools/legacy-macos/dist/lib/libc++abi.dylib \
+             "$HOME/MacOSX-SDKs/MacOSX10.6.sdk/usr/lib/"
+
+      - name: Build
+        env:
+          MOZCONFIG: ${{ github.workspace }}/mozconfig-ci
+        run: |
+          # Base mozconfig plus CI-only sccache for the C/C++ compilers
+          # only: bootstrap's sccache 0.15 mis-caches rustc rlibs, which
+          # then fail downstream with E0463 once restored. Fresh Rust
+          # compiles are reliable and cheap, and the C/C++ cache entries
+          # stay valid under the direct CC/CXX wrapper.
+          cp mozconfig-macos106 mozconfig-ci
+          SCC="$HOME/.mozbuild/sccache/sccache"
+          sed -i '' \
+            -e "s|^export CC=\"/usr/bin/clang |export CC=\"$SCC /usr/bin/clang |" \
+            -e "s|^export CXX=\"/usr/bin/clang++ |export CXX=\"$SCC /usr/bin/clang++ |" \
+            mozconfig-ci
+          /usr/bin/python3 ./mach configure
+          /usr/bin/python3 ./mach build
+
+      # make's output-sync swallows the linker's stderr on failure; retry
+      # the failed target directly so the command and error are visible.
+      - name: Reveal the link failure
+        if: failure()
+        run: |
+          xcodebuild -version
+          xcrun --find ld-classic
+          MAKE="$HOME/.mozbuild/mozmake/mozmake"
+          [ -x "$MAKE" ] || MAKE=make
+          cd obj-x86_64-apple-darwin/toolkit/library/build
+          "$MAKE" ../../../dist/bin/XUL || true
+
+      - name: Stop sccache
+        if: always()
+        run: |
+          sleep 60
+          "$HOME/.mozbuild/sccache/sccache" --stop-server || true
+
+      - name: Save sccache
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: ~/Library/Caches/Mozilla.sccache
+          key: sccache106-${{ runner.os }}-${{ steps.key.outputs.key }}-${{ github.run_id }}
+
+      - name: Save bootstrap toolchains
+        # Never cache a partial ~/.mozbuild from a failed or cancelled
+        # bootstrap: a rerun of this run restores that exact key and skips
+        # bootstrap forever.
+        if: always() && steps.bootstrap.outcome == 'success'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.mozbuild
+          key: mozbuild106-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Package
+        env:
+          MOZCONFIG: ${{ github.workspace }}/mozconfig-ci
+        run: /usr/bin/python3 ./mach package
+
+      - name: Collect artifacts
+        run: |
+          VERSION=$(cat browser/config/version.txt)
+          # mach package stages much of the bundle as absolute symlinks into
+          # the objdir, and its dmg carries them too; materialize a
+          # self-contained app and build both artifacts from it.
+          rm -rf Nightly.app
+          cp -RL obj-x86_64-apple-darwin/dist/Nightly.app Nightly.app
+          # Real 10.6 has no /usr/lib/libc++.1.dylib; load the bundled
+          # darwin10 libc++ through @rpath instead.
+          tools/legacy-macos/rpath-libcxx-10.6.sh Nightly.app
+          # Legacy Widevine CDM support: GMPLoader loads this next to XUL
+          # when a GMP dylib fails the plain load, plus the stub
+          # frameworks/dylibs the CDM hard-depends on.
+          tools/legacy-macos/widevine-cdm-support/build.sh \
+            tools/legacy-macos/dist/widevine
+          cp tools/legacy-macos/dist/widevine/libWidevineLegacyShim.dylib \
+            tools/legacy-macos/dist/widevine/libpm*.dylib \
+            Nightly.app/Contents/MacOS/
+          mkdir -p Nightly.app/Contents/Frameworks
+          cp -R tools/legacy-macos/dist/widevine/LocalAuthentication.framework \
+            tools/legacy-macos/dist/widevine/CryptoTokenKit.framework \
+            Nightly.app/Contents/Frameworks/
+          hdiutil create -volname Nightly -srcfolder Nightly.app \
+            -fs HFS+ -format UDBZ -imagekey zlib-level=9 \
+            "powerfox-${VERSION}_macOS10.6.dmg"
+          zip -qyr "powerfox-${VERSION}_macOS10.6.zip" Nightly.app
+
+      - name: Prune stale cache generations
+        # Per-run cache keys (mozbuild/sccache) bank a fresh ~1.3 GB
+        # generation every run while only the newest is ever restored; the
+        # 10 GiB quota then evicts the other branch's less-frequently-used
+        # entries (sccache106 was wiped this way, forcing cold 10.6 builds).
+        # Keep only the newest generation per prefix.
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh cache list --repo "$GITHUB_REPOSITORY" --limit 100 \
+            --json key,createdAt --jq 'sort_by(.createdAt) | group_by(.key | sub("-[0-9]+$"; "")) | .[] | .[:-1][] | .key' \
+            | while read -r K; do
+                echo "pruning $K"
+                gh cache delete "$K" --repo "$GITHUB_REPOSITORY" || true
+              done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          path: |
+            powerfox-*.dmg
+            powerfox-*.zip
+          if-no-files-found: error
+          retention-days: 14

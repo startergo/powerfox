@@ -20,7 +20,7 @@
 #include "rtc_base/system/no_unique_address.h"
 #include "rtc_base/thread_annotations.h"
 
-#if defined(WEBRTC_MAC)
+#if defined(WEBRTC_MAC) && __has_include(<pthread_spis.h>)
 #include <pthread_spis.h>
 #endif
 
@@ -31,11 +31,9 @@ class RTC_LOCKABLE MutexImpl final {
   MutexImpl() {
     pthread_mutexattr_t mutex_attribute;
     pthread_mutexattr_init(&mutex_attribute);
-#if defined(WEBRTC_MAC)
-  if (__builtin_available(macOS 10.7, *)) {
+#if defined(WEBRTC_MAC) && __has_include(<pthread_spis.h>)
     pthread_mutexattr_setpolicy_np(&mutex_attribute,
                                    _PTHREAD_MUTEX_POLICY_FIRSTFIT);
-  }
 #endif
     pthread_mutex_init(&mutex_, &mutex_attribute);
     pthread_mutexattr_destroy(&mutex_attribute);

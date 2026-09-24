@@ -24,6 +24,10 @@ __attribute__((weak_import))
 @end
 
 __attribute__((weak_import))
+@interface NSSharingServicePicker : NSObject
+@end
+
+__attribute__((weak_import))
 @interface NSSharingServicePickerTouchBarItem : NSTouchBarItem
 @property(strong) id<NSSharingServicePickerTouchBarItemDelegate> delegate;
 @property(strong) NSImage* buttonImage;
@@ -41,10 +45,10 @@ __attribute__((weak_import))
 typedef NSString* NSTouchBarCustomizationIdentifier;
 __attribute__((weak_import))
 @interface NSTouchBar : NSObject
-@property(strong) NSArray<NSTouchBarItemIdentifier>* defaultItemIdentifiers;
+@property(strong) NSArray* defaultItemIdentifiers;
 @property(strong) id<NSTouchBarDelegate> delegate;
 @property(strong) NSTouchBarCustomizationIdentifier customizationIdentifier;
-@property(strong) NSArray<NSTouchBarItemIdentifier>* customizationAllowedItemIdentifiers;
+@property(strong) NSArray* customizationAllowedItemIdentifiers;
 - (NSTouchBarItem*)itemForIdentifier:(NSTouchBarItemIdentifier)aIdentifier;
 @end
 

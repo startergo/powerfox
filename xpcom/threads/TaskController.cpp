@@ -4,6 +4,15 @@
 
 #include "TaskController.h"
 #include "IdleTaskRunner.h"
+#include <mach/mach_init.h>
+#include <mach/task.h>
+#include <mach/vm_map.h>
+#include <mach/mach_time.h>
+#include <mach/thread_act.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <cstdio>
+#include "mozilla/Atomics.h"
 #include "nsIIdleRunnable.h"
 #include "nsIRunnable.h"
 #include "nsThreadUtils.h"
@@ -333,6 +342,219 @@ void ThreadFuncPoolThread(void* aData) {
   TaskController::Get()->RunPoolThread(thread);
 }
 
+// Diagnostic for the 10.6 RDD main-thread wedge: _pthread_cond_wait spins
+// forever trying to acquire the interlock at pthread_cond_t + 8 (the "COND"
+// signature sits at +0). A healthy interlock is only ever held for
+// microseconds, so one that reads nonzero across three 5s checks is the
+// anomaly. Dump the lock word, both canaries, and the raw cond bytes; the
+// word decodes as owner-held (inversion/missing unlock) vs garbage
+// (corruption), and the canaries separate stomps from logic bugs.
+#if defined(XP_MACOSX) && \
+    (!defined(MAC_OS_X_VERSION_10_8) || \
+     MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8)
+static mozilla::Atomic<bool> sPFCVStopped(false);
+
+static void PFHex(char* aOut, uint64_t aV, int aChars) {
+  static const char kHex[] = "0123456789abcdef";
+  for (int i = 0; i < aChars; i++) {
+    aOut[i] = kHex[(aV >> (4 * (aChars - 1 - i))) & 0xf];
+  }
+}
+
+struct PFCVWatch {
+  const uint8_t* mCond;
+  const uint64_t* mCanary1;
+  const uint64_t* mCanary2;
+  const void* mMutex;
+};
+static PFCVWatch sPFCVWatch;
+
+// v2: split Wait entry/return counters (entry==return at high rate => the
+// wait is completing without parking, a predicate loop; entry>>return => a
+// true storm colliding with a real waiter), plus round-robin caller capture
+// and an interlock duty-cycle probe with max contiguous hold time.
+static mozilla::Atomic<uint64_t> sPFCVEntries(0);
+static mozilla::Atomic<uint64_t> sPFCVReturns(0);
+static mozilla::Atomic<uintptr_t> sPFCVCallers[4];
+static uint32_t sPFCVCallerIdx = 0;
+
+// v3: the main thread's actual spin site. Suspending the main thread briefly
+// and reading its registers gives RIP (inside the commpage __spin_lock we
+// disassembled), R8 (the lock word it is spinning on), and [RSP] (the return
+// address naming the caller that asked for the lock). Compared against the
+// logged cond and mGraphMutex addresses, this identifies the lock directly.
+static mozilla::Atomic<uintptr_t> sPFSpinRIP(0);
+
+static mach_port_t sPFMainThread = MACH_PORT_NULL;
+static const uint8_t* sPFMainPthread = nullptr;
+// __pthread_testcancel locks pthread_t + 0x10 (its own disassembly); the
+// thread signature sits at offset 0.
+constexpr size_t kPFPthreadLockOff = 0x10;
+constexpr uint32_t kPFPthreadSig = 0x54485244;
+
+// v4: catch the write. The corrupt value lands in the pthread struct's lock
+// word; poll it from process start and, on a stable bad value, dump the word,
+// all thread register states, and the recent thread-create/exit history.
+static mozilla::Atomic<uint32_t> sPFWritten(0);
+struct PFThreadEvent {
+  uintptr_t mPort;
+  char mKind;  // '+' create, '-' exit
+};
+static PFThreadEvent sPFThreadLog[64];
+static uint32_t sPFThreadLogN = 0;
+
+static void PFLogThreadEvent(uintptr_t aPort, char aKind) {
+  if (sPFThreadLogN < 64) {
+    sPFThreadLog[sPFThreadLogN].mPort = aPort;
+    sPFThreadLog[sPFThreadLogN].mKind = aKind;
+    sPFThreadLogN++;
+  }
+}
+
+static uint32_t PFGrabMainSpin(uintptr_t* aRA, uintptr_t* aLock) {
+  mach_port_t mt = sPFMainThread;
+  uint32_t hits = 0;
+  for (int i = 0; i < 20; i++) {
+    if (thread_suspend(mt) != KERN_SUCCESS) {
+      break;
+    }
+    x86_thread_state64_t st;
+    mach_msg_type_number_t cnt = x86_THREAD_STATE64_COUNT;
+    uintptr_t rip = 0, ra = 0, lock = 0;
+    if (thread_get_state(mt, x86_THREAD_STATE64, (thread_state_t)&st, &cnt) ==
+        KERN_SUCCESS) {
+      rip = st.__rip;
+      if (rip >= 0x7fffffe00260 && rip <= 0x7fffffe00296) {
+        ra = st.__rsp ? *(volatile uint64_t*)st.__rsp : 0;
+        lock = st.__r8;
+      }
+    }
+    thread_resume(mt);
+    if (rip >= 0x7fffffe00260 && rip <= 0x7fffffe00296) {
+      sPFSpinRIP = rip;
+      *aRA = ra;
+      *aLock = lock;
+      hits++;
+    }
+    usleep(1000);
+  }
+  return hits;
+}
+
+static void* PFCVWatchdog(void* aArg) {
+  const uint8_t* cond = static_cast<const uint8_t*>(aArg);
+  static mach_timebase_info_data_t tb;
+  if (tb.denom == 0) {
+    mach_timebase_info(&tb);
+  }
+  auto ToNs = [](uint64_t aTicks) {
+    return aTicks * tb.numer / tb.denom;
+  };
+
+  // Previous thread set for create/exit detection.
+  uintptr_t prevTids[16] = {0};
+  uint32_t prevN = 0;
+
+  uint32_t badStreak = 0;
+  uint32_t dumps = 0;
+  uint64_t lastE = 0;
+  uint64_t lastR = 0;
+  while (!sPFCVStopped && dumps < 6) {
+    // 1ms word polls for ~100ms, then one thread-set snapshot.
+    for (int ms = 0; ms < 100 && !sPFCVStopped && !sPFWritten;
+         ms++) {
+      usleep(1000);
+      if (sPFMainPthread) {
+        uint32_t w =
+            *(const uint32_t volatile*)(sPFMainPthread + kPFPthreadLockOff);
+        if (w != 0 && w != 0xffffffff) {
+          if (++badStreak >= 20) {
+            sPFWritten = 1;
+          }
+        } else {
+          badStreak = 0;
+        }
+      }
+    }
+    if (sPFCVStopped) {
+      return nullptr;
+    }
+
+    // Thread lifecycle snapshot.
+    thread_act_array_t threads;
+    mach_msg_type_number_t tcount = 0;
+    uintptr_t tids[16] = {0};
+    uint32_t nTids = 0;
+    if (task_threads(mach_task_self(), &threads, &tcount) == KERN_SUCCESS) {
+      for (uint32_t i = 0; i < tcount && nTids < 16; i++) {
+        tids[nTids++] = (uintptr_t)threads[i];
+      }
+      for (uint32_t i = 0; i < tcount; i++) {
+        mach_port_deallocate(mach_task_self(), threads[i]);
+      }
+      vm_deallocate(mach_task_self(), (vm_address_t)threads,
+                    tcount * sizeof(thread_act_t));
+      for (uint32_t i = 0; i < nTids; i++) {
+        bool existed = false;
+        for (uint32_t j = 0; j < prevN; j++) {
+          existed |= prevTids[j] == tids[i];
+        }
+        if (!existed) {
+          PFLogThreadEvent(tids[i], '+');
+        }
+      }
+      for (uint32_t j = 0; j < prevN; j++) {
+        bool alive = false;
+        for (uint32_t i = 0; i < nTids; i++) {
+          alive |= tids[i] == prevTids[j];
+        }
+        if (!alive) {
+          PFLogThreadEvent(prevTids[j], '-');
+        }
+      }
+      for (uint32_t i = 0; i < nTids; i++) {
+        prevTids[i] = tids[i];
+      }
+      prevN = nTids;
+    }
+
+    if (sPFWritten && dumps < 6) {
+      char b[1024];
+      int n = 0;
+      n += snprintf(b + n, sizeof(b) - n, "%s", "PFWRITE lock=");
+      PFHex(b + n,
+           *(const uint32_t volatile*)(sPFMainPthread + kPFPthreadLockOff), 8);
+      n += 8;
+      n += snprintf(b + n, sizeof(b) - n, " pthread=");
+      PFHex(b + n, (uintptr_t)sPFMainPthread, 12);
+      n += 12;
+      n += snprintf(b + n, sizeof(b) - n, "%s", " struct=");
+      for (int i = 0; i < 32; i++) {
+        PFHex(b + n, *(const uint8_t volatile*)(sPFMainPthread + i), 2);
+        n += 2;
+      }
+      uintptr_t ra = 0, lockw = 0;
+      PFGrabMainSpin(&ra, &lockw);
+      n += snprintf(b + n, sizeof(b) - n, "%s", " spinlock=");
+      PFHex(b + n, lockw, 12);
+      n += 12;
+      n += snprintf(b + n, sizeof(b) - n, "%s", " events=");
+      for (uint32_t i = 0; i < sPFThreadLogN; i++) {
+        b[n++] = sPFThreadLog[i].mKind;
+        PFHex(b + n, sPFThreadLog[i].mPort, 4);
+        n += 4;
+      }
+      n += snprintf(b + n, sizeof(b) - n, "\n");
+      (void)write(2, b, n);
+      dumps++;
+      badStreak = 0;
+      sPFWritten = 0;  // allow re-arm if it changes again
+    }
+  }
+  return nullptr;
+}
+#endif
+
 TaskController::TaskController()
     : mGraphMutex("TaskController::mGraphMutex"),
       mMainThreadCV(mGraphMutex, "TaskController::mMainThreadCV"),
@@ -348,6 +570,23 @@ TaskController::TaskController()
   mMTBlockingProcessingRunnable = NS_NewRunnableFunction(
       "TaskController::ExecutePendingMTTasks()",
       []() { TaskController::Get()->ProcessPendingMTTask(true); });
+
+#if defined(XP_MACOSX) && \
+    (!defined(MAC_OS_X_VERSION_10_8) || \
+     MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8)
+  sPFMainThread = mach_thread_self();
+  sPFMainPthread = (const uint8_t*)pthread_self();
+  if (*(const uint32_t*)sPFMainPthread != kPFPthreadSig) {
+    sPFMainPthread = nullptr;  // unexpected layout; arm nothing
+  }
+  sPFCVWatch = {static_cast<const uint8_t*>(mMainThreadCV.RawCondPtr()),
+                &mCvCanary1, &mCvCanary2, mGraphMutex.RawMutexPtr()};
+  pthread_t t;
+  if (pthread_create(&t, nullptr, PFCVWatchdog,
+                     const_cast<uint8_t*>(sPFCVWatch.mCond)) == 0) {
+    pthread_detach(t);
+  }
+#endif
 }
 
 void TaskController::InitializeThreadPool() {
@@ -382,6 +621,11 @@ void TaskController::SetPerformanceCounterState(
 
 /* static */
 void TaskController::Shutdown() {
+#if defined(XP_MACOSX) && \
+    (!defined(MAC_OS_X_VERSION_10_8) || \
+     MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8)
+  sPFCVStopped = true;
+#endif
   InputTaskManager::Cleanup();
   VsyncTaskManager::Cleanup();
   if (sSingleton) {
@@ -767,7 +1011,19 @@ nsIRunnable* TaskController::GetRunnableForMTTask(bool aReallyWait) {
     }
 
     AUTO_PROFILER_LABEL("TaskController::GetRunnableForMTTask::Wait", IDLE);
+#if defined(XP_MACOSX) &&                                          \
+    (!defined(MAC_OS_X_VERSION_10_8) ||                            \
+     MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8)
+    sPFCVEntries++;
+    if ((sPFCVEntries & 0xFFFF) == 0) {
+      sPFCVCallers[(sPFCVCallerIdx++) & 3] =
+          (uintptr_t)__builtin_return_address(1);
+    }
     mMainThreadCV.Wait();
+    sPFCVReturns++;
+#else
+    mMainThreadCV.Wait();
+#endif
   }
 
   return aReallyWait ? mMTBlockingProcessingRunnable : mMTProcessingRunnable;

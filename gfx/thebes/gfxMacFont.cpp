@@ -20,7 +20,10 @@
 #include "gfxFontConstants.h"
 #include "gfxTextRun.h"
 #include "gfxUtils.h"
-#include "AppleUtils.h"
+#include "mozilla/AutoCFTypeRef.h"
+#ifdef MOZ_APPLEMEDIA
+#  include "AppleUtils.h"
+#endif
 #include "cairo-quartz.h"
 
 using namespace mozilla;

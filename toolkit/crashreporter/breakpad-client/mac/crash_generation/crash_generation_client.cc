@@ -33,6 +33,7 @@
 #include "common/mac/MachIPC.h"
 
 #include <pthread.h>
+#include <unistd.h>
 #include <servers/bootstrap.h>
 
 namespace google_breakpad {

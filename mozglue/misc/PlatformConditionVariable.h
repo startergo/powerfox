@@ -42,6 +42,8 @@ class ConditionVariableImpl {
   MFBT_API CVStatus wait_for(MutexImpl& lock,
                              const mozilla::TimeDuration& rel_time);
 
+  const void* RawCondPtr() const { return &mCond; }
+
  private:
   ConditionVariableImpl(const ConditionVariableImpl&) = delete;
   ConditionVariableImpl& operator=(const ConditionVariableImpl&) = delete;

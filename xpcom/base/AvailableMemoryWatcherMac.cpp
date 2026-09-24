@@ -8,6 +8,13 @@
 #include <mach/mach_host.h>
 #include <mach/vm_statistics.h>
 
+#ifndef HOST_VM_INFO64_REV0_COUNT
+// Added alongside newer statistics fields; on the period SDK the struct is
+// exactly the revision-0 shape.
+#  define HOST_VM_INFO64_REV0_COUNT \
+    ((mach_msg_type_number_t)(sizeof(vm_statistics64_data_t) / sizeof(integer_t)))
+#endif
+
 #include "AvailableMemoryWatcher.h"
 #include "Logging.h"
 #include "mozilla/Literals.h"

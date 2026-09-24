@@ -4,7 +4,16 @@
 
 #include "nsMenuX.h"
 
-#include <_types/_uint32_t.h>
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
+#  import "SDKDeclarations.h"
+#endif
+
+#if __has_include(<_types/_uint32_t.h>)
+#  include <_types/_uint32_t.h>
+#else
+#  include <stdint.h>
+#endif
 #include <dlfcn.h>
 
 #include "mozilla/dom/Document.h"
@@ -160,7 +169,7 @@ nsMenuX::nsMenuX(nsMenuParentX* aParent, nsMenuGroupOwnerX* aMenuGroupOwner,
   bool isXULWindowMenu = IsXULWindowMenu(mContent);
   if (isXULWindowMenu) {
     // Let the OS know that this is our Window menu.
-    NSApp.windowsMenu = mNativeMenu;
+    [(NSApplication*)NSApp setWindowsMenu:mNativeMenu];
   }
 
   mIcon = MakeUnique<nsMenuItemIconX>(this);
@@ -779,7 +788,11 @@ static NSUserInterfaceLayoutDirection DirectionForElement(
   RefPtr<const ComputedStyle> sc =
       nsComputedDOMStyle::GetComputedStyle(aElement);
   if (!sc) {
-    return NSApp.userInterfaceLayoutDirection;
+    if ([(id)NSApp respondsToSelector:@selector(
+            userInterfaceLayoutDirection)]) {
+      return ((NSApplication*)NSApp).userInterfaceLayoutDirection;
+    }
+    return NSUserInterfaceLayoutDirectionLeftToRight;
   }
 
   switch (sc->StyleVisibility()->mDirection) {
@@ -804,11 +817,12 @@ void nsMenuX::RebuildMenu() {
 
   //markus added these around milestone 90a1, so
   //anything beneath sierra is not going to handle these
-  if(@available(macOS 10.12, *)) {
-  if (menuPopup->IsElement()) {
-    mNativeMenu.userInterfaceLayoutDirection =
-        DirectionForElement(menuPopup->AsElement());
-  }
+  if ([mNativeMenu respondsToSelector:@selector(
+          setUserInterfaceLayoutDirection:)]) {
+    if (menuPopup->IsElement()) {
+      mNativeMenu.userInterfaceLayoutDirection =
+          DirectionForElement(menuPopup->AsElement());
+    }
   }
 
   // Iterate over the kids
@@ -1244,6 +1258,9 @@ void nsMenuX::ObserveContentInserted(dom::Document* aDocument,
 }
 
 void nsMenuX::SetupIcon() {
+  if (!mIcon) {
+    return;
+  }
   mIcon->SetupIcon(mContent);
   mNativeMenuItem.image = mIcon->GetIconImage();
 }

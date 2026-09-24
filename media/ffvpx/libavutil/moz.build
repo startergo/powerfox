@@ -70,6 +70,16 @@ if not CONFIG['MOZ_FFVPX_AUDIOONLY']:
         'timecode.c',
         'video_enc_params.c'
     ]
+
+    if CONFIG['MOZ_LEGACY_MACOS_TARGET']:
+        SOURCES += [
+            'ambient_viewing_environment.c',
+            'display.c',
+            'hdr_dynamic_vivid_metadata.c',
+            'md5.c',
+            'stereo3d.c',
+            'tdrdi.c',
+        ]
     if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
         LOCAL_INCLUDES += ['/media/mozva']
         SOURCES += [

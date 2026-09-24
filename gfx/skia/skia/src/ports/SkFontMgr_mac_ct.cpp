@@ -440,8 +440,14 @@ protected:
                 kCFAllocatorDefault, reinterpret_cast<const UInt8 *>(locale), strlen(locale),
                 kCFStringEncodingUTF8, false));
 
-        SkUniqueCFRef<CTFontRef> fallbackFont(CTFontCreateForStringWithLanguage(
-                familyFont.get(), string.get(), range, cfLocale.get()));
+        SkUniqueCFRef<CTFontRef> fallbackFont(
+            &CTFontCreateForStringWithLanguage
+                 ? CTFontCreateForStringWithLanguage(familyFont.get(),
+                                                     string.get(), range,
+                                                     cfLocale.get())
+                 // Requires macOS 10.9.
+                 : CTFontCreateForString(familyFont.get(), string.get(),
+                                         range));
         if (!fallbackFont || !has_character(fallbackFont.get(), character)) {
             return nullptr;
         }

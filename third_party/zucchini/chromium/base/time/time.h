@@ -115,6 +115,10 @@ struct TimeSpan;
 }  // namespace ABI
 #endif
 
+#if BUILDFLAG(IS_APPLE) && defined(__OBJC__)
+@class NSDate;
+#endif
+
 namespace base {
 
 class PlatformThreadHandle;

@@ -103,6 +103,8 @@ class OffTheBooksCondVar : BlockingResourceBase {
 
 #endif  // ifdef DEBUG
 
+  const void* RawCondPtr() const { return mImpl.RawCondPtr(); }
+
  private:
   OffTheBooksCondVar();
   OffTheBooksCondVar(const OffTheBooksCondVar&) = delete;
@@ -110,6 +112,7 @@ class OffTheBooksCondVar : BlockingResourceBase {
 
   OffTheBooksMutex* mLock;
   detail::ConditionVariableImpl mImpl;
+
 };
 
 /**

@@ -13,6 +13,9 @@
 #include "nsHttp.h"
 #include "nsHttpConnectionMgr.h"
 #include "nsHttpHandler.h"
+#if defined(XP_MACOSX)
+#  include "nsCocoaFeatures.h"
+#endif
 #include "nsHttpChannel.h"
 #include "nsHTTPCompressConv.h"
 #include "nsHttpAuthCache.h"
@@ -1213,13 +1216,12 @@ void nsHttpHandler::InitUserAgentComponents() {
 #  endif
 
 #elif defined(XP_MACOSX)
-  int32_t majorVersion = nsCocoaFeatures::macOSVersionMajor();
-  int32_t minorVersion = nsCocoaFeatures::macOSVersionMinor();
-
-  // Cap the reported macOS version at 10.15 (like Safari) to avoid breaking
-  // sites that assume the UA's macOS version always begins with "10.".
-  int32_t uaVersion =
-      (majorVersion >= 11 || minorVersion > 15) ? 15 : minorVersion;
+  // Report the frozen 10.15 on every system: current Firefox caps the
+  // reported macOS version at 10.15 (like Safari) so the UA never claims
+  // an 11+ numbering, and reporting an older true version (e.g. 10.6 on
+  // this build's deployment targets) gets the browser gated out by
+  // services that only know the frozen value.
+  int32_t uaVersion = 15;
 
   // Always return an "Intel" UA string, even on ARM64 macOS like Safari does.
   mOscpu = nsPrintfCString("Intel Mac OS X 10.%d", uaVersion);
@@ -2915,6 +2917,15 @@ HttpTrafficAnalyzer* nsHttpHandler::GetHttpTrafficAnalyzer() {
 
 bool nsHttpHandler::IsHttp3Enabled() {
   static const uint32_t TLS3_PREF_VALUE = 4;
+
+#if defined(XP_MACOSX)
+  if (!nsCocoaFeatures::OnLionOrLater()) {
+    // quinn UDP sockets cannot be initialized on 10.6 (the socket option it
+    // needs does not exist), and the failed speculative HTTP/3 connection
+    // wedges loads instead of falling back to HTTP/1.1 or h2.
+    return false;
+  }
+#endif
 
   return StaticPrefs::network_http_http3_enable() &&
          (StaticPrefs::security_tls_version_max() >= TLS3_PREF_VALUE);

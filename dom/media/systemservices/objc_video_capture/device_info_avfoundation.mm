@@ -189,7 +189,7 @@ void DeviceInfoAvFoundation::EnsureCapabilitiesMap() {
     return;
   }
 
-  NSArray<AVCaptureDevice*>* devices;
+  NSArray* devices;
   if (@available(macOS 10.15, *)) {
     devices = [RTCCameraVideoCapturer
         captureDevicesWithDeviceTypes:

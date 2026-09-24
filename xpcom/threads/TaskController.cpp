@@ -370,7 +370,7 @@ static PFCVWatch sPFCVWatch;
 // and an interlock duty-cycle probe with max contiguous hold time.
 static mozilla::Atomic<uint64_t> sPFCVEntries(0);
 static mozilla::Atomic<uint64_t> sPFCVReturns(0);
-static void* sPFCVCallers[4] = {nullptr, nullptr, nullptr, nullptr};
+static mozilla::Atomic<uintptr_t> sPFCVCallers[4];
 static uint32_t sPFCVCallerIdx = 0;
 
 static void* PFCVWatchdog(void* aArg) {
@@ -420,9 +420,16 @@ static void* PFCVWatchdog(void* aArg) {
         holdStart = 0;
       }
     }
+    if (holdStart) {
+      uint64_t held = mach_absolute_time() - holdStart;
+      if (held > maxHold) {
+        maxHold = held;
+      }
+    }
     uint64_t dutyPermille = total ? (nonzero * 1000) / total : 0;
 
-    if (eRate > 1000 || dutyPermille > 0) {
+    if (eRate > 10000 || dutyPermille > 50 ||
+        ToNs(maxHold) > 100 * 1000) {
       if (++anomaly >= 3) {
         char b[640];
         int n = 0;
@@ -915,7 +922,8 @@ nsIRunnable* TaskController::GetRunnableForMTTask(bool aReallyWait) {
      MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8)
     sPFCVEntries++;
     if ((sPFCVEntries & 0xFFFF) == 0) {
-      sPFCVCallers[(sPFCVCallerIdx++) & 3] = __builtin_return_address(1);
+      sPFCVCallers[(sPFCVCallerIdx++) & 3] =
+          (uintptr_t)__builtin_return_address(1);
     }
     mMainThreadCV.Wait();
     sPFCVReturns++;

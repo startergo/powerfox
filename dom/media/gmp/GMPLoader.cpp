@@ -483,17 +483,31 @@ char* PatchCDMForTLV(const char* aLibPath) {
     free(data);
     return nullptr;
   }
-  snprintf(out, outLen, "%s.legacy", aLibPath);
+  // Write to a unique temp name and rename, so a crash mid-write never
+  // leaves a truncated .legacy that a subsequent session would load. A
+  // stale .legacy from a previous CDM version is also cleaned up here.
+  snprintf(out, outLen, "%s.legacy.tmp.%d", aLibPath, (int)getpid());
   int outFd = open(out, O_WRONLY | O_CREAT | O_TRUNC, 0600);
   if (outFd < 0 || write(outFd, data, size) != (ssize_t)size) {
     close(outFd);
+    unlink(out);
     free(data);
     free(out);
     return nullptr;
   }
   close(outFd);
+
+  char finalPath[PATH_MAX];
+  snprintf(finalPath, sizeof(finalPath), "%s.legacy", aLibPath);
+  unlink(finalPath);
+  if (rename(out, finalPath) != 0) {
+    unlink(out);
+    free(data);
+    free(out);
+    return nullptr;
+  }
   free(data);
-  return out;
+  return strdup(finalPath);
 }
 
 PRLibrary* LoadCDMWithLegacySupport(const PRLibSpec& aSpec,

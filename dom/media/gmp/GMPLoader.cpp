@@ -389,6 +389,53 @@ const unsigned char* FindBytes(const unsigned char* aHaystack, size_t aHayLen,
   return nullptr;
 }
 
+// The CDM addresses modern-layout pthread TSD slots directly with
+// %gs:(0x10 + 8*n) displacements; on 10.6 those offsets hit unrelated
+// pthread fields — slot 0 is the per-thread lock, and a spill there wedges
+// the thread forever in the commpage spin lock. The shim rewrites every
+// such displacement in the loaded CDM text onto real 10.6 TSD slots it
+// reserved, so the CDM's per-thread state works on the old layout.
+void PatchCdmTsdSlots(void* aShim, const char* aLibPath) {
+  typedef int (*PatchTsdFn)(void*, size_t);
+  PatchTsdFn patch = (PatchTsdFn)dlsym(aShim, "WidevineLegacyShimPatchCdmTsd");
+  if (!patch) {
+    return;
+  }
+  const char* base = strrchr(aLibPath, '/');
+  base = base ? base + 1 : aLibPath;
+  size_t baseLen = strlen(base);
+  for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+    const char* name = _dyld_get_image_name(i);
+    if (!name) {
+      continue;
+    }
+    size_t nameLen = strlen(name);
+    bool match = strcmp(name, aLibPath) == 0;
+    if (!match && baseLen > 0 && nameLen > baseLen + 1 &&
+        name[nameLen - baseLen - 1] == '/' &&
+        strcmp(name + nameLen - baseLen, base) == 0) {
+      match = true;
+    }
+    if (!match) {
+      continue;
+    }
+    const mach_header_64* hdr = (const mach_header_64*)_dyld_get_image_header(i);
+    const load_command* lc = (const load_command*)(hdr + 1);
+    for (uint32_t c = 0; c < hdr->ncmds;
+         c++, lc = (const load_command*)((const char*)lc + lc->cmdsize)) {
+      if (lc->cmd != LC_SEGMENT_64) {
+        continue;
+      }
+      const segment_command_64* sg = (const segment_command_64*)lc;
+      if (!strcmp(sg->segname, "__TEXT")) {
+        patch((void*)hdr, sg->vmsize);
+        return;
+      }
+    }
+    return;
+  }
+}
+
 char* PatchCDMForTLV(const char* aLibPath) {
   static const char* kNames[2] = {"__tlv_bootstrap", "__tlv_atexit"};
   int fd = open(aLibPath, O_RDONLY);
@@ -495,6 +542,7 @@ PRLibrary* LoadCDMWithLegacySupport(const PRLibSpec& aSpec,
   setvar("DYLD_FORCE_FLAT_NAMESPACE", "0");
   if (lib) {
     FixupCDMImage(shim, loadPath);
+    PatchCdmTsdSlots(shim, loadPath);
   }
   free(patchedPath);
   return lib;

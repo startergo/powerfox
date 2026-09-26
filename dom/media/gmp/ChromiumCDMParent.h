@@ -82,6 +82,7 @@ class ChromiumCDMParent final : public PChromiumCDMParent,
   void GetStatusForPolicy(uint32_t aPromiseId,
                           const dom::HDCPVersion& aMinHdcpVersion);
 
+  void EnsureCDMDecoderInitialized();
   RefPtr<DecryptPromise> Decrypt(MediaRawData* aSample);
 
   // TODO: Add functions for clients to send data to CDM, and

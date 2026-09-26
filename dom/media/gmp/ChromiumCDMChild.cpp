@@ -325,6 +325,23 @@ void ChromiumCDMChild::OnSessionKeysChange(const char* aSessionId,
                                            bool aHasAdditionalUsableKey,
                                            const cdm::KeyInformation* aKeysInfo,
                                            uint32_t aKeysInfoCount) {
+  {
+    static bool sKeysLogged = false;
+    if (!sKeysLogged && aKeysInfoCount > 0) {
+      sKeysLogged = true;
+      for (uint32_t i = 0; i < aKeysInfoCount && i < 5; i++) {
+        char kid[33] = {0};
+        uint32_t klen = aKeysInfo[i].key_id_size;
+        for (uint32_t j = 0; j < klen && j < 16; j++) {
+          sprintf(kid + j * 2, "%02x", aKeysInfo[i].key_id[j]);
+        }
+        fprintf(stderr, "PFKEY KEYS[%u] kid=%s status=%d\n", i, kid,
+                (int)aKeysInfo[i].status);
+      }
+      fflush(stderr);
+    }
+  }
+
   GMP_LOG_DEBUG("ChromiumCDMChild::OnSessionKeysChange(sid={}) keys={{{}}}",
                 aSessionId, ToString(aKeysInfo, aKeysInfoCount).get());
 
@@ -716,9 +733,62 @@ mozilla::ipc::IPCResult ChromiumCDMChild::RecvDecrypt(
     return IPC_OK();
   }
 
+  static unsigned sDecryptCount = 0;
+  if (sDecryptCount < 12) {
+    sDecryptCount++;
+    char kid[33] = {0};
+    for (uint32_t i = 0; i < input.key_id_size && i < 16; i++) {
+      sprintf(kid + i * 2, "%02x", input.key_id[i]);
+    }
+    fprintf(stderr,
+            "PFKEY D%u size=%d kid=%s iv=%u ss=%d", sDecryptCount,
+            input.data_size, kid, input.iv_size, input.num_subsamples);
+    for (uint32_t i = 0; i < input.num_subsamples && i < 4; i++) {
+      fprintf(stderr, " [%u+%u]", input.subsamples[i].clear_bytes,
+              input.subsamples[i].cipher_bytes);
+    }
+    fprintf(stderr, "\n");
+    fflush(stderr);
+  }
+
   WidevineDecryptedBlock output;
   cdm::Status status = mCDM->Decrypt(input, &output);
 
+  // Localizing probes for multi-subsample kNoKey
+  static bool sProbed = false;
+  if (status == cdm::kNoKey && input.num_subsamples > 1 && !sProbed) {
+    sProbed = true;
+    uint32_t totalClear = 0, totalEnc = 0;
+    for (uint32_t i = 0; i < input.num_subsamples; i++) {
+      totalClear += input.subsamples[i].clear_bytes;
+      totalEnc += input.subsamples[i].cipher_bytes;
+    }
+    // Probe A: two entries, zero clear bytes each
+    {
+      nsTArray<cdm::SubsampleEntry> pa;
+      pa.AppendElement(cdm::SubsampleEntry{0, totalEnc / 2});
+      pa.AppendElement(cdm::SubsampleEntry{0, totalEnc - totalEnc / 2});
+      cdm::InputBuffer_2 ia = input;
+      ia.subsamples = pa.Elements();
+      ia.num_subsamples = 2;
+      WidevineDecryptedBlock oa;
+      cdm::Status ra = mCDM->Decrypt(ia, &oa);
+      fprintf(stderr, "PFKEY PROBE_A (2x fully-enc): %d\n", (int)ra);
+      fflush(stderr);
+    }
+    // Probe B: single entry with original clear prefix
+    {
+      nsTArray<cdm::SubsampleEntry> pb;
+      pb.AppendElement(cdm::SubsampleEntry{totalClear, totalEnc});
+      cdm::InputBuffer_2 ib = input;
+      ib.subsamples = pb.Elements();
+      ib.num_subsamples = 1;
+      WidevineDecryptedBlock ob;
+      cdm::Status rb = mCDM->Decrypt(ib, &ob);
+      fprintf(stderr, "PFKEY PROBE_B (1x clear-prefix): %d\n", (int)rb);
+      fflush(stderr);
+    }
+  }
   // CDM should have allocated a cdm::Buffer for output.
   if (status != cdm::kSuccess || !output.DecryptedBuffer()) {
     (void)SendDecryptFailed(aId, ClampStatus(status, cdm::kDecryptError));
@@ -800,6 +870,22 @@ mozilla::ipc::IPCResult ChromiumCDMChild::RecvResetVideoDecoder() {
 
 mozilla::ipc::IPCResult ChromiumCDMChild::RecvDecryptAndDecodeFrame(
     const CDMInputBuffer& aBuffer) {
+  {
+    static unsigned sDDCount = 0;
+    if (sDDCount < 8) {
+      sDDCount++;
+      char kid[33] = {0};
+      uint32_t klen = aBuffer.mKeyId().Length();
+      for (uint32_t j = 0; j < klen && j < 16; j++) {
+        sprintf(kid + j * 2, "%02x", aBuffer.mKeyId().Elements()[j]);
+      }
+      fprintf(stderr, "PFKEY DD%u size=%d kid=%s ss=%d\n", sDDCount,
+              (int)aBuffer.mData().Size<uint8_t>(), kid,
+              (int)aBuffer.mClearBytes().Length());
+      fflush(stderr);
+    }
+  }
+
   MOZ_ASSERT(IsOnMessageLoopThread());
   GMP_LOG_DEBUG("ChromiumCDMChild::RecvDecryptAndDecodeFrame() t={})",
                 aBuffer.mTimestamp());

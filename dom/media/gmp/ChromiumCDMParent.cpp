@@ -382,6 +382,21 @@ bool ChromiumCDMParent::SendBufferToCDM(uint32_t aSizeInBytes) {
   return true;
 }
 
+void ChromiumCDMParent::EnsureCDMDecoderInitialized() {
+  MOZ_ASSERT(mGMPThread->IsOnCurrentThread());
+  if (mIsShutdown || mVideoDecoderInitialized) {
+    return;
+  }
+  gmp::CDMVideoDecoderConfig config;
+  config.mCodec() = cdm::VideoCodec::kCodecH264;
+  config.mProfile() = cdm::VideoCodecProfile::kProfileNotNeeded;
+  config.mFormat() = cdm::VideoFormat::kI420;
+  config.mImageWidth() = 320;
+  config.mImageHeight() = 180;
+  SendInitializeVideoDecoder(config);
+  mVideoDecoderInitialized = true;
+}
+
 RefPtr<DecryptPromise> ChromiumCDMParent::Decrypt(MediaRawData* aSample) {
   if (mIsShutdown) {
     MOZ_ASSERT(mGMPThread->IsOnCurrentThread());

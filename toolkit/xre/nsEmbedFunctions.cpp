@@ -29,6 +29,7 @@
 #endif
 
 #include "nsAppRunner.h"
+#include <pthread.h>
 #include "nsExceptionHandler.h"
 #include "mozilla/RuntimeExceptionModule.h"
 #include "nsThreadUtils.h"
@@ -243,6 +244,15 @@ nsresult XRE_InitChildProcess(int aArgc, char* aArgv[],
   MOZ_ASSERT(aChildData);
 
   NS_SetCurrentThreadName("MainThread");
+
+#if defined(XP_MACOSX) &&     (!defined(MAC_OS_X_VERSION_10_8) ||      MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8)
+  // 10.6's __pthread_testcancel takes the per-thread lock at pthread+0x10
+  // on syscall boundaries; the CDM's %gs:0x10 spill lives at that exact
+  // word, so any cancellation check while the spill sits there wedges the
+  // thread in the commpage spin. Gecko never uses pthread cancellation,
+  // so disable cancelability and keep that lock untaken.
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, nullptr);
+#endif
 
 #ifdef MOZ_ASAN_REPORTER
   // In ASan reporter builds, we need to set ASan's log_path as early as

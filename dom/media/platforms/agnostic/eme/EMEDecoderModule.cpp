@@ -93,6 +93,10 @@ class EMEDecryptor final : public MediaDataDecoder,
     EME_LOG("EME max-throughput-ms={}", maxThroughputMs);
     mThroughputLimiter.emplace(mThread, maxThroughputMs);
 
+    // The Widevine CDM's Decrypt needs its internal decoder initialized
+    // before it can look up keys; without it every sample fails with
+    // kNoKey even though keys are present.
+    mProxy->EnsureCDMDecoderInitialized();
     return mDecoder->Init();
   }
 

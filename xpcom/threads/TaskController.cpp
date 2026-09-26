@@ -459,7 +459,7 @@ static void* PFCVWatchdog(void* aArg) {
   uint32_t dumps = 0;
   uint64_t lastE = 0;
   uint64_t lastR = 0;
-  while (!sPFCVStopped && dumps < 6) {
+  while (!sPFCVStopped) {
     // 1ms word polls for ~100ms, then one thread-set snapshot.
     for (int ms = 0; ms < 100 && !sPFCVStopped && !sPFWritten;
          ms++) {
@@ -468,8 +468,23 @@ static void* PFCVWatchdog(void* aArg) {
         uint32_t w =
             *(const uint32_t volatile*)(sPFMainPthread + kPFPthreadLockOff);
         if (w != 0 && w != 0xffffffff) {
-          if (++badStreak >= 20) {
-            sPFWritten = 1;
+          // The CDM's %gs:0x10 spill parks its state here. Zeroing it
+          // unconditionally destroys that state and restarts the CDM's
+          // work; only repair when a lock taker is genuinely stuck
+          // spinning on it (rip in the commpage spin, r8 = the word).
+          if (++badStreak >= 2) {
+            uintptr_t ra = 0, lockw = 0;
+            if (PFGrabMainSpin(&ra, &lockw) > 0 &&
+                lockw == (uintptr_t)(sPFMainPthread + kPFPthreadLockOff)) {
+              char rb[96];
+              int rn = snprintf(rb, sizeof rb,
+                                "PFREPAIR val=%08x ra=%llx rsp0=%llx\n", w,
+                                (unsigned long long)ra,
+                                (unsigned long long)sPFSpinRIP);
+              (void)write(2, rb, rn);
+              sPFWritten = 1;
+              *(volatile uint32_t*)(sPFMainPthread + kPFPthreadLockOff) = 0;
+            }
           }
         } else {
           badStreak = 0;
@@ -518,7 +533,7 @@ static void* PFCVWatchdog(void* aArg) {
       prevN = nTids;
     }
 
-    if (sPFWritten && dumps < 6) {
+    if (sPFWritten) {
       char b[1024];
       int n = 0;
       n += snprintf(b + n, sizeof(b) - n, "%s", "PFWRITE lock=");

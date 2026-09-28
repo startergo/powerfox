@@ -225,8 +225,10 @@ class ChromiumCDMParent final : public PChromiumCDMParent,
   // certificate. The pending pair commits only once the CDM resolves the
   // certificate promise.
   nsTArray<uint8_t> mServerCert;
-  nsTArray<uint8_t> mPendingServerCert;
-  Maybe<uint32_t> mPendingServerCertPromiseId;
+  // Certificates sent to the CDM but not yet accepted, keyed by the
+  // promise id their resolution carries; the last accepted certificate is
+  // kept for replay across a decoder deinitialize, which drops it CDM-side.
+  nsTHashMap<nsUint32HashKey, nsTArray<uint8_t>> mPendingServerCerts;
   static constexpr uint32_t kInternalPromiseId = 0x7ffffffe;
   bool mActorDestroyed = false;
   bool mAbnormalShutdown = false;

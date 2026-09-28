@@ -178,8 +178,7 @@ void ChromiumCDMParent::SetServerCertificate(uint32_t aPromiseId,
     RejectPromiseWithStateError(
         aPromiseId, "Failed to send setServerCertificate to CDM process"_ns);
   } else {
-    mPendingServerCert = aCert.Clone();
-    mPendingServerCertPromiseId = Some(aPromiseId);
+    mPendingServerCerts.InsertOrUpdate(aPromiseId, aCert.Clone());
   }
 }
 
@@ -525,10 +524,9 @@ ipc::IPCResult ChromiumCDMParent::RecvOnResolvePromise(
   if (aPromiseId == kInternalPromiseId) {
     return IPC_OK();
   }
-  if (mPendingServerCertPromiseId == Some(aPromiseId)) {
-    mServerCert = std::move(mPendingServerCert);
-    mPendingServerCertPromiseId = Nothing();
-    mPendingServerCert.Clear();
+  nsTArray<uint8_t> pending;
+  if (mPendingServerCerts.Remove(aPromiseId, &pending)) {
+    mServerCert = std::move(pending);
   }
   ResolvePromise(aPromiseId);
   return IPC_OK();
@@ -598,10 +596,7 @@ ipc::IPCResult ChromiumCDMParent::RecvOnRejectPromise(
   if (aPromiseId == kInternalPromiseId) {
     return IPC_OK();
   }
-  if (mPendingServerCertPromiseId == Some(aPromiseId)) {
-    mPendingServerCertPromiseId = Nothing();
-    mPendingServerCert.Clear();
-  }
+  mPendingServerCerts.Remove(aPromiseId);
   RejectPromise(aPromiseId, ToErrorResult(aException, aErrorMessage),
                 aErrorMessage);
   return IPC_OK();
@@ -1236,6 +1231,10 @@ RefPtr<MediaDataDecoder::InitPromise> ChromiumCDMParent::InitializeVideoDecoder(
     (void)SendDeinitializeVideoDecoder();
     mVideoDecoderInitialized = false;
     mVideoDecoderGen++;
+    // Any certificate still in flight was superseded by this deinitialize;
+    // its late resolution must not update the cache the replay below
+    // re-establishes.
+    mPendingServerCerts.Clear();
     if (!mServerCert.IsEmpty()) {
       // DeinitializeDecoder also discards the CDM's stored service
       // certificate, which the page set before playback started. Re-send it

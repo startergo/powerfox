@@ -24,6 +24,7 @@
 #include <objc/runtime.h>
 #include <dlfcn.h>
 #include <stdio.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
@@ -45,10 +46,60 @@ void _os_log_impl(void* log, void* buf, uint32_t sz) {}
 bool os_log_type_enabled(void* log, uint8_t type) { return false; }
 void os_release(void* object) {}
 
-uint64_t clock_gettime_nsec_np(uint32_t clk) {
+// Darwin clockid values (usr/include/_time.h) for SDKs that predate them.
+#ifndef CLOCK_REALTIME
+#define CLOCK_REALTIME 0
+#endif
+#ifndef CLOCK_MONOTONIC
+#define CLOCK_MONOTONIC 6
+#endif
+#ifndef CLOCK_MONOTONIC_RAW
+#define CLOCK_MONOTONIC_RAW 4
+#endif
+#ifndef CLOCK_MONOTONIC_RAW_APPROX
+#define CLOCK_MONOTONIC_RAW_APPROX 5
+#endif
+#ifndef CLOCK_UPTIME_RAW
+#define CLOCK_UPTIME_RAW 8
+#endif
+#ifndef CLOCK_UPTIME_RAW_APPROX
+#define CLOCK_UPTIME_RAW_APPROX 9
+#endif
+#ifndef CLOCK_PROCESS_CPUTIME_ID
+#define CLOCK_PROCESS_CPUTIME_ID 12
+#endif
+#ifndef CLOCK_THREAD_CPUTIME_ID
+#define CLOCK_THREAD_CPUTIME_ID 16
+#endif
+
+static uint64_t mach_abs_ns(void) {
   static mach_timebase_info_data_t tb;
   if (tb.denom == 0) mach_timebase_info(&tb);
   return (uint64_t)((__uint128_t)mach_absolute_time() * tb.numer / tb.denom);
+}
+
+static uint64_t realtime_ns(void) {
+  struct timeval tv;
+  gettimeofday(&tv, 0);
+  return (uint64_t)tv.tv_sec * 1000000000ull + (uint64_t)tv.tv_usec * 1000;
+}
+
+uint64_t clock_gettime_nsec_np(uint32_t clk) {
+  switch (clk) {
+    case CLOCK_REALTIME:
+      return realtime_ns();
+    // CLOCK_MONOTONIC proper is sleep-inclusive (mach_continuous_time,
+    // 10.12+); mach_absolute_time is the closest monotonic source earlier.
+    case CLOCK_MONOTONIC:
+    case CLOCK_MONOTONIC_RAW:
+    case CLOCK_MONOTONIC_RAW_APPROX:
+    case CLOCK_UPTIME_RAW:
+    case CLOCK_UPTIME_RAW_APPROX:
+      return mach_abs_ns();
+    default:
+      errno = EINVAL;
+      return 0;
+  }
 }
 
 extern void arc4random_buf(void*, size_t);
@@ -95,11 +146,28 @@ void* aligned_alloc(size_t alignment, size_t size) {
 }
 
 int clock_gettime(clockid_t clk, struct timespec* ts) {
-  struct timeval tv;
-  gettimeofday(&tv, 0);
-  ts->tv_sec = tv.tv_sec;
-  ts->tv_nsec = tv.tv_usec * 1000;
-  return 0;
+  switch (clk) {
+    case CLOCK_REALTIME: {
+      struct timeval tv;
+      gettimeofday(&tv, 0);
+      ts->tv_sec = tv.tv_sec;
+      ts->tv_nsec = tv.tv_usec * 1000;
+      return 0;
+    }
+    case CLOCK_MONOTONIC:
+    case CLOCK_MONOTONIC_RAW:
+    case CLOCK_MONOTONIC_RAW_APPROX:
+    case CLOCK_UPTIME_RAW:
+    case CLOCK_UPTIME_RAW_APPROX: {
+      uint64_t ns = mach_abs_ns();
+      ts->tv_sec = (time_t)(ns / 1000000000ull);
+      ts->tv_nsec = (long)(ns % 1000000000ull);
+      return 0;
+    }
+    default:
+      errno = EINVAL;
+      return -1;
+  }
 }
 
 int pthread_set_qos_class_self_np(qos_class_t cls, int prio) { return 0; }
@@ -159,7 +227,13 @@ kern_return_t shim_mach_port_peek(mach_port_t task, mach_port_t name,
                                   void* trailer) {
   return 7;
 }
-void* _os_signpost_emit_with_name_impl = 0;
+// Real libtrace prototype (os/signpost.h); the CDM's os_signpost macros
+// either call it directly or compare its address to NULL before doing so,
+// so it must be callable code, not data.
+void _os_signpost_emit_with_name_impl(void* dso, void* log, uint8_t type,
+                                      uint64_t spid, const char* name,
+                                      const char* format, uint8_t* buf,
+                                      uint32_t size) {}
 
 void* real_msgSend;
 void* real_msgSend_stret;
@@ -581,13 +655,15 @@ bool __atomic_compare_exchange_16(struct __atomic16* p, struct __atomic16* e,
   return cas16(p, e, d);
 }
 
+// The lock-free paths below serve exact widths only: a size-3 store through
+// the 4-byte entry, say, would both read and write past the object.
 void shim_atomic_load(uint64_t size, const void* ptr, void* ret, int order)
     __asm("___atomic_load");
 void shim_atomic_load(uint64_t size, const void* ptr, void* ret, int order) {
-  if (size <= 1) *(uint8_t*)ret = __atomic_load_1((const uint8_t*)ptr);
+  if (size == 1) *(uint8_t*)ret = __atomic_load_1((const uint8_t*)ptr);
   else if (size == 2) *(uint16_t*)ret = __atomic_load_2((const uint16_t*)ptr);
-  else if (size <= 4) *(uint32_t*)ret = __atomic_load_4((const uint32_t*)ptr);
-  else if (size <= 8) *(uint64_t*)ret = __atomic_load_8((const uint64_t*)ptr);
+  else if (size == 4) *(uint32_t*)ret = __atomic_load_4((const uint32_t*)ptr);
+  else if (size == 8) *(uint64_t*)ret = __atomic_load_8((const uint64_t*)ptr);
   else if (size == 16) {
     struct __atomic16 r = __atomic_load_16((const struct __atomic16*)ptr);
     memcpy(ret, &r, 16);
@@ -602,10 +678,10 @@ void shim_atomic_load(uint64_t size, const void* ptr, void* ret, int order) {
 void shim_atomic_store(uint64_t size, void* ptr, const void* val, int order)
     __asm("___atomic_store");
 void shim_atomic_store(uint64_t size, void* ptr, const void* val, int order) {
-  if (size <= 1) __atomic_store_1((uint8_t*)ptr, *(const uint8_t*)val);
+  if (size == 1) __atomic_store_1((uint8_t*)ptr, *(const uint8_t*)val);
   else if (size == 2) __atomic_store_2((uint16_t*)ptr, *(const uint16_t*)val);
-  else if (size <= 4) __atomic_store_4((uint32_t*)ptr, *(const uint32_t*)val);
-  else if (size <= 8) __atomic_store_8((uint64_t*)ptr, *(const uint64_t*)val);
+  else if (size == 4) __atomic_store_4((uint32_t*)ptr, *(const uint32_t*)val);
+  else if (size == 8) __atomic_store_8((uint64_t*)ptr, *(const uint64_t*)val);
   else if (size == 16) __atomic_store_16((void*)ptr, *(const struct __atomic16*)val);
   else {
     pthread_mutex_lock(&g_big_atomic_lock);
@@ -617,12 +693,11 @@ void shim_atomic_exchange(uint64_t size, void* ptr, const void* val, void* ret,
                           int order) __asm("___atomic_exchange");
 void shim_atomic_exchange(uint64_t size, void* ptr, const void* val, void* ret,
                           int order) {
-  if (size <= 8) {
-    if (size <= 1) *(uint8_t*)ret = __atomic_exchange_1((uint8_t*)ptr, *(const uint8_t*)val);
-    else if (size == 2) *(uint16_t*)ret = __atomic_exchange_2((uint16_t*)ptr, *(const uint16_t*)val);
-    else if (size <= 4) *(uint32_t*)ret = __atomic_exchange_4((uint32_t*)ptr, *(const uint32_t*)val);
-    else *(uint64_t*)ret = __atomic_exchange_8((uint64_t*)ptr, *(const uint64_t*)val);
-  } else if (size == 16) {
+  if (size == 1) *(uint8_t*)ret = __atomic_exchange_1((uint8_t*)ptr, *(const uint8_t*)val);
+  else if (size == 2) *(uint16_t*)ret = __atomic_exchange_2((uint16_t*)ptr, *(const uint16_t*)val);
+  else if (size == 4) *(uint32_t*)ret = __atomic_exchange_4((uint32_t*)ptr, *(const uint32_t*)val);
+  else if (size == 8) *(uint64_t*)ret = __atomic_exchange_8((uint64_t*)ptr, *(const uint64_t*)val);
+  else if (size == 16) {
     struct __atomic16 r = __atomic_exchange_16((void*)ptr, *(const struct __atomic16*)val);
     memcpy(ret, &r, 16);
   } else {
@@ -637,12 +712,10 @@ bool shim_atomic_cas(uint64_t size, void* ptr, void* expected,
     __asm("___atomic_compare_exchange");
 bool shim_atomic_cas(uint64_t size, void* ptr, void* expected,
                      const void* desired, int success, int failure) {
-  if (size <= 8) {
-    if (size <= 1) return __atomic_compare_exchange_1((uint8_t*)ptr, (uint8_t*)expected, *(const uint8_t*)desired);
-    if (size == 2) return __atomic_compare_exchange_2((uint16_t*)ptr, (uint16_t*)expected, *(const uint16_t*)desired);
-    if (size <= 4) return __atomic_compare_exchange_4((uint32_t*)ptr, (uint32_t*)expected, *(const uint32_t*)desired);
-    return __atomic_compare_exchange_8((uint64_t*)ptr, (uint64_t*)expected, *(const uint64_t*)desired);
-  }
+  if (size == 1) return __atomic_compare_exchange_1((uint8_t*)ptr, (uint8_t*)expected, *(const uint8_t*)desired);
+  if (size == 2) return __atomic_compare_exchange_2((uint16_t*)ptr, (uint16_t*)expected, *(const uint16_t*)desired);
+  if (size == 4) return __atomic_compare_exchange_4((uint32_t*)ptr, (uint32_t*)expected, *(const uint32_t*)desired);
+  if (size == 8) return __atomic_compare_exchange_8((uint64_t*)ptr, (uint64_t*)expected, *(const uint64_t*)desired);
   if (size == 16) {
     return cas16((void*)ptr, (void*)expected, *(const struct __atomic16*)desired);
   }
@@ -660,7 +733,9 @@ void shim_atomic_signal_fence(int order) __asm("___atomic_signal_fence");
 void shim_atomic_signal_fence(int order) { __asm__ volatile("" ::: "memory"); }
 bool shim_atomic_is_lock_free(uint64_t size, const void* ptr)
     __asm("___atomic_is_lock_free");
-bool shim_atomic_is_lock_free(uint64_t size, const void* ptr) { return size <= 16; }
+bool shim_atomic_is_lock_free(uint64_t size, const void* ptr) {
+  return size == 1 || size == 2 || size == 4 || size == 8 || size == 16;
+}
 
 // Runs at dlopen, before any CDM thread exists: creating the TLS keys
 // lazily from a racing worker lets threads see g_tlv_key == 0 (a valid

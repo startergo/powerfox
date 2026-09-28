@@ -311,10 +311,15 @@ int main(int argc, char** argv) {
   {
     DyldSetVarFn setvar = find_dyld_set_variable();
     fprintf(stderr, "H: dyld setvar=%p\n", (void*)setvar);
-    if (setvar) {
-      setvar("DYLD_FORCE_FLAT_NAMESPACE", "1");
-      fprintf(stderr, "H: flat namespace flipped ON\n");
+    if (!setvar) {
+      fprintf(stderr,
+              "H: dyld set_variable unavailable; the CDM would load in the "
+              "normal namespace and not reproduce the flat-namespace path — "
+              "aborting before dlopen\n");
+      return 1;
     }
+    setvar("DYLD_FORCE_FLAT_NAMESPACE", "1");
+    fprintf(stderr, "H: flat namespace flipped ON\n");
   }
   char* patchedPath = patch_cdm_for_tlv(argv[2]);
   const char* loadPath = patchedPath ? patchedPath : argv[2];

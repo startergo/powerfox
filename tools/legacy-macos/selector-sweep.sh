@@ -198,7 +198,7 @@ for fp in open(files_path):
                 f"{rel}:{ln}: {lines[ln - 1].strip()[:90]}")
         elif recv not in ('self', 'super') and recv not in our_classes and not recv.startswith(
                 ('ns', 'moz', 'MOZ', 'Gecko', 'Child', 'Toolbar', 'Base', 'Pixel', 'Native', 'Web')):
-            hits.setdefault(sel, []).append(
+            unresolved.setdefault(sel, []).append(
                 f"{rel}:{ln}: {lines[ln - 1].strip()[:90]}")
     for i, line in enumerate(lines, 1):
         if '[' not in line and '@selector' not in line:

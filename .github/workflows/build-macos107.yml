@@ -60,7 +60,7 @@ jobs:
         run: |
           RUSTV=$(rustc --version | tr ' /' '--')
           SDKV=$(xcrun --sdk macosx --show-sdk-version)
-          echo "key=legacy107-${{ runner.os }}-${RUSTV}-sdk${SDKV}-${{ hashFiles('tools/legacy-macos/build-libcxx.sh', 'tools/legacy-macos/build-rust-std.sh') }}" >> "$GITHUB_OUTPUT"
+          echo "key=legacy107-v2-${{ runner.os }}-${RUSTV}-sdk${SDKV}-${{ hashFiles('tools/legacy-macos/build-libcxx.sh', 'tools/legacy-macos/build-rust-std.sh') }}" >> "$GITHUB_OUTPUT"
 
       - name: Restore support artifacts
         id: cache

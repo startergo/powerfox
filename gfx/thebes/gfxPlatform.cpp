@@ -3322,7 +3322,7 @@ void gfxPlatform::InitWebGLConfig() {
       // vsync gives uniform 30fps delivery where free-running jitters.
       int ncpu = 0;
       size_t len = sizeof(ncpu);
-      sysctlbyname("hw.ncpu", &ncpu, &len, nullptr, 0);
+      sysctlbyname("hw.physicalcpu", &ncpu, &len, nullptr, 0);
       if (ncpu > 0 && ncpu <= 2 &&
           !Preferences::HasUserValue("gfx.display.frame-rate-divisor")) {
         Preferences::SetInt("gfx.display.frame-rate-divisor", 2,

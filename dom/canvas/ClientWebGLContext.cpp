@@ -517,7 +517,7 @@ webgl::SwapChainOptions ClientWebGLContext::PrepareAsyncSwapChainOptions(
   static const bool sFewCore = []() {
     int count = 0;
     size_t len = sizeof(count);
-    sysctlbyname("hw.ncpu", &count, &len, nullptr, 0);
+    sysctlbyname("hw.physicalcpu", &count, &len, nullptr, 0);
     return count > 0 && count <= 2;
   }();
   if (sFewCore && !options.forceAsyncPresent) {

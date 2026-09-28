@@ -32,6 +32,7 @@
 #  include <mach-o/loader.h>
 #  include <mach-o/nlist.h>
 #  include <mach/mach.h>
+#  include <mach/mach_vm.h>
 #  include <objc/objc.h>
 #  include <objc/runtime.h>
 #  include <string.h>
@@ -254,7 +255,37 @@ bool IsObjCSendSlotName(const char* aName) {
          strcmp(aName, "_objc_msgSendSuper") == 0;
 }
 
+// mprotect requires a page-aligned address spanning to the range end.
+// Returns the pages' original protection through aOrigProt so it can be
+// restored once the caller is done patching; sections sharing a page must
+// all be patched before the first restore.
+static bool UnprotectSection(uintptr_t aAddr, size_t aSize, int* aOrigProt) {
+  uintptr_t page = aAddr & ~4095UL;
+  size_t len = ((aAddr + aSize + 4095) & ~4095UL) - page;
+  mach_vm_address_t region = page;
+  mach_vm_size_t regionSize = 0;
+  vm_region_basic_info_data_64_t info;
+  mach_msg_type_number_t infoCount = VM_REGION_BASIC_INFO_COUNT_64;
+  mach_port_t name;
+  // -1 leaves the pages writable on an unreadable region: losing the
+  // hardening is safe, restoring an RW section to read-only is not.
+  *aOrigProt = -1;
+  if (mach_vm_region(mach_task_self(), &region, &regionSize,
+                     VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info,
+                     &infoCount, &name) == KERN_SUCCESS &&
+      region <= page && page < region + regionSize) {
+    *aOrigProt = info.protection;
+  }
+  return mprotect((void*)page, len, PROT_READ | PROT_WRITE) == 0;
+}
+
 void FixupCDMImage(void* aShim, const char* aLibPath) {
+  struct PatchedPages {
+    uintptr_t page;
+    size_t len;
+    int prot;
+  };
+  AutoTArray<PatchedPages, 8> patched;
   const char* base = strrchr(aLibPath, '/');
   base = base ? base + 1 : aLibPath;
   size_t baseLen = strlen(base);
@@ -330,9 +361,14 @@ void FixupCDMImage(void* aShim, const char* aLibPath) {
         // system TLV runtime and the thunks stay untouched.
         void** thunks = (void**)slots;
         void* tlvBootstrap = dlsym(aShim, "__tlv_bootstrap");
-        if (!UnprotectSection((uintptr_t)slots, sec->size)) {
+        int origProt = PROT_READ;
+        if (!UnprotectSection((uintptr_t)slots, sec->size, &origProt)) {
           continue;
         }
+        patched.AppendElement(PatchedPages{(uintptr_t)slots & ~4095UL,
+                                           ((uintptr_t)slots + sec->size + 4095) & ~4095UL -
+                                               ((uintptr_t)slots & ~4095UL),
+                                           origProt});
         for (size_t k = 0; k < count / 3 && tlvBootstrap; k++) {
           if (!thunks[k * 3]) {
             thunks[k * 3] = tlvBootstrap;
@@ -343,9 +379,14 @@ void FixupCDMImage(void* aShim, const char* aLibPath) {
       if (strcmp(sec->sectname, "__objc_selrefs") == 0) {
         // The old ObjC runtime never canonicalized this image's selector
         // references; the CDM also passes embedded name strings directly.
-        if (!UnprotectSection((uintptr_t)slots, sec->size)) {
+        int origProt = PROT_READ;
+        if (!UnprotectSection((uintptr_t)slots, sec->size, &origProt)) {
           continue;
         }
+        patched.AppendElement(PatchedPages{(uintptr_t)slots & ~4095UL,
+                                           ((uintptr_t)slots + sec->size + 4095) & ~4095UL -
+                                               ((uintptr_t)slots & ~4095UL),
+                                           origProt});
         SEL* refs = (SEL*)slots;
         for (size_t k = 0; k < count; k++) {
           if (refs[k]) {
@@ -359,9 +400,14 @@ void FixupCDMImage(void* aShim, const char* aLibPath) {
                         type != S_NON_LAZY_SYMBOL_POINTERS)) {
         continue;
       }
-      if (!UnprotectSection((uintptr_t)slots, sec->size)) {
+      int origProt = PROT_READ;
+      if (!UnprotectSection((uintptr_t)slots, sec->size, &origProt)) {
         continue;
       }
+      patched.AppendElement(PatchedPages{(uintptr_t)slots & ~4095UL,
+                                         ((uintptr_t)slots + sec->size + 4095) & ~4095UL -
+                                             ((uintptr_t)slots & ~4095UL),
+                                         origProt});
       void** ptrs = (void**)slots;
       for (size_t k = 0; k < count; k++) {
         uint32_t idx = indirect[sec->reserved1 + k];
@@ -379,6 +425,11 @@ void FixupCDMImage(void* aShim, const char* aLibPath) {
           }
         }
       }
+    }
+  }
+  for (const PatchedPages& p : patched) {
+    if (p.prot != -1) {
+      mprotect((void*)p.page, p.len, p.prot);
     }
   }
 }

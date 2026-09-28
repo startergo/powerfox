@@ -26,16 +26,16 @@ find Contents -type f | while read -r BIN; do
         *.app/Contents/MacOS/*)
           # Nested helper apps resolve @rpath against their own MacOS
           # directory; point them back at the top-level one.
-          RP="@executable_path/$(echo "$BIN" | awk -F/ '{ofs=""; for (i = 3; i < NF; i++) ofs = ofs "../"; print ofs}')"
+          RP="@loader_path/$(echo "$BIN" | awk -F/ '{ofs=""; for (i = 3; i < NF; i++) ofs = ofs "../"; print ofs}')"
           ;;
         *)
-          RP="@executable_path/."
+          RP="@loader_path/."
           ;;
       esac
       ;;
     *)
       # Relocated helper binaries, e.g. the LaunchServices updater.
-      RP="@executable_path/$(dirname "$BIN" | awk -F/ '{ofs=""; for (i = 1; i < NF; i++) ofs = ofs "../"; print ofs}')MacOS"
+      RP="@loader_path/$(dirname "$BIN" | awk -F/ '{ofs=""; for (i = 1; i < NF; i++) ofs = ofs "../"; print ofs}')MacOS"
       ;;
   esac
   if ! otool -l "$BIN" | grep -q "path $RP "; then

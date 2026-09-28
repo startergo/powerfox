@@ -20,7 +20,7 @@
 #
 # Exit 0 = report written; "NEW UNGUARDED CANDIDATES: 0" is the clean state.
 
-set -u
+set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OBJDIR="${SWEEP_OBJDIR:-$PROJECT_ROOT/obj-x86_64-apple-darwin}"
 XUL="$OBJDIR/dist/Nightly.app/Contents/MacOS/XUL"
@@ -90,12 +90,11 @@ import re, os, sys
 
 universe_path, safe_path, ours_path, src_root, files_path, report_path = sys.argv[1:7]
 universe = set(l.rstrip('\n') for l in open(universe_path, errors='ignore'))
-universe_colon = set(u for u in universe if u.endswith(':'))
 
 def present(sel):
-    if sel in universe:
-        return True
-    return sel + ':' in universe_colon or (':' in sel and sel in universe)
+    # ObjC selectors include their colons: "foo" and "foo:" are different
+    # selectors, so only an exact string match counts as present.
+    return sel in universe
 
 selshape = re.compile(r'^[A-Za-z_][A-Za-z0-9_:]{2,64}$')
 ours = set(l.strip() for l in open(ours_path, errors='ignore') if selshape.match(l.strip()))
@@ -116,6 +115,55 @@ class_send_re = re.compile(
     r'(?:\s+[A-Za-z_][A-Za-z0-9_.\]]+){0,2}\s+([A-Za-z_][A-Za-z0-9_]*)')
 any_send_recv_re = re.compile(
     r'\[\s*([A-Za-z_][A-Za-z0-9_.\]]*)((?:\s+[A-Za-z_][A-Za-z0-9_.\]]+)*?)\s+([A-Za-z_][A-Za-z0-9_]*)')
+
+class_prefixes = ('NS', 'CI', 'CA', 'CT', 'AV', 'SF', 'QL', 'IK', 'PDF',
+                  'Sec', 'ATSU', 'MTL', 'WK', 'CB', 'GK', 'NE', 'AS')
+ident_re = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
+
+def colon_sends(text):
+    """(receiver, full selector with all colons) for each argument-taking
+    send [recv sel:arg sel:arg ...]; argument subexpressions (nested
+    brackets/parens/braces, literals) are skipped, and the regexes above
+    only see the first identifier of such selectors."""
+    spans, stack = [], []
+    for i, ch in enumerate(text):
+        if ch == '[':
+            stack.append(i)
+        elif ch == ']' and stack:
+            spans.append((stack.pop(), i))
+    sends = []
+    for start, end in spans:
+        body = text[start + 1:end]
+        recv, parts, depth, i, n = None, [], 0, 0, len(body)
+        while i < n:
+            c = body[i]
+            if c in '[({':
+                depth += 1
+            elif c in '])}':
+                depth -= 1
+            elif c in '"\'':
+                q = c
+                i += 1
+                while i < n and body[i] != q:
+                    i += 2 if body[i] == '\\' else 1
+            else:
+                m = ident_re.match(body, i)
+                if m:
+                    if recv is None:
+                        recv = m.group(0)
+                    j = m.end()
+                    while j < n and body[j] in ' \t':
+                        j += 1
+                    if depth == 0 and j < n and body[j] == ':':
+                        parts.append(m.group(0) + ':')
+                        i = j + 1
+                        continue
+                    i = m.end()
+                    continue
+            i += 1
+        if recv and parts:
+            sends.append((recv, ''.join(parts)))
+    return sends
 
 hits = {}
 unresolved = {}
@@ -155,6 +203,14 @@ for fp in open(files_path):
                     ('ns', 'moz', 'MOZ', 'Gecko', 'Child', 'Toolbar', 'Base', 'Pixel', 'Native', 'Web')):
                 continue
             unresolved.setdefault(sel, []).append(f"{rel}:{i}: {stripped[:90]}")
+        for recv, sel in colon_sends(line):
+            if sel not in cands or sel in hits:
+                continue
+            if recv.startswith(class_prefixes) and recv not in our_classes:
+                hits.setdefault(sel, []).append(f"{rel}:{i}: {stripped[:90]}")
+            elif recv not in ('self', 'super') and recv not in our_classes and not recv.startswith(
+                    ('ns', 'moz', 'MOZ', 'Gecko', 'Child', 'Toolbar', 'Base', 'Pixel', 'Native', 'Web')):
+                unresolved.setdefault(sel, []).append(f"{rel}:{i}: {stripped[:90]}")
 
 new_hits = {s: v for s, v in hits.items() if s.split(':')[0] not in safe and s not in safe}
 known_hits = {s: v for s, v in hits.items() if s in safe or s.split(':')[0] in safe}

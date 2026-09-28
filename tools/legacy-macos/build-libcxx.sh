@@ -4,10 +4,13 @@
 # so the app's Contents/MacOS/ directory (see browser/installer/Makefile.in)
 # satisfies them.
 #
-# The __cxa_thread_atexit_impl stub makes thread_local destructors work on
-# systems where libSystem does not provide it (pre-10.10); the math shim
-# declares llround/llrint, which exist in 10.6's libSystem but are missing
-# from the 10.6 SDK's math.h.
+# libc++abi is built without HAVE___CXA_THREAD_ATEXIT_IMPL where possible:
+# it then weak-checks the libc symbol and falls back to its own pthread-key
+# destructor list where libSystem lacks it (pre-10.10), so thread_local
+# destructors actually run. The 10.6 target rejects the fallback's __thread
+# bookkeeping (no TLS support), so there the stub stays and thread_local
+# destructors are dropped. The math shim declares llround/llrint, which
+# exist in 10.6's libSystem but are missing from the 10.6 SDK's math.h.
 #
 # Usage: tools/legacy-macos/build-libcxx.sh [sdk-path] [macos-version]
 # Output: tools/legacy-macos/dist[-<version>]/lib/{libc++.1.0.dylib,libc++abi.1.0.dylib}
@@ -46,6 +49,14 @@ fetch libcxxabi-5.0.1.src
 
 TARGET_FLAGS="-target x86_64-apple-macos${MACOS_VERSION} -isysroot $SDKROOT"
 
+# 10.6 cannot compile libc++abi's internal thread_atexit fallback (its
+# __thread bookkeeping); see the header comment.
+if [ "$MACOS_VERSION" = "10.6" ]; then
+  ABI_THREAD_DEFS="-DHAVE___CXA_THREAD_ATEXIT_IMPL"
+else
+  ABI_THREAD_DEFS=
+fi
+
 cat > "$DOWNLOADS/math_shim.h" <<'EOF'
 #ifndef POWERFOX_MATH_SHIM_H
 #define POWERFOX_MATH_SHIM_H
@@ -75,14 +86,18 @@ for FILE in ../src/*.cpp; do
   [ "$base" = "cxa_noexception.cpp" ] && continue
   $CXX -c -O2 $TARGET_FLAGS -std=c++11 \
     -nostdinc++ -isystem "$LIBCXX_SRC/include" -I../include \
-    -DNDEBUG -DHAVE___CXA_THREAD_ATEXIT_IMPL -D_LIBCPP_DISABLE_AVAILABILITY \
+    -DNDEBUG $ABI_THREAD_DEFS -D_LIBCPP_DISABLE_AVAILABILITY \
     -Wno-sign-conversion -Wno-shadow -Wno-conversion -Wno-shorten-64-to-32 \
     "$FILE"
 done
 printf '%s\n' \
-  'int __cxa_thread_atexit_impl(void(*dtor)(void*), void* obj, void* dso) { return -1; }' \
   'char* __cxa_demangle(const char* mangled, char* buf, unsigned long* n, int* status) { return 0; }' \
   > _stub.c
+if [ "$MACOS_VERSION" = "10.6" ]; then
+  printf '%s\n' \
+    'int __cxa_thread_atexit_impl(void(*dtor)(void*), void* obj, void* dso) { return -1; }' \
+    >> _stub.c
+fi
 $CC -c -O2 $TARGET_FLAGS -DNDEBUG _stub.c -o _stub.o
 $CC $TARGET_FLAGS -o "$DIST/lib/libc++abi.1.0.dylib" \
   -dynamiclib -nodefaultlibs \

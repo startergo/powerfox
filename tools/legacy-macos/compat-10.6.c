@@ -238,8 +238,12 @@ uint64_t clock_gettime_nsec_np(clockid_t clk) {
   return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
-/* openat/unlinkat (10.10+), resolved through F_GETPATH since the 10.6
-   kernel has no *at() syscalls. */
+/* openat/unlinkat (10.10+), resolved through F_GETPATH: the 10.6 kernel
+   has no *at() syscalls and no fd-relative primitive, so the directory fd
+   is converted to its (current) path and the operation runs on the path.
+   Emulation limit: a rename or unlink of the directory between F_GETPATH
+   and the path-based call acts on the wrong directory (a TOCTOU window
+   the real *at() calls do not have). */
 static int pf_resolve_at(int dirfd, const char* path, char* out,
                          size_t outsz) {
   if (path[0] == '/' || dirfd == -2 /* AT_FDCWD */) {
@@ -284,7 +288,10 @@ int fclonefileat(int src, int dst_dirfd, const char* dst, uint32_t flags) {
 
 /* fstatat/fdopendir (10.10+), $INODE64 variants (a no-op on x86_64 where
    stat is already 64-bit). fdopendir consumes the fd like the real one,
-   so the caller-supplied fd is closed once the DIR owns its own. */
+   so the caller-supplied fd is closed once the DIR owns its own. Like the
+   *at() wrappers above it reopens the fd's path (10.6 has no
+   fd-preserving fdopendir; the DIR internals needed to wrap the fd
+   directly are libc-private), with the same rename/unlink race window. */
 int fstatat$INODE64(int dirfd, const char* path, struct stat* st, int flags) {
   char full[MAXPATHLEN * 2];
   if (pf_resolve_at(dirfd, path, full, sizeof(full)) != 0) return -1;
@@ -558,14 +565,20 @@ int pthread_get_qos_class_np(pthread_t thread, qos_class_t* qos_class,
   return 0;
 }
 
-/* posix_spawn file-actions additions (10.10+/10.15+). Returning 0 leaves
-   the attribute unset; callers that need chdir behavior use the cwd. */
+/* posix_spawn file-actions additions (10.10+/10.15+). The action structs
+   are libc-private, so the chdir action cannot be recorded where libSystem
+   lacks the call: forward when present, else fail so callers that asked
+   for the chdir do not silently get the parent's cwd (Gecko's launcher
+   aborts the spawn on a nonzero rv). addinherit_np stays a no-op: its only
+   in-tree caller reaches it through a 10.8+ availability gate. */
 #include <spawn.h>
 int posix_spawn_file_actions_addchdir_np(posix_spawn_file_actions_t* actions,
                                          const char* path) {
-  (void)actions;
-  (void)path;
-  return 0;
+  static int (*real)(posix_spawn_file_actions_t*, const char*);
+  if (!real)
+    real = (void*)pf_libsystem("posix_spawn_file_actions_addchdir_np");
+  if (real) return real(actions, path);
+  return ENOSYS;
 }
 
 int posix_spawn_file_actions_addinherit_np(posix_spawn_file_actions_t* actions,

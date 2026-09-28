@@ -19,10 +19,11 @@ OVERLAY="$ROOT/overlay-sdk"
 mkdir -p "$OVERLAY/Security"
 
 # SecKeychain.h: the little-endian AUTH_TYPE_FIX_ macro shifts multichar
-# constants, which newer clangs reject as non-constant. The big-endian
-# branch already uses the value directly; make it do the same.
+# constants, which newer clangs reject as non-constant (the signed left
+# shift overflows int). Keep the byte swap the SDK computes on x86_64:
+# __builtin_bswap32 constant-folds, like OSSwapConstInt32 in newer SDKs.
 LC_ALL=C sed -e \
-  's@((x >> 24) | ((x >> 8) & 0xff00) | ((x << 8) & 0xff0000) | (x & 0xff) << 24)@(x)@' \
+  's@((x >> 24) | ((x >> 8) & 0xff00) | ((x << 8) & 0xff0000) | (x & 0xff) << 24)@__builtin_bswap32(x)@' \
   "$SDKROOT/System/Library/Frameworks/Security.framework/Headers/SecKeychain.h" \
   > "$OVERLAY/Security/SecKeychain.h"
 echo "Wrote $OVERLAY/Security/SecKeychain.h"

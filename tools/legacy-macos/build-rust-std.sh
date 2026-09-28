@@ -20,7 +20,12 @@ else
   TLS_FLAGS=""
   WRAPPER="$ROOT/rustc-legacy-${MACOS_VERSION}"
 fi
-TOOLCHAIN="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin"
+# Resolve the toolchain the build actually compiles with: the wrappers
+# (rustc-emutls / rustc-legacy-*) run the project's active rustup toolchain,
+# and a std built by any other rustc fails every crate link (E0463).
+RUSTC_BIN="$(cd "$ROOT/../.." && rustup which rustc 2>/dev/null || true)"
+TOOLCHAIN="${RUSTC_BIN:+$(dirname "$(dirname "$RUSTC_BIN")")}"
+TOOLCHAIN="${TOOLCHAIN:-$HOME/.rustup/toolchains/stable-aarch64-apple-darwin}"
 
 [ -x "$TOOLCHAIN/bin/rustc" ] || {
   echo "toolchain not found: $TOOLCHAIN" >&2

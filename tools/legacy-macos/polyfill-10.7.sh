@@ -34,11 +34,16 @@ for BIN in $(find . -type f -perm +111 ! -name "libMacportsLegacySystem.B.dylib"
   file -b "$BIN" | grep -q "Mach-O" || continue
   otool -L "$BIN" 2>/dev/null | grep -q "/usr/lib/libSystem.B.dylib" || continue
   install_name_tool -change "/usr/lib/libSystem.B.dylib" "$LEGACY" "$BIN"
-  # 10.7 locates CoreText inside ApplicationServices.
-  install_name_tool -change \
-    "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText" \
-    "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices" \
-    "$BIN" 2>/dev/null || true
+  # 10.7 locates CoreText inside ApplicationServices. install_name_tool
+  # exits 0 even when the old name is absent, so only run it when the
+  # dependency exists and let a real failure abort the polyfill.
+  if otool -L "$BIN" 2>/dev/null | grep -q \
+      "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText"; then
+    install_name_tool -change \
+      "/System/Library/Frameworks/CoreText.framework/Versions/A/CoreText" \
+      "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices" \
+      "$BIN"
+  fi
   codesign --remove-signature "$BIN" 2>/dev/null || true
 done
 

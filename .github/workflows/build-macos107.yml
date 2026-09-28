@@ -204,7 +204,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh cache list --repo "$GITHUB_REPOSITORY" --limit 100 \
-            --json key,createdAt --jq 'sort_by(.createdAt) | group_by(.key | sub("-[0-9]+$"; "")) | .[] | .[:-1][] | .key' \
+            --json key,createdAt --jq '
+              (sort_by(.createdAt) | group_by(.key | sub("-[0-9]+$"; "")) | .[] | .[:-1][] | .key),
+              # Retired namespaces never match the exact-key restore and each
+              # forms a single-entry group the grouped prune keeps forever.
+              (.[] | select((.key | test("^legacy107-")) and (.key | test("^legacy107-v2-") | not)) | .key),
+              (.[] | select((.key | test("^sccache107-.*-legacy107-")) and (.key | test("-legacy107-v2-") | not)) | .key)
+            ' \
+            | sort -u \
             | while read -r K; do
                 echo "pruning $K"
                 gh cache delete "$K" --repo "$GITHUB_REPOSITORY" || true

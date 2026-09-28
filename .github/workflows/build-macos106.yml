@@ -238,6 +238,8 @@ jobs:
           mkdir -p Nightly.app/Contents/Frameworks
           cp -R tools/legacy-macos/dist/widevine/LocalAuthentication.framework \
             tools/legacy-macos/dist/widevine/CryptoTokenKit.framework \
+            tools/legacy-macos/dist/widevine/CoreGraphics.framework \
+            tools/legacy-macos/dist/widevine/CoreText.framework \
             Nightly.app/Contents/Frameworks/
           hdiutil create -volname Nightly -srcfolder Nightly.app \
             -fs HFS+ -format UDBZ -imagekey zlib-level=9 \

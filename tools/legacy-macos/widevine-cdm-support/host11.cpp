@@ -1,17 +1,29 @@
-/* Real C++ Host_11 for the harness: derives the tree's own interface so the
- * vtable is genuine (preamble + full slot coverage). Every method logs its
- * slot and returns a type-plausible value. Build alongside harness.c:
- * cc -x86_64 -c host11.cpp && link both into /tmp/harness. */
-#include "/tmp/host11_standalone.h"
+/* Real C++ Host_10/Host_11 for the harness: derives both interfaces the
+ * same way ChromiumCDMChild does (they are unrelated classes sharing one
+ * method set), so the vtable the CDM calls is genuine. Every method logs
+ * its name and returns a type-plausible value. Built with harness.c by
+ * build.sh. */
+#include "host11_standalone.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 
 #define LOG() fprintf(stderr, "H: HOST %s\n", __func__)
 
+// The harness links without a C++ runtime library (so it loads on 10.6);
+// it is compiled -fno-rtti, so only the pure-virtual trap is missing.
+void* operator new(size_t n) {
+  void* p = malloc(n);
+  if (!p) abort();
+  return p;
+}
+void operator delete(void* p) noexcept { free(p); }
+void operator delete(void* p, size_t) noexcept { free(p); }
+extern "C" void __cxa_pure_virtual() { abort(); }
+
 namespace cdm {
 
-class HarnessHost : public Host_11 {
+class HarnessHost : public Host_10, public Host_11 {
  public:
   Buffer* Allocate(uint32_t capacity) {
     LOG();
@@ -51,21 +63,15 @@ class HarnessHost : public Host_11 {
   void OnDeferredInitializationDone(StreamType t, Status s) { LOG(); }
   FileIO* CreateFileIO(FileIOClient* c) { LOG(); return 0; }
   void RequestStorageId(uint32_t v) { LOG(); }
-  std::vector<VideoDecoderFunction> RequestVideoDecoderFunctions() {
-    LOG();
-    return std::vector<VideoDecoderFunction>();
-  }
-  void SetMiniumOutputProtectionCallback(OutputProtectionCallback cb) { LOG(); }
-  void RequestPlatformVerification(const char* p, uint32_t pn, const char* ch, uint32_t cn, const char* sid, uint32_t sn) { LOG(); }
-  void ReportMetrics(MetricName n, double v) { LOG(); }
-  void GetStorageId(uint32_t v, const uint8_t** d, uint32_t* n) { LOG(); *d = 0; *n = 0; }
+  void ReportMetrics(MetricName n, uint64_t v) { LOG(); }
 };
 
 }  // namespace cdm
 
+static cdm::HarnessHost g_host;
+
 extern "C" void* harness_get_host(int version) {
   fprintf(stderr, "H: host_provider(%d) [C++]\n", version);
-  static cdm::HarnessHost host;
-  return version >= 11 ? (void*)static_cast<cdm::Host_11*>(&host)
-                       : (void*)static_cast<cdm::Host_10*>(&host);
+  return version >= 11 ? (void*)static_cast<cdm::Host_11*>(&g_host)
+                       : (void*)static_cast<cdm::Host_10*>(&g_host);
 }

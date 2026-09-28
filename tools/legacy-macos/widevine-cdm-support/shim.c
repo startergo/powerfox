@@ -158,6 +158,7 @@ kern_return_t shim_mach_port_construct(mach_port_t task,
         (unsigned long long)context, (void*)port,
         (void*)((char*)pthread_self() + 0x10));
   if (g_defer_base && !g_deferred_done && getenv("PF_PATCH")) {
+    // Opt-in diagnostic; the wedge is covered by the testcancel neutering.
     g_deferred_done = 1;
     WidevineLegacyShimPatchCdmTsd(g_defer_base, g_defer_size);
     g_defer_base = 0;
@@ -776,7 +777,7 @@ int WidevineLegacyShimPatchCdmTsd(void* aBase, size_t aSize) {
     unsigned char* tpage = 0;
     size_t tused = 0;
     int done = 0;
-    for (size_t i = 0; i + 6 <= aSize; i++) {
+    for (size_t i = 0; i + 9 <= aSize; i++) {
       if (p[i] != 0x65 || p[i + 1] != 0x48) continue;
       if (p[i + 2] != 0x89 && p[i + 2] != 0x8b) continue;
       if (p[i + 3] != 0x0c && p[i + 3] != 0x14) continue;
@@ -828,10 +829,10 @@ int WidevineLegacyShimPatchCdmTsd(void* aBase, size_t aSize) {
             0x58, 0x5d};
         memcpy(tr + o, pops, sizeof pops);
         o += sizeof pops;
-        memcpy(tr + o, p + i, 6);                        // original insn
-        o += 6;
+        memcpy(tr + o, p + i, 9);                        // original insn
+        o += 9;
         tr[o++] = 0xe9;
-        int32_t back = (int32_t)((uintptr_t)(p + i + 6) - (uintptr_t)(tr + o + 4));
+        int32_t back = (int32_t)((uintptr_t)(p + i + 9) - (uintptr_t)(tr + o + 4));
         memcpy(tr + o, &back, 4);
         o += 4;
       } else {
@@ -843,7 +844,7 @@ int WidevineLegacyShimPatchCdmTsd(void* aBase, size_t aSize) {
         tr[o++] = (unsigned char)((regfield << 3) | 0x00);
         tr[o++] = 0x58;                                  // pop rax
         tr[o++] = 0xe9;
-        int32_t back = (int32_t)((uintptr_t)(p + i + 5) - (uintptr_t)(tr + o + 4));
+        int32_t back = (int32_t)((uintptr_t)(p + i + 9) - (uintptr_t)(tr + o + 4));
         memcpy(tr + o, &back, 4);
         o += 4;
       }
@@ -853,7 +854,7 @@ int WidevineLegacyShimPatchCdmTsd(void* aBase, size_t aSize) {
       p[i + 0] = 0xe9;
       int32_t fwd = (int32_t)((uintptr_t)tr - (uintptr_t)(p + i + 5));
       memcpy(p + i + 1, &fwd, 4);
-      p[i + 5] = 0x90;
+      memset(p + i + 5, 0x90, 4);
       mprotect((void*)pg, 8192, PROT_READ | PROT_EXEC);
       done++;
     }

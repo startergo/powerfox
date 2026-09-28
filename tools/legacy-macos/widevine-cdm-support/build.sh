@@ -4,6 +4,8 @@
 #   - LocalAuthentication/CryptoTokenKit stub frameworks for
 #     Contents/Frameworks (the CDM hard-depends on them; 10.10+ has them
 #     natively) and libpmenergy/libpmsample stub dylibs for Contents/MacOS
+#   - widevine-cdm-harness, the standalone CDM load harness (harness.c +
+#     the real C++ host in host11.cpp)
 set -e
 DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 OUT="${1:-$DIR/../dist-10.7/widevine}"
@@ -15,6 +17,17 @@ cc -arch x86_64 -mcx16 -mmacosx-version-min=10.7 -dynamiclib \
   -install_name @loader_path/libWidevineLegacyShim.dylib \
   -o "$OUT/libWidevineLegacyShim.dylib" \
   "$DIR/shim.c" "$DIR/subscripting.m" "$DIR/hooks.s" -lobjc -framework Foundation
+
+# The harness links without a C++ runtime library (host11.cpp defines its
+# own operator new/delete and pure-virtual trap; compiled -fno-rtti) so the
+# binary loads on 10.6.
+cc -arch x86_64 -mmacosx-version-min=10.7 -fno-exceptions \
+  -c "$DIR/harness.c" -o "$OUT/harness.o"
+cc -arch x86_64 -mmacosx-version-min=10.7 -fno-exceptions -fno-rtti \
+  -c "$DIR/host11.cpp" -o "$OUT/host11.o"
+cc -arch x86_64 -mmacosx-version-min=10.7 -o "$OUT/widevine-cdm-harness" \
+  "$OUT/harness.o" "$OUT/host11.o" -lobjc -ldl -lpthread
+rm -f "$OUT/harness.o" "$OUT/host11.o"
 
 make_fw() {
   NAME="$1" SRC="$2" EXTRA="$3"

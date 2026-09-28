@@ -1,10 +1,9 @@
 /* Standalone 10.6 CDM wedge repro harness: load the shim, then the CDM
  * under flat namespace exactly as GMPLoader does, drive its entry points,
- * and spin-wait. A watchpoint is armed on the main thread's pthread lock
- * word before the CDM loads — in our own process the debug registers
- * work, so the corrupting write names itself.
- * Build: cc -x86_64 -o harness harness.c -ldl -lpthread
- * Run:   ./harness <shim.dylib> <libwidevinecdm.dylib>
+ * and spin-wait. The main thread's pthread lock word is polled for
+ * corrupting writes while the CDM runs (no debug-register watchpoint).
+ * Build: build.sh (harness.c + host11.cpp)
+ * Run:   ./widevine-cdm-harness <shim.dylib> <libwidevinecdm.dylib>
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,40 +11,11 @@
 #include <dlfcn.h>
 #include <pthread.h>
 #include <unistd.h>
-#include <mach/mach.h>
-#include <mach/thread_act.h>
-#include <signal.h>
-#include <sys/ucontext.h>
 
-static volatile unsigned watched_word = 0;
 static volatile int wp_hit = 0;
-static uintptr_t wp_rip, wp_ra, wp_val;
+static uintptr_t wp_val;
 
 #include <sys/mman.h>
-static void* wp_page;
-static int wp_fd_saved[2];
-static void wp_handler(int sig, siginfo_t* si, void* ctx) {
-  ucontext_t* uc = (ucontext_t*)ctx;
-  x86_thread_state64_t* st = &uc->uc_mcontext->__ss;
-  unsigned* word = (unsigned*)((char*)pthread_self() + 0x10);
-  if (*word != 0 && *word != 0xffffffff) {
-    wp_rip = st->__rip;
-    wp_ra = st->__rsp ? *(uintptr_t*)st->__rsp : 0;
-    wp_val = *word;
-    wp_hit = 1;
-    fprintf(stderr,
-            "H: WRITE CAUGHT rip=%llx ra=%llx val=%x word=%p\n",
-            (unsigned long long)wp_rip, (unsigned long long)wp_ra,
-            wp_val, (void*)word);
-  }
-  /* re-protect and resume */
-  mprotect(wp_page, 4096, PROT_READ | PROT_WRITE | PROT_EXEC);
-  if (!wp_hit) {
-    mprotect(wp_page, 4096, PROT_READ | PROT_WRITE);
-    /* single-step is unavailable simply; re-arm write trap */
-    mprotect(wp_page, 4096, PROT_READ);
-  }
-}
 static volatile unsigned* wp_word;
 static pthread_mutex_t wp_lock = PTHREAD_MUTEX_INITIALIZER;
 static void* wp_watcher(void* arg) {
@@ -66,7 +36,7 @@ static void* wp_watcher(void* arg) {
   }
   return 0;
 }
-static void arm_watchpoint(void* addr) {
+static void arm_word_watcher(void* addr) {
   wp_word = (volatile unsigned*)addr;
   pthread_t w;
   pthread_create(&w, 0, wp_watcher, 0);
@@ -82,9 +52,8 @@ static void arm_watchpoint(void* addr) {
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
 #include <stdlib.h>
-#include <mach/mach.h>
 
-static void* memmem(const void* h, size_t hl, const void* n, size_t nl) {
+static void* find_bytes(const void* h, size_t hl, const void* n, size_t nl) {
   if (!nl || hl < nl) return 0;
   const char* p = h;
   for (size_t i = 0; i + nl <= hl; i++) {
@@ -129,7 +98,7 @@ static char* patch_cdm_for_tlv(const char* path) {
       unsigned char* q = data + di->bind_off;
       unsigned char* qe = data + di->bind_off + di->bind_size;
       while (q < qe) {
-        unsigned char* hit = memmem(q, qe - q, names[n], nl);
+        unsigned char* hit = find_bytes(q, qe - q, names[n], nl);
         if (!hit || hit[nl] != 0) { if (!hit) break; q = hit + 1; continue; }
         /* the opcode byte directly PRECEDES the name */
         if (hit > data + di->bind_off && (hit[-1] & 0xF0) == 0x40 && (hit[-1] & 0x0F) == 0) {
@@ -168,17 +137,24 @@ static DyldSetVarFn find_dyld_set_variable(void) {
 }
 
 
-/* Port of GMPLoader FixupCDMImage's ObjC half: old runtimes never
- * canonicalized this image's selector references. */
+/* Port of GMPLoader FixupCDMImage: canonicalize selector references, rebind
+ * the objc_msgSend slots to the shim's canonicalizing hooks, and install the
+ * shim's TLV bootstrap into descriptors the weak bind left zeroed. */
 #include <objc/objc.h>
 #include <objc/runtime.h>
-static void fixup_cdm_objc(void* cdmBase) {
+static int is_objc_send_slot(const char* name) {
+  return !strcmp(name, "_objc_msgSend") ||
+         !strcmp(name, "_objc_msgSend_stret") ||
+         !strcmp(name, "_objc_msgSend_fpret") ||
+         !strcmp(name, "_objc_msgSendSuper");
+}
+static void fixup_cdm_objc(void* aShim, void* cdmBase) {
   struct mach_header_64* mh = (struct mach_header_64*)cdmBase;
   /* compute slide: first section address vs file vmaddr */
   intptr_t slide = 0;
   {
     struct load_command* lc0 = (struct load_command*)(mh + 1);
-    uintptr_t firstSec = 0, firstVm = 0;
+    uintptr_t firstVm = 0;
     for (uint32_t c = 0; c < mh->ncmds; c++, lc0 = (struct load_command*)((char*)lc0 + lc0->cmdsize)) {
       if (lc0->cmd != LC_SEGMENT_64) continue;
       struct segment_command_64* sg = (struct segment_command_64*)lc0;
@@ -187,77 +163,101 @@ static void fixup_cdm_objc(void* cdmBase) {
     slide = (intptr_t)mh - (intptr_t)firstVm;
   }
   struct load_command* lc = (struct load_command*)(mh + 1);
-  void* canonSend = dlsym(RTLD_DEFAULT, "canon_sel_c");
-  fprintf(stderr, "H: objc fixup base=%p slide=%ld canonSend=%p\n",
-          cdmBase, (long)slide, canonSend);
+  struct symtab_command* symtab = 0;
+  struct dysymtab_command* dysym = 0;
+  uintptr_t linkeditRuntime = 0;
+  for (uint32_t c = 0; c < mh->ncmds; c++, lc = (struct load_command*)((char*)lc + lc->cmdsize)) {
+    if (lc->cmd == LC_SYMTAB) {
+      symtab = (struct symtab_command*)lc;
+    } else if (lc->cmd == LC_DYSYMTAB) {
+      dysym = (struct dysymtab_command*)lc;
+    } else if (lc->cmd == LC_SEGMENT_64) {
+      struct segment_command_64* sg = (struct segment_command_64*)lc;
+      if (!strcmp(sg->segname, SEG_LINKEDIT)) {
+        linkeditRuntime = (uintptr_t)sg->vmaddr + slide - sg->fileoff;
+      }
+    }
+  }
+  if (!symtab || !linkeditRuntime) return;
+  struct nlist_64* syms = (struct nlist_64*)(linkeditRuntime + symtab->symoff);
+  const char* strs = (const char*)(linkeditRuntime + symtab->stroff);
+  uint32_t* indirect =
+      dysym ? (uint32_t*)(linkeditRuntime + dysym->indirectsymoff) : 0;
+  void* tlvBootstrap = dlsym(aShim, "__tlv_bootstrap");
+  int nsel = 0, nsend = 0, ntlv = 0;
+  lc = (struct load_command*)(mh + 1);
+  fprintf(stderr, "H: objc fixup base=%p slide=%ld\n", cdmBase, (long)slide);
   for (uint32_t c = 0; c < mh->ncmds; c++, lc = (struct load_command*)((char*)lc + lc->cmdsize)) {
     if (lc->cmd != LC_SEGMENT_64) continue;
     struct segment_command_64* sg = (struct segment_command_64*)lc;
-    struct section_64* sec = (struct section_64*)(sg + sizeof(struct segment_command_64) + 8 - 8);
-    sec = (struct section_64*)((char*)sg + sizeof(struct segment_command_64));
+    struct section_64* sec = (struct section_64*)((char*)sg + sizeof(struct segment_command_64));
     for (uint32_t k = 0; k < sg->nsects; k++, sec++) {
       uintptr_t addr = (uintptr_t)(sec->addr + slide);
       size_t count = sec->size / sizeof(void*);
-      if (!strcmp(sec->sectname, "__objc_selrefs") && !strcmp(sec->segname, "__DATA")) {
+      if (!strcmp(sec->sectname, "__objc_selrefs")) {
         mprotect((void*)(addr & ~4095UL), (sec->size + 4095) & ~4095UL, PROT_READ | PROT_WRITE);
         SEL* refs = (SEL*)addr;
         for (size_t j = 0; j < count; j++) {
           if (refs[j]) refs[j] = sel_registerName((const char*)refs[j]);
         }
-        fprintf(stderr, "H: canonicalized %zu selrefs\n", count);
+        nsel += (int)count;
+      } else if (!strcmp(sec->sectname, "__thread_vars")) {
+        if (!tlvBootstrap) continue;
+        mprotect((void*)(addr & ~4095UL), (sec->size + 4095) & ~4095UL, PROT_READ | PROT_WRITE);
+        void** thunks = (void**)addr;
+        for (size_t j = 0; j < count / 3; j++) {
+          if (!thunks[j * 3]) {
+            thunks[j * 3] = tlvBootstrap;
+            ntlv++;
+          }
+        }
+      } else {
+        uint32_t type = sec->flags & SECTION_TYPE;
+        if (!indirect ||
+            (type != S_LAZY_SYMBOL_POINTERS && type != S_NON_LAZY_SYMBOL_POINTERS)) {
+          continue;
+        }
+        mprotect((void*)(addr & ~4095UL), (sec->size + 4095) & ~4095UL, PROT_READ | PROT_WRITE);
+        void** ptrs = (void**)addr;
+        for (size_t j = 0; j < count; j++) {
+          uint32_t idx = indirect[sec->reserved1 + j];
+          if (idx == INDIRECT_SYMBOL_ABS || idx == INDIRECT_SYMBOL_LOCAL ||
+              idx >= symtab->nsyms) {
+            continue;
+          }
+          const char* name = strs + syms[idx].n_un.n_strx;
+          if (is_objc_send_slot(name)) {
+            void* hook = dlsym(aShim, name + 1);
+            if (hook) {
+              ptrs[j] = hook;
+              nsend++;
+            }
+          }
+        }
       }
     }
   }
+  fprintf(stderr, "H: canonicalized %d selrefs, rebound %d send slots, %d TLV thunks\n",
+          nsel, nsend, ntlv);
 }
 
 
-/* Minimal CDM host: distinct per-slot stubs with plausible return types,
- * each logging its index — VerifyCdmHost validates before instance creation.
- * Vtable layout (Host_10 declaration order): [0..1]=dtor, 2=Allocate,
- * 3=SetTimer, 4=GetCurrentWallTime, 5=OnInitialized, ... */
-#define SLOT(n) \
-  static long host_##n(long a, long b, long c, long d, long e, long f) { \
-    fprintf(stderr, "H: HOST slot " #n "(%lx,%lx,%lx)\n", a, b, c); \
-    return host_ret(n); \
-  }
-static long host_ret(int n) {
-  switch (n) {
-    case 2: return 0;              /* Allocate: stub returns NULL; fix later */
-    case 4: return 1234567890;     /* GetCurrentWallTime */
-    default: return 0;
-  }
-}
-SLOT(0) SLOT(1) SLOT(2) SLOT(3) SLOT(4) SLOT(5) SLOT(6) SLOT(7)
-SLOT(8) SLOT(9) SLOT(10) SLOT(11) SLOT(12) SLOT(13) SLOT(14) SLOT(15)
-SLOT(16) SLOT(17) SLOT(18) SLOT(19) SLOT(20) SLOT(21) SLOT(22) SLOT(23)
-SLOT(24) SLOT(25) SLOT(26) SLOT(27) SLOT(28) SLOT(29) SLOT(30) SLOT(31)
-SLOT(32) SLOT(33) SLOT(34) SLOT(35) SLOT(36) SLOT(37) SLOT(38) SLOT(39)
-SLOT(40) SLOT(41) SLOT(42) SLOT(43) SLOT(44) SLOT(45) SLOT(46) SLOT(47)
-static void* host_vt[48] = {
-  (void*)host_0, (void*)host_1, (void*)host_2, (void*)host_3,
-  (void*)host_4, (void*)host_5, (void*)host_6, (void*)host_7,
-  (void*)host_8, (void*)host_9, (void*)host_10, (void*)host_11,
-  (void*)host_12, (void*)host_13, (void*)host_14, (void*)host_15,
-  (void*)host_16, (void*)host_17, (void*)host_18, (void*)host_19,
-  (void*)host_20, (void*)host_21, (void*)host_22, (void*)host_23,
-  (void*)host_24, (void*)host_25, (void*)host_26, (void*)host_27,
-  (void*)host_28, (void*)host_29, (void*)host_30, (void*)host_31,
-  (void*)host_32, (void*)host_33, (void*)host_34, (void*)host_35,
-  (void*)host_36, (void*)host_37, (void*)host_38, (void*)host_39,
-  (void*)host_40, (void*)host_41, (void*)host_42, (void*)host_43,
-  (void*)host_44, (void*)host_45, (void*)host_46, (void*)host_47,
-};
-static void* host_provider(int host_interface_version) {
-  fprintf(stderr, "H: host_provider(%d)\n", host_interface_version);
-  return host_vt;
-}
-
+/* The real C++ Host_10/Host_11 lives in host11.cpp; the CDM validates the
+ * host through its vtable before instance creation, so a genuine object
+ * (not a stub slot table) must come back from the provider. */
 extern void* harness_get_host(int);
+
+static pthread_key_t g_worker_key;
+static void worker_key_dtor(void* v) {
+  fprintf(stderr, "H: worker key dtor ran\n");
+}
 static void* worker(void* arg) {
-  /* CDM-style worker: touch TLS, then exit — exercises key/destructor
-   * and per-thread paths while main spins. */
-  static /*__thread*/ volatile char tls_pad[256];
+  /* CDM-style transient worker: real per-thread storage via a pthread key
+   * (the 10.6 target has no TLV), released by the key destructor at thread
+   * exit while main spins. */
+  char tls_pad[256];
   tls_pad[0] = 1;
+  pthread_setspecific(g_worker_key, tls_pad);
   return 0;
 }
 
@@ -266,6 +266,7 @@ int main(int argc, char** argv) {
     fprintf(stderr, "usage: %s <shim> <cdm>\n", argv[0]);
     return 1;
   }
+  pthread_key_create(&g_worker_key, worker_key_dtor);
   pthread_t t;
   pthread_create(&t, 0, worker, 0);
   pthread_join(t, 0);  /* short-lived worker: replicate flicker-thread shape */
@@ -287,10 +288,10 @@ int main(int argc, char** argv) {
   if (shim_init) shim_init();
   fprintf(stderr, "H: shim loaded+init\n");
 
-  /* Arm the watchpoint on THIS thread's pthread lock word before CDM. */
+  /* Poll THIS thread's pthread lock word for corrupting writes before CDM. */
   pthread_t self = pthread_self();
   unsigned* wp = (unsigned*)((char*)self + 0x10);
-  arm_watchpoint(wp);
+  arm_word_watcher(wp);
 
   /* Flat-namespace CDM load via dyld's runtime variable setter, exactly
    * as GMPLoader's fallback (setenv after start does nothing). */
@@ -314,7 +315,7 @@ int main(int argc, char** argv) {
   {
     Dl_info di;
     if (dladdr(dlsym(cdm, "InitializeCdmModule_4"), &di) && di.dli_fbase) {
-      fixup_cdm_objc(di.dli_fbase);
+      fixup_cdm_objc(shim, di.dli_fbase);
     }
   }
 
@@ -328,7 +329,7 @@ int main(int argc, char** argv) {
   CreateFn create = (CreateFn)dlsym(cdm, "CreateCdmInstance");
   if (create) {
     fprintf(stderr, "H: CreateCdmInstance...\n");
-    void* inst = create(11, "com.widevine.alpha", 16, host_provider, 0);
+    void* inst = create(11, "com.widevine.alpha", 16, harness_get_host, 0);
     fprintf(stderr, "H: instance=%p\n", inst);
   }
   fprintf(stderr, "H: sequence complete — watching\n");
@@ -336,10 +337,9 @@ int main(int argc, char** argv) {
     usleep(500000);
   }
   if (wp_hit) {
-    fprintf(stderr, "H: WATCHPOINT HIT rip=%llx ra=%llx val=%x\n",
-            (unsigned long long)wp_rip, (unsigned long long)wp_ra, wp_val);
+    fprintf(stderr, "H: word watcher: lock-word change caught val=%lx\n", wp_val);
   } else {
-    fprintf(stderr, "H: no watchpoint hit in 60s\n");
+    fprintf(stderr, "H: no lock-word change observed in 60s\n");
   }
   return 0;
 }

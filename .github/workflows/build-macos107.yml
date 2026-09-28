@@ -180,6 +180,8 @@ jobs:
           mkdir -p Nightly.app/Contents/Frameworks
           cp -R tools/legacy-macos/dist-10.7/widevine/LocalAuthentication.framework \
             tools/legacy-macos/dist-10.7/widevine/CryptoTokenKit.framework \
+            tools/legacy-macos/dist-10.7/widevine/CoreGraphics.framework \
+            tools/legacy-macos/dist-10.7/widevine/CoreText.framework \
             Nightly.app/Contents/Frameworks/
           # 10.7/10.8 ship a libc++ far too old for this tree, so every OS
           # this artifact targets loads the bundled 10.7-floor libc++

@@ -97,6 +97,14 @@ class PassThroughGMPAdapter : public GMPAdapter {
 #ifdef XP_MACOSX
 namespace {
 
+// mprotect requires a page-aligned address and a length spanning to the
+// end of the range; sections are arbitrarily aligned inside __DATA.
+static bool UnprotectSection(uintptr_t aAddr, size_t aSize) {
+  uintptr_t page = aAddr & ~4095UL;
+  return mprotect((void*)page, ((aAddr + aSize + 4095) & ~4095UL) - page,
+                  PROT_READ | PROT_WRITE) == 0;
+}
+
 // Widevine CDMs are built for modern macOS. On pre-10.12 systems the plain
 // load fails: the CDM hard-imports os_log-era libSystem symbols, and its
 // ObjC metadata uses patterns old runtimes don't process. The shim dylib
@@ -373,14 +381,6 @@ void FixupCDMImage(void* aShim, const char* aLibPath) {
       }
     }
   }
-}
-
-// mprotect requires a page-aligned address and a length spanning to the
-// end of the range; sections are arbitrarily aligned inside __DATA.
-static bool UnprotectSection(uintptr_t aAddr, size_t aSize) {
-  uintptr_t page = aAddr & ~4095UL;
-  return mprotect((void*)page, ((aAddr + aSize + 4095) & ~4095UL) - page,
-                  PROT_READ | PROT_WRITE) == 0;
 }
 
 // dyld on 10.6 cannot bind the CDM's thread-local descriptor thunks (the

@@ -234,7 +234,11 @@ DyldSetVarFn FindDyldSetVariable() {
   uint64_t dyldHeader;
   memcpy(&dyldHeader, (const void*)(ti.all_image_info_addr + 0x20), 8);
   long slide = (long)dyldHeader - (long)textvm;
-  if (labs(slide) > 0x10000000 || (long)dyldHeader < 0) {
+  // dyld's slide can exceed 256MB under ASLR; validate by alignment and
+  // sign instead of a fixed bound, or every load silently returns null on
+  // machines with a large slide.
+  if ((long)dyldHeader < 0 || (dyldHeader & 0xfff) != 0 ||
+      slide + (long)textvm < 0) {
     return nullptr;
   }
   return (DyldSetVarFn)(uintptr_t)(symval + slide);

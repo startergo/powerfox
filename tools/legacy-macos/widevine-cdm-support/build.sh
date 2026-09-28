@@ -49,6 +49,17 @@ make_fw LocalAuthentication "$DIR/la.m" ""
 : > "$OUT/empty.c"
 make_fw CryptoTokenKit "$OUT/empty.c" ""
 
+# The CDM hard-references top-level CoreGraphics and CoreText, which only
+# exist there from 10.8; on 10.6/10.7 they are ApplicationServices
+# subframeworks. Symlink stubs inside the bundle resolve through the
+# DYLD_FALLBACK_FRAMEWORK_PATH the loader sets, so a stock install needs
+# no system changes.
+for SUB in CoreGraphics CoreText; do
+  rm -rf "$OUT/$SUB.framework"
+  ln -s "/System/Library/Frameworks/ApplicationServices.framework/Versions/A/Frameworks/$SUB.framework" \
+        "$OUT/$SUB.framework"
+done
+
 for PM in libpmenergy libpmsample; do
   cc -arch x86_64 -mmacosx-version-min=10.7 -dynamiclib \
     -install_name "/usr/lib/$PM.dylib" \

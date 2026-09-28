@@ -398,6 +398,7 @@ void ChromiumCDMParent::EnsureCDMDecoderInitialized() {
   }
   mVideoDecoderInitialized = true;
   mAwaitingPreInitResult = true;
+  mPreInitGen = mVideoDecoderGen;
 }
 
 RefPtr<DecryptPromise> ChromiumCDMParent::Decrypt(MediaRawData* aSample) {
@@ -1216,6 +1217,7 @@ RefPtr<MediaDataDecoder::InitPromise> ChromiumCDMParent::InitializeVideoDecoder(
     // before the decoder can be initialized again.
     (void)SendDeinitializeVideoDecoder();
     mVideoDecoderInitialized = false;
+    mVideoDecoderGen++;
   }
 
   if (!SendInitializeVideoDecoder(aConfig)) {
@@ -1252,9 +1254,12 @@ ipc::IPCResult ChromiumCDMParent::RecvOnDecoderInitDone(
   if (mAwaitingPreInitResult) {
     // Result of the dummy init sent by EnsureCDMDecoderInitialized(), which
     // has no init promise. If a real init was sent in the meantime, its own
-    // result will arrive next and must not be disturbed.
+    // result will arrive next and must not be disturbed. If a deinitialize
+    // superseded the dummy init, the decoder is no longer in the state this
+    // result describes and it must not touch decoder state at all.
     mAwaitingPreInitResult = false;
-    if (mInitVideoDecoderPromise.IsEmpty()) {
+    if (mVideoDecoderGen == mPreInitGen &&
+        mInitVideoDecoderPromise.IsEmpty()) {
       mVideoDecoderInitialized = aStatus == cdm::kSuccess;
     }
     return IPC_OK();
@@ -1388,6 +1393,7 @@ RefPtr<ShutdownPromise> ChromiumCDMParent::ShutdownVideoDecoder() {
     return ShutdownPromise::CreateAndResolve(true, __func__);
   }
   mVideoDecoderInitialized = false;
+  mVideoDecoderGen++;
 
   GMP_LOG_DEBUG("ChromiumCDMParent::~ShutdownVideoDecoder(this={}) ",
                 fmt::ptr(this));
@@ -1433,6 +1439,7 @@ void ChromiumCDMParent::Shutdown() {
   if (mVideoDecoderInitialized && !mActorDestroyed) {
     (void)SendDeinitializeVideoDecoder();
     mVideoDecoderInitialized = false;
+    mVideoDecoderGen++;
   }
 
   // Note: MediaKeys rejects all outstanding promises when it initiates

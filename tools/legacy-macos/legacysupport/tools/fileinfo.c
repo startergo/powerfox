@@ -153,7 +153,7 @@ load_lib(int legacy, char *progname, int verbose)
       return NULL;
     }
   }
-  if (!(libhandle = dlopen(libpath, RTLD_FIRST))) {
+  if (!(libhandle = dlopen(libpath, RTLD_LAZY | RTLD_FIRST))) {
     printf("Unable to open library: %s\n", dlerror());
     return NULL;
   }
@@ -246,7 +246,7 @@ report_stat(const char *name, lstat_fn_t *os_lstat, int verbose)
   if (verbose) {
     if (!realpath(name, rpath)) {
       printf("  *** realpath() failed at %s: %s (%d)\n",
-             rpath, strerror(errno), errno);
+             name, strerror(errno), errno);
     } else {
       printf("  full path is %s\n", rpath);
     }

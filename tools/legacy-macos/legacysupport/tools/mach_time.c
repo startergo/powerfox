@@ -124,6 +124,10 @@ main(int argc, char *argv[])
       printf("Bad denominator\n");
       return 1;
     }
+    if (!val) {
+      printf("Zero denominator\n");
+      return 1;
+    }
     tbinfo.denom = val;
   } else {
     err = get_osver();

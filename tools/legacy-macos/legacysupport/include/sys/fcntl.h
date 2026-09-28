@@ -26,14 +26,20 @@
 /* Include the primary system sys/fcntl.h */
 #include_next <sys/fcntl.h>
 
-/* replace missing (<10.7) O_CLOEXEC definition with 0, which works
- * but does not replace the full function of that flag
+/* replace missing (<10.7 SDK) O_CLOEXEC definition. The flag needs kernel
+ * support, first available in 10.7, so use the native value when targeting
+ * 10.7 or later. For older targets, 0 (no-op) is the only option, which
+ * works but does not replace the full function of that flag
  * this is the commonly done fix in MacPorts (see gtk3, for example)
- * FIXME - this could use a proper fix, if possible
+ * FIXME - for pre-10.7 targets, a proper fix would need F_SETFD emulation
  */
 
 #ifndef O_CLOEXEC
+#if __MPLS_TARGET_OSVER >= 1070
+#define O_CLOEXEC 0x1000000
+#else
 #define O_CLOEXEC 0
+#endif
 #endif
 
 #if __DARWIN_C_LEVEL >= 200809L

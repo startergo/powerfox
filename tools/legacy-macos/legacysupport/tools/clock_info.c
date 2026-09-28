@@ -366,7 +366,7 @@ load_lib(int legacy, char *progname, int verbose)
       return NULL;
     }
   }
-  if (!(libhandle = dlopen(libpath, RTLD_FIRST))) {
+  if (!(libhandle = dlopen(libpath, RTLD_LAZY | RTLD_FIRST))) {
     fprintf(stderr, "Unable to open library: %s\n", dlerror());
     return NULL;
   }
@@ -425,6 +425,23 @@ clock_find(clock_info_t *ci, void *libhandle, int verbose)
   return NULL;
 }
 
+static void
+clock_free(clock_info_t *ci)
+{
+  void *bufp;
+
+  switch (ci->type) {
+    #define CLOCK_TYPE(name,valtyp) case clock_type_##name: \
+      bufp = ci->b.name; ci->b.name = ci->be.name = NULL; \
+      break;
+      CLOCK_TYPES
+    #undef CLOCK_TYPE
+  }
+  free(ci->hbuf); ci->hbuf = ci->hbufe = NULL;
+  free(ci->nsbuf); ci->nsbuf = ci->nsbufe = NULL;
+  free(bufp);
+}
+
 static int
 clock_alloc(clock_info_t *ci)
 {
@@ -443,7 +460,7 @@ clock_alloc(clock_info_t *ci)
 
   if (!(ci->nsbuf = calloc(sizeof(ns_time_t), ci->numdiffs + 1))) {
     err = errno;
-    free(bufp);
+    clock_free(ci);
     errno = err;
     return -1;
   }
@@ -451,30 +468,12 @@ clock_alloc(clock_info_t *ci)
 
   if (!(ci->hbuf = calloc(sizeof(histent_t), ci->numdiffs))) {
     err = errno;
-    free(ci->nsbuf);
-    free(bufp);
+    clock_free(ci);
     errno = err;
     return -1;
   }
 
   return 0;
-}
-
-static void
-clock_free(clock_info_t *ci)
-{
-  void *bufp;
-
-  switch (ci->type) {
-    #define CLOCK_TYPE(name,valtyp) case clock_type_##name: \
-      bufp = ci->b.name; ci->b.name = ci->be.name = NULL; \
-      break;
-      CLOCK_TYPES
-    #undef CLOCK_TYPE
-  }
-  free(ci->hbuf); ci->hbuf = NULL;
-  free(ci->nsbuf); ci->nsbuf = ci->nsbufe = NULL;
-  free(bufp);
 }
 
 /* Universal collector/converter function */

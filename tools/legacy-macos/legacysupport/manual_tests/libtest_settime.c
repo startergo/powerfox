@@ -197,6 +197,7 @@ do_test(info_t *tp, int extra)
 
   /* Save original gettimeofday() time */
   tverr = gettimeofday(&orig_tv, NULL);
+  if (tverr) return errno;
 
   /* Get both real and raw times, plus monotonic and extras */
   if (clock_getns(CLOCK_MONOTONIC_RAW, &tp->init_raw)) return errno;
@@ -219,7 +220,7 @@ do_test(info_t *tp, int extra)
     if ((err = clock_getns(CLOCK_MONOTONIC_RAW, &tp->middle_raw))) break;
     if ((err = clock_getns(CLOCK_MONOTONIC, &tp->middle_mono))) break;
     if (extra) {
-      if (get_boottime_ns(&tp->middle_boot)) return errno;
+      if (get_boottime_ns(&tp->middle_boot)) { err = errno; break; }
       tp->middle_mach = get_mach_clock_ns();
     }
     if ((err = clock_getns(CLOCK_REALTIME, &tp->middle_real))) break;
@@ -238,27 +239,33 @@ do_test(info_t *tp, int extra)
   }
 
   /* Otherwise, finish up with a couple more captures */
-  if (clock_getns(CLOCK_REALTIME, &tp->second_real)) return errno;
-  if (clock_getns(CLOCK_MONOTONIC, &tp->final_mono)) return errno;
-  if (extra) {
-    if (get_boottime_ns(&tp->final_boot)) return errno;
-    tp->final_mach = get_mach_clock_ns();
-  }
-  if (clock_getns(CLOCK_MONOTONIC_RAW, &tp->final_raw)) return errno;
+  do {
+    if ((err = clock_getns(CLOCK_REALTIME, &tp->second_real))) break;
+    if ((err = clock_getns(CLOCK_MONOTONIC, &tp->final_mono))) break;
+    if (extra) {
+      if (get_boottime_ns(&tp->final_boot)) { err = errno; break; }
+      tp->final_mach = get_mach_clock_ns();
+    }
+    if ((err = clock_getns(CLOCK_MONOTONIC_RAW, &tp->final_raw))) break;
+  } while (0);
 
   /* Just to be safe, restore the time via settimeofday() */
   if (!tverr) {
-    delta = tp->final_raw - tp->init_raw;
-    orig_tv.tv_sec += delta / BILLION;
-    orig_tv.tv_usec += delta % BILLION / 1000;
-    if (orig_tv.tv_usec >= MILLION) {
-      ++orig_tv.tv_sec; orig_tv.tv_usec -= MILLION;
+    if (err) {
+      (void) settimeofday(&orig_tv, NULL);
+    } else {
+      delta = tp->final_raw - tp->init_raw;
+      orig_tv.tv_sec += delta / BILLION;
+      orig_tv.tv_usec += delta % BILLION / 1000;
+      if (orig_tv.tv_usec >= MILLION) {
+        ++orig_tv.tv_sec; orig_tv.tv_usec -= MILLION;
+      }
+      (void) settimeofday(&orig_tv, NULL);
     }
-    (void) settimeofday(&orig_tv, NULL);
   }
 
   /* All's good if here */
-  return 0;
+  return err;
 }
 
 #define PRINT_TIME(ptr,name) printf("  " #name " = %llu.%09llu s\n", \
@@ -313,8 +320,7 @@ hog_cpus(pthread_t threads[], int nthreads)
   int i, err;
 
   for (i = 0; i < nthreads; ++i) {
-    if (pthread_create(&threads[i], NULL, thread_spin, NULL)) {
-      err = errno;
+    if ((err = pthread_create(&threads[i], NULL, thread_spin, NULL))) {
       unhog_cpus(threads, i);
       return err;
     }

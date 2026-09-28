@@ -144,7 +144,7 @@ load_lib(int legacy, char *progname, int verbose)
       return NULL;
     }
   }
-  if (!(libhandle = dlopen(libpath, RTLD_FIRST))) {
+  if (!(libhandle = dlopen(libpath, RTLD_LAZY | RTLD_FIRST))) {
     printf("Unable to open library: %s\n", dlerror());
     return NULL;
   }

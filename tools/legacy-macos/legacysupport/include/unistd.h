@@ -99,6 +99,8 @@
 
 #if __MPLS_SDK_SUPPORT_FXETATTRLIST__
 
+__MP__BEGIN_DECLS
+
 #ifdef __LP64__
 int   fsetattrlist(int,void*,void*,size_t,unsigned int);
 int   fgetattrlist(int,void*,void*,size_t,unsigned int);
@@ -106,6 +108,8 @@ int   fgetattrlist(int,void*,void*,size_t,unsigned int);
 int   fsetattrlist(int,void*,void*,size_t,unsigned long);
 int   fgetattrlist(int,void*,void*,size_t,unsigned long);
 #endif /* defined (__LP64__) */
+
+__MP__END_DECLS
 
 #endif  /* __MPLS_SDK_SUPPORT_FXETATTRLIST__ */
 

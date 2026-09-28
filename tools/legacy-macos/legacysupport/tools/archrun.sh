@@ -16,15 +16,14 @@
 ARCH="${1##-}"
 PROG="$2"
 shift 2
-ARGS="$@"
 
 DEST="$PROG-$ARCH"
 
 LIPO="/usr/bin/lipo"
 
 if [ "$ARCH" != 'ppc' ]; then
-  $LIPO "$PROG" -thin "$ARCH" -output "$DEST" && exec "$DEST" "$ARGS"
+  $LIPO "$PROG" -thin "$ARCH" -output "$DEST" && exec "$DEST" "$@"
 else
   $LIPO "$PROG" -thin ppc -output "$DEST" 2>/dev/null \
-  || $LIPO "$PROG" -thin ppc7400 -output "$DEST" && exec "$DEST" "$ARGS"
+  || $LIPO "$PROG" -thin ppc7400 -output "$DEST" && exec "$DEST" "$@"
 fi

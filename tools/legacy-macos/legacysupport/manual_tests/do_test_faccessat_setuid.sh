@@ -147,7 +147,7 @@ checkperms() # usage: checkperms fuser fgroup mode
 		setid $1 $2 $m $t/$m.d mkdir
 		cases="$cases $t/$m $t/$m.d"
 	done
-	sudo -u nobody $s $cases
+	check sudo -u nobody $s $cases
 	clean
 }
 

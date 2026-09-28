@@ -65,7 +65,7 @@ for a in $TESTARCHS; do
   }
 EOD
   rm -f $TESTBIN
-  if sh -c "$CC -arch $a $TESTSRC -o $TESTBIN 2>/dev/null" 2>/dev/null; then
+  if sh -c "$CC -arch \"\$1\" $TESTSRC -o $TESTBIN 2>/dev/null" sh "$a" 2>/dev/null; then
     if sh -c "$TESTBIN 2>/dev/null" 2>/dev/null; then
       RUNARCHS="$RUNARCHS $a"
     fi

@@ -77,7 +77,7 @@
 #endif
 
 #ifdef __MPLS_DUMMY_HAS_BUILTIN_AVAIL_INT
-#undef __has_include
+#undef __has_builtin
 #undef __MPLS_DUMMY_HAS_BUILTIN_AVAIL_INT
 #endif
 

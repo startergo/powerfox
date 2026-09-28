@@ -160,7 +160,7 @@ __MP__END_DECLS
 #endif
 
 #if __MPLS_FLOAT16_STATUS == 0
-  #if defined(__arm64__)
+  #if defined(__arm64__) || defined(__aarch64__)
     #undef __MPLS_FLOAT16_STATUS
     #define __MPLS_FLOAT16_STATUS 1
   #elif defined(__x86_64__) || defined(__i386__)

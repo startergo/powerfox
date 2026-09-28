@@ -21,11 +21,11 @@ cc -arch x86_64 -mcx16 -mmacosx-version-min=10.7 -dynamiclib \
 # The harness links without a C++ runtime library (host11.cpp defines its
 # own operator new/delete and pure-virtual trap; compiled -fno-rtti) so the
 # binary loads on 10.6.
-cc -arch x86_64 -mmacosx-version-min=10.7 -fno-exceptions \
+cc -arch x86_64 -mmacosx-version-min=10.6 -fno-exceptions \
   -c "$DIR/harness.c" -o "$OUT/harness.o"
-cc -arch x86_64 -mmacosx-version-min=10.7 -fno-exceptions -fno-rtti \
+cc -arch x86_64 -mmacosx-version-min=10.6 -fno-exceptions -fno-rtti \
   -c "$DIR/host11.cpp" -o "$OUT/host11.o"
-cc -arch x86_64 -mmacosx-version-min=10.7 -o "$OUT/widevine-cdm-harness" \
+cc -arch x86_64 -mmacosx-version-min=10.6 -o "$OUT/widevine-cdm-harness" \
   "$OUT/harness.o" "$OUT/host11.o" -lobjc -ldl -lpthread
 rm -f "$OUT/harness.o" "$OUT/host11.o"
 

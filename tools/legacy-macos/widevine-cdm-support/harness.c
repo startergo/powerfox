@@ -148,6 +148,12 @@ static int is_objc_send_slot(const char* name) {
          !strcmp(name, "_objc_msgSend_fpret") ||
          !strcmp(name, "_objc_msgSendSuper");
 }
+static void unprotect_section(uintptr_t addr, size_t size) {
+  uintptr_t page = addr & ~4095UL;
+  mprotect((void*)page, ((addr + size + 4095) & ~4095UL) - page,
+           PROT_READ | PROT_WRITE);
+}
+
 static void fixup_cdm_objc(void* aShim, void* cdmBase) {
   struct mach_header_64* mh = (struct mach_header_64*)cdmBase;
   /* compute slide: first section address vs file vmaddr */
@@ -178,11 +184,18 @@ static void fixup_cdm_objc(void* aShim, void* cdmBase) {
       }
     }
   }
-  if (!symtab || !linkeditRuntime) return;
-  struct nlist_64* syms = (struct nlist_64*)(linkeditRuntime + symtab->symoff);
-  const char* strs = (const char*)(linkeditRuntime + symtab->stroff);
-  uint32_t* indirect =
-      dysym ? (uint32_t*)(linkeditRuntime + dysym->indirectsymoff) : 0;
+  // Symbol offsets are linkedit-relative; without linkedit or a symtab only
+  // the selector and TLV passes can run.
+  if (!linkeditRuntime) {
+    symtab = NULL;
+  }
+  struct nlist_64* syms =
+      symtab ? (struct nlist_64*)(linkeditRuntime + symtab->symoff) : NULL;
+  const char* strs =
+      symtab ? (const char*)(linkeditRuntime + symtab->stroff) : NULL;
+  uint32_t* indirect = (symtab && dysym)
+                           ? (uint32_t*)(linkeditRuntime + dysym->indirectsymoff)
+                           : NULL;
   void* tlvBootstrap = dlsym(aShim, "__tlv_bootstrap");
   int nsel = 0, nsend = 0, ntlv = 0;
   lc = (struct load_command*)(mh + 1);
@@ -195,7 +208,7 @@ static void fixup_cdm_objc(void* aShim, void* cdmBase) {
       uintptr_t addr = (uintptr_t)(sec->addr + slide);
       size_t count = sec->size / sizeof(void*);
       if (!strcmp(sec->sectname, "__objc_selrefs")) {
-        mprotect((void*)(addr & ~4095UL), (sec->size + 4095) & ~4095UL, PROT_READ | PROT_WRITE);
+        unprotect_section(addr, sec->size);
         SEL* refs = (SEL*)addr;
         for (size_t j = 0; j < count; j++) {
           if (refs[j]) refs[j] = sel_registerName((const char*)refs[j]);
@@ -203,7 +216,7 @@ static void fixup_cdm_objc(void* aShim, void* cdmBase) {
         nsel += (int)count;
       } else if (!strcmp(sec->sectname, "__thread_vars")) {
         if (!tlvBootstrap) continue;
-        mprotect((void*)(addr & ~4095UL), (sec->size + 4095) & ~4095UL, PROT_READ | PROT_WRITE);
+        unprotect_section(addr, sec->size);
         void** thunks = (void**)addr;
         for (size_t j = 0; j < count / 3; j++) {
           if (!thunks[j * 3]) {
@@ -217,7 +230,7 @@ static void fixup_cdm_objc(void* aShim, void* cdmBase) {
             (type != S_LAZY_SYMBOL_POINTERS && type != S_NON_LAZY_SYMBOL_POINTERS)) {
           continue;
         }
-        mprotect((void*)(addr & ~4095UL), (sec->size + 4095) & ~4095UL, PROT_READ | PROT_WRITE);
+        unprotect_section(addr, sec->size);
         void** ptrs = (void**)addr;
         for (size_t j = 0; j < count; j++) {
           uint32_t idx = indirect[sec->reserved1 + j];

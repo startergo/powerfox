@@ -103,7 +103,10 @@ jobs:
           tools/legacy-macos/build-rust-std.sh 10.7
 
       - name: Save support artifacts
-        if: steps.cache.outputs.cache-hit != 'true'
+        # An explicit `if:` overrides the default success gate; without
+        # !failure() a partial libc++/rust-std build poisons the cache and
+        # later runs restore it, skip the build step, and fail at configure.
+        if: steps.cache.outputs.cache-hit != 'true' && !failure() && !cancelled()
         uses: actions/cache/save@v5
         with:
           path: tools/legacy-macos/dist-10.7

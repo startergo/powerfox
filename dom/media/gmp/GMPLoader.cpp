@@ -322,7 +322,9 @@ void FixupCDMImage(void* aShim, const char* aLibPath) {
         // system TLV runtime and the thunks stay untouched.
         void** thunks = (void**)slots;
         void* tlvBootstrap = dlsym(aShim, "__tlv_bootstrap");
-        mprotect(slots, (sec->size + 4095) & ~4095UL, PROT_READ | PROT_WRITE);
+        if (!UnprotectSection((uintptr_t)slots, sec->size)) {
+          continue;
+        }
         for (size_t k = 0; k < count / 3 && tlvBootstrap; k++) {
           if (!thunks[k * 3]) {
             thunks[k * 3] = tlvBootstrap;
@@ -333,7 +335,9 @@ void FixupCDMImage(void* aShim, const char* aLibPath) {
       if (strcmp(sec->sectname, "__objc_selrefs") == 0) {
         // The old ObjC runtime never canonicalized this image's selector
         // references; the CDM also passes embedded name strings directly.
-        mprotect(slots, (sec->size + 4095) & ~4095UL, PROT_READ | PROT_WRITE);
+        if (!UnprotectSection((uintptr_t)slots, sec->size)) {
+          continue;
+        }
         SEL* refs = (SEL*)slots;
         for (size_t k = 0; k < count; k++) {
           if (refs[k]) {
@@ -347,7 +351,9 @@ void FixupCDMImage(void* aShim, const char* aLibPath) {
                         type != S_NON_LAZY_SYMBOL_POINTERS)) {
         continue;
       }
-      mprotect(slots, (sec->size + 4095) & ~4095UL, PROT_READ | PROT_WRITE);
+      if (!UnprotectSection((uintptr_t)slots, sec->size)) {
+        continue;
+      }
       void** ptrs = (void**)slots;
       for (size_t k = 0; k < count; k++) {
         uint32_t idx = indirect[sec->reserved1 + k];
@@ -367,6 +373,14 @@ void FixupCDMImage(void* aShim, const char* aLibPath) {
       }
     }
   }
+}
+
+// mprotect requires a page-aligned address and a length spanning to the
+// end of the range; sections are arbitrarily aligned inside __DATA.
+static bool UnprotectSection(uintptr_t aAddr, size_t aSize) {
+  uintptr_t page = aAddr & ~4095UL;
+  return mprotect((void*)page, ((aAddr + aSize + 4095) & ~4095UL) - page,
+                  PROT_READ | PROT_WRITE) == 0;
 }
 
 // dyld on 10.6 cannot bind the CDM's thread-local descriptor thunks (the
@@ -470,10 +484,11 @@ PRLibrary* LoadCDMWithLegacySupport(const PRLibSpec& aSpec,
   if (!shim) {
     return nullptr;
   }
+  // _dyld_set_variable only exists from 10.9. Without it the stub-framework
+  // fallback paths and the runtime flat-namespace flip cannot be applied;
+  // attempt the load anyway so pre-10.9 hosts fail at dlopen with a real
+  // bind error instead of an unexplained null.
   DyldSetVarFn setvar = FindDyldSetVariable();
-  if (!setvar) {
-    return nullptr;
-  }
   // The CDM hard-depends on LocalAuthentication, CryptoTokenKit,
   // libpmenergy and libpmsample, which only exist from 10.10 on. Stub
   // copies ship in the bundle; dyld's fallback search paths (settable
@@ -493,7 +508,7 @@ PRLibrary* LoadCDMWithLegacySupport(const PRLibSpec& aSpec,
                "LocalAuthentication.framework",
                libDir);
       struct stat fwst;
-      if (stat(fwFile, &fwst) == 0) {
+      if (setvar && stat(fwFile, &fwst) == 0) {
         snprintf(fwDir, sizeof(fwDir), "%s/../Frameworks", libDir);
         setvar("DYLD_FALLBACK_FRAMEWORK_PATH", fwDir);
         setvar("DYLD_FALLBACK_LIBRARY_PATH", libDir);
@@ -505,9 +520,13 @@ PRLibrary* LoadCDMWithLegacySupport(const PRLibSpec& aSpec,
   PRLibSpec spec = aSpec;
   spec.value.pathname = loadPath;
 
-  setvar("DYLD_FORCE_FLAT_NAMESPACE", "1");
+  if (setvar) {
+    setvar("DYLD_FORCE_FLAT_NAMESPACE", "1");
+  }
   PRLibrary* lib = PR_LoadLibraryWithFlags(spec, PR_LD_NOW);
-  setvar("DYLD_FORCE_FLAT_NAMESPACE", "0");
+  if (setvar) {
+    setvar("DYLD_FORCE_FLAT_NAMESPACE", "0");
+  }
   GMP_LOG_DEBUG(
       "GMPLoader: legacy CDM load path={} patched={} flat-load={} pr={} os={}",
       loadPath, patchedPath ? 1 : 0, lib ? "ok" : "FAIL", PR_GetError(),

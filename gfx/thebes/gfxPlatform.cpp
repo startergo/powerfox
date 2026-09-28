@@ -3283,7 +3283,7 @@ void gfxPlatform::InitWebGLConfig() {
     if (!nsCocoaFeatures::IsAtLeastVersion(10, 8)) {
       int ncpu = 0;
       size_t len = sizeof(ncpu);
-      sysctlbyname("hw.ncpu", &ncpu, &len, nullptr, 0);
+      sysctlbyname("hw.physicalcpu", &ncpu, &len, nullptr, 0);
       if (ncpu > 0 && ncpu <= 2 &&
           !Preferences::HasUserValue("gfx.display.frame-rate-divisor")) {
         Preferences::SetInt("gfx.display.frame-rate-divisor", 2,

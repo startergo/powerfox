@@ -84,6 +84,8 @@ class ChromiumCDMParent final : public PChromiumCDMParent,
 
   RefPtr<DecryptPromise> Decrypt(MediaRawData* aSample);
 
+  void EnsureCDMDecoderInitialized();
+
   // TODO: Add functions for clients to send data to CDM, and
   // a Close() function.
   RefPtr<MediaDataDecoder::InitPromise> InitializeVideoDecoder(

@@ -220,6 +220,10 @@ class ChromiumCDMParent final : public PChromiumCDMParent,
   bool mAwaitingPreInitResult = false;
   uint32_t mVideoDecoderGen = 0;
   uint32_t mPreInitGen = 0;
+  // The most recent service certificate, re-sent to the CDM after a decoder
+  // deinitialize, which the CDM also applies to its stored certificate.
+  nsTArray<uint8_t> mServerCert;
+  static constexpr uint32_t kInternalPromiseId = 0x7ffffffe;
   bool mActorDestroyed = false;
   bool mAbnormalShutdown = false;
 

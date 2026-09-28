@@ -177,6 +177,8 @@ void ChromiumCDMParent::SetServerCertificate(uint32_t aPromiseId,
   if (!SendSetServerCertificate(aPromiseId, aCert)) {
     RejectPromiseWithStateError(
         aPromiseId, "Failed to send setServerCertificate to CDM process"_ns);
+  } else {
+    mServerCert = aCert.Clone();
   }
 }
 
@@ -519,6 +521,9 @@ void ChromiumCDMParent::ResolvePromise(uint32_t aPromiseId) {
 ipc::IPCResult ChromiumCDMParent::RecvOnResolvePromise(
     const uint32_t& aPromiseId) {
   MOZ_ASSERT(mGMPThread->IsOnCurrentThread());
+  if (aPromiseId == kInternalPromiseId) {
+    return IPC_OK();
+  }
   ResolvePromise(aPromiseId);
   return IPC_OK();
 }
@@ -1218,6 +1223,13 @@ RefPtr<MediaDataDecoder::InitPromise> ChromiumCDMParent::InitializeVideoDecoder(
     (void)SendDeinitializeVideoDecoder();
     mVideoDecoderInitialized = false;
     mVideoDecoderGen++;
+    if (!mServerCert.IsEmpty()) {
+      // DeinitializeDecoder also discards the CDM's stored service
+      // certificate, which the page set before playback started. Re-send it
+      // so the license request is built against it.
+      nsTArray<uint8_t> certCopy = mServerCert.Clone();
+      (void)SendSetServerCertificate(kInternalPromiseId, std::move(certCopy));
+    }
   }
 
   if (!SendInitializeVideoDecoder(aConfig)) {

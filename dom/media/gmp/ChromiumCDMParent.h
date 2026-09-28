@@ -212,6 +212,9 @@ class ChromiumCDMParent final : public PChromiumCDMParent,
 
   bool mIsShutdown = false;
   bool mVideoDecoderInitialized = false;
+  // True between a dummy decoder init sent by EnsureCDMDecoderInitialized()
+  // and the OnDecoderInitDone result for it arriving.
+  bool mAwaitingPreInitResult = false;
   bool mActorDestroyed = false;
   bool mAbnormalShutdown = false;
 

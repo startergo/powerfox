@@ -459,6 +459,7 @@ char* PatchCDMForTLV(const char* aLibPath) {
     free(out);
     return nullptr;
   }
+  free(out);
   free(data);
   return strdup(finalPath);
 }

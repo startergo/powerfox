@@ -779,7 +779,6 @@ mozilla::ipc::IPCResult ChromiumCDMChild::RecvInitializeVideoDecoder(
 mozilla::ipc::IPCResult ChromiumCDMChild::RecvDeinitializeVideoDecoder() {
   MOZ_ASSERT(IsOnMessageLoopThread());
   GMP_LOG_DEBUG("ChromiumCDMChild::RecvDeinitializeVideoDecoder()");
-  MOZ_ASSERT(mDecoderInitialized);
   if (mDecoderInitialized && mCDM) {
     mCDM->DeinitializeDecoder(cdm::kStreamTypeVideo);
   }

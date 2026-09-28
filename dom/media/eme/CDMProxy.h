@@ -213,6 +213,7 @@ class CDMProxy {
   virtual void OnRejectPromise(uint32_t aPromiseId, ErrorResult&& aException,
                                const nsCString& aMsg) = 0;
 
+  virtual void EnsureCDMDecoderInitialized() = 0;
   virtual RefPtr<DecryptPromise> Decrypt(MediaRawData* aSample) = 0;
 
   // Owner thread only.

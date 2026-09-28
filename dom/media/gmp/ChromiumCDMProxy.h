@@ -78,6 +78,7 @@ class ChromiumCDMProxy : public CDMProxy {
   void OnRejectPromise(uint32_t aPromiseId, ErrorResult&& aException,
                        const nsCString& aMsg) override;
 
+  void EnsureCDMDecoderInitialized() override;
   RefPtr<DecryptPromise> Decrypt(MediaRawData* aSample) override;
 
   void OnDecrypted(uint32_t aId, DecryptStatus aResult,

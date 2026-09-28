@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <sys/resource.h>
 #include <stdlib.h>
+#include <errno.h>
 
 #include "util.h"
 
@@ -18,6 +19,7 @@ pthread_t pthread_main_thread_np(void);
 #define kMaxThreadStackSize 0x40000000 /* from LLVM: 1 << 30 or 1Gb */
 
 size_t pthread_get_stacksize_np(pthread_t t) {
+     if (t == NULL) return ESRCH;
 #if __MPLS_TARGET_OSVER >= 1090
      int is_main_thread = pthread_equal(t, pthread_main_thread_np());
 #else
@@ -51,7 +53,7 @@ size_t pthread_get_stacksize_np(pthread_t t) {
        /* see https://github.com/openjdk/jdk/blob/e833bfc8ac6104522d037e7eb300f5aa112688bb/src/hotspot/os_cpu/bsd_x86/os_bsd_x86.cpp#L715 */
         struct rlimit limit;
         if( getrlimit(RLIMIT_STACK, &limit) ) {
-             exit(EXIT_FAILURE);
+             return 8 * 1024 * 1024; /* default main-thread stack */
         }
         if( limit.rlim_cur < kMaxThreadStackSize ) {
              return limit.rlim_cur;

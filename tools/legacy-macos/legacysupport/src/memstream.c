@@ -61,9 +61,9 @@
 
 struct memstream
 {
-    int      position;
-    int      size;
-    int      capacity;
+    size_t   position;
+    size_t   size;
+    size_t   capacity;
     char    *contents;
     char   **ptr;
     size_t  *sizeloc;
@@ -73,9 +73,9 @@ struct memstream
   static void memstream_print(struct memstream *ms)
   {
       printf("memstream %p {", ms);
-      printf(" %i", ms->position);
-      printf(" %i", ms->size);
-      printf(" %i", ms->capacity);
+      printf(" %lu", (unsigned long)ms->position);
+      printf(" %lu", (unsigned long)ms->size);
+      printf(" %lu", (unsigned long)ms->capacity);
       printf(" %p", ms->contents);
       printf(" }\n");
   }
@@ -87,10 +87,11 @@ struct memstream
 
 #define memstream_check(MS) if (!(MS)->contents) { errno= ENOMEM;  return -1; }
 
-static int memstream_grow(struct memstream *ms, int minsize)
+static int memstream_grow(struct memstream *ms, size_t minsize)
 {
-    int newcap= ms->capacity * 2;					memstream_check(ms);
-    while (newcap <= minsize) newcap *= 2;				memstream_info(("grow %p to %i\n", ms, newcap));
+    size_t newcap= ms->capacity * 2;					memstream_check(ms);
+    if (minsize > (size_t)-1 / 2) { errno= ENOMEM;  return -1; }
+    while (newcap <= minsize) newcap *= 2;				memstream_info(("grow %p to %lu\n", ms, (unsigned long)newcap));
     ms->contents= realloc(ms->contents, newcap);
     if (!ms->contents) return -1;	/* errno == ENOMEM */
     memset(ms->contents + ms->capacity, 0, newcap - ms->capacity);
@@ -102,9 +103,9 @@ static int memstream_grow(struct memstream *ms, int minsize)
 static int memstream_read(void *cookie, char *buf, int count)
 {
     struct memstream *ms= (struct memstream *)cookie;			memstream_check(ms);
-    int n= min(ms->size - ms->position, count);				memstream_info(("memstream_read %p %i\n", ms, count));
-    if (n < 1) return 0;
-    memcpy(buf, ms->contents, n);
+    size_t n= min(ms->size - ms->position, (size_t)count);		memstream_info(("memstream_read %p %i\n", ms, count));
+    if (count < 1 || n < 1) return 0;
+    memcpy(buf, ms->contents + ms->position, n);
     ms->position += n;							memstream_print(ms);
     return n;
 }
@@ -117,7 +118,11 @@ static int memstream_write(void *cookie, const char *buf, int count)
 	    return -1;
     memcpy(ms->contents + ms->position, buf, count);			memstream_info(("memstream_write %p %i\n", ms, count));
     ms->position += count;
-    if (ms->size < ms->position) *ms->sizeloc= ms->size= ms->position;	memstream_print(ms);
+    if (ms->size < ms->position) *ms->sizeloc= ms->size= ms->position;
+    else if (ms->position < ms->size) {
+        *ms->sizeloc= ms->position;
+        ms->contents[ms->position]= 0;  /* keep exposed contents terminated */
+    }									memstream_print(ms);
 									assert(ms->size < ms->capacity);
 									assert(ms->contents[ms->size] == 0);
     return count;
@@ -130,11 +135,12 @@ static fpos_t memstream_seek(void *cookie, fpos_t offset, int whence)
 									memstream_info(("memstream_seek %p %i %i\n", ms, (int)offset, whence));
     switch (whence) {
 	case SEEK_SET:	pos= offset;			break;
-	case SEEK_CUR:	pos= ms->position + offset;	break;
-	case SEEK_END:	pos= ms->size + offset;		break;
+	case SEEK_CUR:	pos= (fpos_t)ms->position + offset;	break;
+	case SEEK_END:	pos= (fpos_t)ms->size + offset;	break;
 	default:	errno= EINVAL;			return -1;
     }
-    if (pos >= ms->capacity) memstream_grow(ms, pos);
+    if (pos < 0) {							errno= EINVAL;  return -1; }
+    if (pos >= (fpos_t)ms->capacity && memstream_grow(ms, (size_t)pos) < 0)	return -1;
     ms->position= pos;
     if (ms->size < ms->position) *ms->sizeloc= ms->size= ms->position;	memstream_print(ms);  memstream_info(("=> %i\n", (int)pos));
 									assert(ms->size < ms->capacity && ms->contents[ms->size] == 0);

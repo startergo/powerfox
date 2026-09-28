@@ -83,8 +83,11 @@ _fullpathat(int dirfd, const char *relative, char *buf)
     if (ret == -1)
         goto fail;
 
-    strlcat(buf, "/", PATH_MAX);
-    strlcat(buf, relative, PATH_MAX);
+    if (strlcat(buf, "/", PATH_MAX) >= PATH_MAX
+        || strlcat(buf, relative, PATH_MAX) >= PATH_MAX) {
+        errno = ENAMETOOLONG;
+        ret = -1;
+    }
 
 fail:
     if (cwd != -1)
@@ -172,6 +175,12 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
     // olddirfd != newdirfd and both relative
     int ret;
 
+    /* An empty path would otherwise resolve to the directory itself */
+    if (oldpath[0] == '\0' || newpath[0] == '\0') {
+        errno = ENOENT;
+        return -1;
+    }
+
     char _oldpath[PATH_MAX];
     ret = _fullpathat(olddirfd, oldpath, _oldpath);
     if (ret == -1)
@@ -244,6 +253,12 @@ int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpat
 
     // olddirfd != newdirfd and both relative
     int ret;
+
+    /* An empty path would otherwise resolve to the directory itself */
+    if (oldpath[0] == '\0' || newpath[0] == '\0') {
+        errno = ENOENT;
+        return -1;
+    }
 
     char _oldpath[PATH_MAX];
     ret = _fullpathat(olddirfd, oldpath, _oldpath);

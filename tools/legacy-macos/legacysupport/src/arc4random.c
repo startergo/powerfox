@@ -325,6 +325,8 @@ _rs_stir(rand_state* st)
 
     int r = getentropy(rnd, sizeof rnd);
     assert(r == 0);
+    if (r != 0)
+        abort();
 
     _rs_rekey(st, rnd, sizeof(rnd));
 
@@ -341,8 +343,8 @@ _rs_stir_if_needed(rand_state* st, size_t len)
 {
     if (st->rs_count <= len)
         _rs_stir(st);
-
-    st->rs_count -= len;
+    else
+        st->rs_count -= len;
 }
 
 

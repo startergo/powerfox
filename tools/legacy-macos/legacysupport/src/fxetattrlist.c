@@ -39,6 +39,13 @@
  * normally appropriate stack-based buffers, and let the fcntl() wrapper
  * fix the 10.4 ppc64 case.
  *
+ * NOTE: Because these operate on paths re-resolved from the file
+ * descriptors, they lack true fd semantics: if the file has been
+ * unlinked or renamed since the fd was opened, the call may fail or
+ * apply to a different file.  There is no fd-preserving alternative
+ * to [f]setattrlist() on the OS versions needing this emulation, so
+ * this is an unavoidable limitation.
+ *
  * NOTE: This needs to be a separate source from setattrlist, due to
  * the handling of the variant suffixes.
  *

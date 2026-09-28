@@ -55,7 +55,7 @@ _randopen(const char* name)
 {
     int fd = open(name, O_RDONLY);
     if (fd < 0) {
-      _error(1, errno, "Cannot open system random number dev %s", name);
+      _error(0, errno, "Cannot open system random number dev %s", name);
     }
 
     return fd;
@@ -64,20 +64,23 @@ _randopen(const char* name)
 int
 getentropy(void* buf, size_t n)
 {
-  
+
     static int fd = -1;
     uint8_t* b    = (uint8_t*)buf;
 
     if (fd < 0)
         fd = _randopen("/dev/urandom");
+    if (fd < 0)
+        return -1;
 
     while (n > 0)
     {
         ssize_t m = (read)(fd, b, n);
 
-        if (m < 0) {
-            if (errno == EINTR) continue;
-            _error(1, errno, "Fatal read error while reading rand dev");
+        if (m <= 0) {
+            if (m < 0 && errno == EINTR) continue;
+            _error(0, errno, "Fatal read error while reading rand dev");
+            return -1;
         }
         b += m;
         n -= m;

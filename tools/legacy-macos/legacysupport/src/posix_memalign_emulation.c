@@ -47,6 +47,8 @@
 
 #include <stdlib.h>
 #include <errno.h>
+#include <unistd.h>
+#include <dlfcn.h>
 
 int posix_memalign(void** pp, size_t alignment, size_t bytes) {
 
@@ -65,7 +67,7 @@ int posix_memalign(void** pp, size_t alignment, size_t bytes) {
      */
     mem = malloc(bytes);
 
-  } else {
+  } else if (alignment <= getpagesize()) {
 
    /* if the caller wants a larger alignment than 16
     * we give them a page-aligned allotment. This is not as efficient
@@ -74,6 +76,21 @@ int posix_memalign(void** pp, size_t alignment, size_t bytes) {
     * underlying memory management system.
     */
     mem = valloc(bytes);
+
+  } else {
+
+    /* valloc only guarantees page alignment, so use
+     * malloc_zone_memalign() for larger alignments. It is resolved
+     * at run time because it may be missing on old systems.
+     */
+    static void *(*zone_memalign)(void *, size_t, size_t) = NULL;
+    if (!zone_memalign)
+      zone_memalign = (void *(*)(void *, size_t, size_t))
+                      dlsym(RTLD_DEFAULT, "malloc_zone_memalign");
+    if (zone_memalign) {
+      extern void *malloc_default_zone(void);
+      mem = (*zone_memalign)(malloc_default_zone(), alignment, bytes);
+    }
   }
   if (mem == 0)
     return ENOMEM;

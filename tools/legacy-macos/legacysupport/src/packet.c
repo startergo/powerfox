@@ -250,9 +250,9 @@ check_cmsg_lengths(struct msghdr *msghdr, socklen_t *new_controllen)
   *new_controllen = 0;
 
   while (cmsghdr) {
-    if (cmsghdr->cmsg_level == SOL_SOCKET) {
+    lenadj = 0;
 
-      lenadj = 0;
+    if (cmsghdr->cmsg_level == SOL_SOCKET) {
 
       switch (cmsghdr->cmsg_type) {
 
@@ -260,10 +260,11 @@ check_cmsg_lengths(struct msghdr *msghdr, socklen_t *new_controllen)
         lenadj = sizeof(struct timeval) - CMSG_DATALEN(cmsghdr);
         break;
       }
-
-      *new_controllen += cmsghdr->cmsg_len + lenadj;
-      if (lenadj) needadj = 1;
     }
+
+    /* Count all messages, to match fix_cmsg_formats() */
+    *new_controllen += cmsghdr->cmsg_len + lenadj;
+    if (lenadj) needadj = 1;
     cmsghdr = CMSG_NXTHDR(msghdr, cmsghdr);
   }
   return needadj;

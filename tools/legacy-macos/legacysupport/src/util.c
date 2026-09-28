@@ -58,9 +58,13 @@ __mpls_check_access(void *adr, mach_vm_size_t size, vm_prot_t access,
   mach_port_t object_name;
   kern_return_t ret;
   adrint_t start_adr = (adrint_t) adr;
-  adrint_t end_adr = start_adr + size;
+  adrint_t end_adr;
   adrint_t okpage;
   static adrint_t pagemask = 0;
+
+  /* Reject sizes that would wrap the end address around */
+  if (size > (adrint_t) -1 - start_adr) return -1;
+  end_adr = start_adr + size;
 
   if (okadr) {
     if (MPLS_SLOWPATH(!pagemask)) {
@@ -79,6 +83,7 @@ __mpls_check_access(void *adr, mach_vm_size_t size, vm_prot_t access,
   ret = mach_vm_region(task, &address, &msize, VM_REGION_BASIC_INFO_64,
                        (vm_region_info_t)&info, &count, &object_name);
   if (ret != KERN_SUCCESS) return -1;
+  if (object_name != MACH_PORT_NULL) mach_port_deallocate(task, object_name);
   /*
    * If the first valid region on or after our address is later, then
    * our address is invalid.
@@ -93,6 +98,7 @@ __mpls_check_access(void *adr, mach_vm_size_t size, vm_prot_t access,
     ret = mach_vm_region(task, &address, &msize, VM_REGION_BASIC_INFO_64,
                          (vm_region_info_t)&info, &count, &object_name);
     if (ret != KERN_SUCCESS) return -1;
+    if (object_name != MACH_PORT_NULL) mach_port_deallocate(task, object_name);
     if (end_adr <= address) return -1;
     if (access & ~info.protection) return -1;
   }

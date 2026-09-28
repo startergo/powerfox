@@ -77,9 +77,12 @@ getdelim(char **buf, size_t *bufsiz, int delimiter, FILE *fp)
 	for (ptr = *buf, eptr = *buf + *bufsiz;;) {
 		int c = fgetc(fp);
 		if (c == -1) {
-			if (feof(fp))
-				return ptr == *buf ? -1 : ptr - *buf;
-			else
+			if (feof(fp)) {
+				if (ptr == *buf)
+					return -1;
+				*ptr = '\0';
+				return ptr - *buf;
+			} else
 				return -1;
 		}
 		*ptr++ = c;

@@ -131,7 +131,7 @@ fmemopen(void * __restrict buf, size_t size, const char * __restrict mode)
    */
   switch (mode[0]) {
   case 'a':
-    ck->off = ck->len = strnlen(ck->buf, ck->size);
+    ck->off = ck->len = ck->bin ? ck->size : strnlen(ck->buf, ck->size);
     break;
   case 'r':
     ck->len = size;
@@ -169,6 +169,9 @@ static int
 fmemopen_read(void *cookie, char *buf, int nbytes)
 {
   struct fmemopen_cookie *ck = cookie;
+
+  if (ck->off >= ck->len)
+    return (0);
 
   if (nbytes > ck->len - ck->off)
     nbytes = ck->len - ck->off;

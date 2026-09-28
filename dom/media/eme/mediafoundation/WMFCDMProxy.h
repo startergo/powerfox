@@ -85,6 +85,8 @@ class WMFCDMProxy : public CDMProxy {
   void OnRejectPromise(uint32_t aPromiseId, ErrorResult&& aException,
                        const nsCString& aMsg) override {}
 
+  void EnsureCDMDecoderInitialized() override {}
+
   RefPtr<DecryptPromise> Decrypt(MediaRawData* aSample) override {
     return nullptr;
   }

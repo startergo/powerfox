@@ -599,7 +599,6 @@ void ChromiumCDMProxy::OnRejectPromise(uint32_t aPromiseId,
 }
 
 void ChromiumCDMProxy::EnsureCDMDecoderInitialized() {
-  MOZ_ASSERT(NS_IsMainThread());
   RefPtr<gmp::ChromiumCDMParent> cdm = GetCDMParent();
   if (!cdm) {
     return;

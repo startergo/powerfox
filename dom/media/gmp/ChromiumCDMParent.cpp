@@ -393,8 +393,11 @@ void ChromiumCDMParent::EnsureCDMDecoderInitialized() {
   config.mFormat() = cdm::VideoFormat::kI420;
   config.mImageWidth() = 320;
   config.mImageHeight() = 180;
-  SendInitializeVideoDecoder(config);
+  if (NS_WARN_IF(!SendInitializeVideoDecoder(config))) {
+    return;
+  }
   mVideoDecoderInitialized = true;
+  mAwaitingPreInitResult = true;
 }
 
 RefPtr<DecryptPromise> ChromiumCDMParent::Decrypt(MediaRawData* aSample) {
@@ -1207,6 +1210,14 @@ RefPtr<MediaDataDecoder::InitPromise> ChromiumCDMParent::InitializeVideoDecoder(
         __func__);
   }
 
+  if (mVideoDecoderInitialized) {
+    // EnsureCDMDecoderInitialized() may have initialized the CDM's video
+    // decoder with a dummy config. The CDM requires DeinitializeDecoder()
+    // before the decoder can be initialized again.
+    (void)SendDeinitializeVideoDecoder();
+    mVideoDecoderInitialized = false;
+  }
+
   if (!SendInitializeVideoDecoder(aConfig)) {
     return MediaDataDecoder::InitPromise::CreateAndReject(
         MediaResult(NS_ERROR_DOM_MEDIA_FATAL_ERR,
@@ -1236,6 +1247,16 @@ ipc::IPCResult ChromiumCDMParent::RecvOnDecoderInitDone(
                 fmt::ptr(this), static_cast<int>(aStatus));
   if (mIsShutdown) {
     MOZ_ASSERT(mInitVideoDecoderPromise.IsEmpty());
+    return IPC_OK();
+  }
+  if (mAwaitingPreInitResult) {
+    // Result of the dummy init sent by EnsureCDMDecoderInitialized(), which
+    // has no init promise. If a real init was sent in the meantime, its own
+    // result will arrive next and must not be disturbed.
+    mAwaitingPreInitResult = false;
+    if (mInitVideoDecoderPromise.IsEmpty()) {
+      mVideoDecoderInitialized = aStatus == cdm::kSuccess;
+    }
     return IPC_OK();
   }
   if (aStatus == cdm::kSuccess) {

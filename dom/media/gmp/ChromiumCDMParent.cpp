@@ -178,7 +178,8 @@ void ChromiumCDMParent::SetServerCertificate(uint32_t aPromiseId,
     RejectPromiseWithStateError(
         aPromiseId, "Failed to send setServerCertificate to CDM process"_ns);
   } else {
-    mServerCert = aCert.Clone();
+    mPendingServerCert = aCert.Clone();
+    mPendingServerCertPromiseId = Some(aPromiseId);
   }
 }
 
@@ -524,6 +525,11 @@ ipc::IPCResult ChromiumCDMParent::RecvOnResolvePromise(
   if (aPromiseId == kInternalPromiseId) {
     return IPC_OK();
   }
+  if (mPendingServerCertPromiseId == Some(aPromiseId)) {
+    mServerCert = std::move(mPendingServerCert);
+    mPendingServerCertPromiseId = Nothing();
+    mPendingServerCert.Clear();
+  }
   ResolvePromise(aPromiseId);
   return IPC_OK();
 }
@@ -589,6 +595,13 @@ ipc::IPCResult ChromiumCDMParent::RecvOnRejectPromise(
     const uint32_t& aPromiseId, const cdm::Exception& aException,
     const uint32_t& aSystemCode, const nsCString& aErrorMessage) {
   MOZ_ASSERT(mGMPThread->IsOnCurrentThread());
+  if (aPromiseId == kInternalPromiseId) {
+    return IPC_OK();
+  }
+  if (mPendingServerCertPromiseId == Some(aPromiseId)) {
+    mPendingServerCertPromiseId = Nothing();
+    mPendingServerCert.Clear();
+  }
   RejectPromise(aPromiseId, ToErrorResult(aException, aErrorMessage),
                 aErrorMessage);
   return IPC_OK();

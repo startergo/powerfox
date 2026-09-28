@@ -220,9 +220,13 @@ class ChromiumCDMParent final : public PChromiumCDMParent,
   bool mAwaitingPreInitResult = false;
   uint32_t mVideoDecoderGen = 0;
   uint32_t mPreInitGen = 0;
-  // The most recent service certificate, re-sent to the CDM after a decoder
-  // deinitialize, which the CDM also applies to its stored certificate.
+  // The most recent service certificate accepted by the CDM, re-sent after a
+  // decoder deinitialize, which the CDM also applies to its stored
+  // certificate. The pending pair commits only once the CDM resolves the
+  // certificate promise.
   nsTArray<uint8_t> mServerCert;
+  nsTArray<uint8_t> mPendingServerCert;
+  Maybe<uint32_t> mPendingServerCertPromiseId;
   static constexpr uint32_t kInternalPromiseId = 0x7ffffffe;
   bool mActorDestroyed = false;
   bool mAbnormalShutdown = false;

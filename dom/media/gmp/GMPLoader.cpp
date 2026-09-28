@@ -286,6 +286,18 @@ void FixupCDMImage(void* aShim, const char* aLibPath) {
     int prot;
   };
   AutoTArray<PatchedPages, 8> patched;
+  // Sections can share a page; record each page once, from the first
+  // query, so a later record cannot restore a different protection.
+  auto recordPatched = [&patched](uintptr_t aAddr, size_t aSize, int aProt) {
+    uintptr_t page = aAddr & ~4095UL;
+    uintptr_t end = (aAddr + aSize + 4095) & ~4095UL;
+    for (const PatchedPages& p : patched) {
+      if (p.page == page) {
+        return;
+      }
+    }
+    patched.AppendElement(PatchedPages{page, end - page, aProt});
+  };
   const char* base = strrchr(aLibPath, '/');
   base = base ? base + 1 : aLibPath;
   size_t baseLen = strlen(base);
@@ -365,10 +377,7 @@ void FixupCDMImage(void* aShim, const char* aLibPath) {
         if (!UnprotectSection((uintptr_t)slots, sec->size, &origProt)) {
           continue;
         }
-        patched.AppendElement(PatchedPages{(uintptr_t)slots & ~4095UL,
-                                           ((uintptr_t)slots + sec->size + 4095) & ~4095UL -
-                                               ((uintptr_t)slots & ~4095UL),
-                                           origProt});
+        recordPatched((uintptr_t)slots, sec->size, origProt);
         for (size_t k = 0; k < count / 3 && tlvBootstrap; k++) {
           if (!thunks[k * 3]) {
             thunks[k * 3] = tlvBootstrap;
@@ -383,10 +392,7 @@ void FixupCDMImage(void* aShim, const char* aLibPath) {
         if (!UnprotectSection((uintptr_t)slots, sec->size, &origProt)) {
           continue;
         }
-        patched.AppendElement(PatchedPages{(uintptr_t)slots & ~4095UL,
-                                           ((uintptr_t)slots + sec->size + 4095) & ~4095UL -
-                                               ((uintptr_t)slots & ~4095UL),
-                                           origProt});
+        recordPatched((uintptr_t)slots, sec->size, origProt);
         SEL* refs = (SEL*)slots;
         for (size_t k = 0; k < count; k++) {
           if (refs[k]) {
@@ -404,10 +410,7 @@ void FixupCDMImage(void* aShim, const char* aLibPath) {
       if (!UnprotectSection((uintptr_t)slots, sec->size, &origProt)) {
         continue;
       }
-      patched.AppendElement(PatchedPages{(uintptr_t)slots & ~4095UL,
-                                         ((uintptr_t)slots + sec->size + 4095) & ~4095UL -
-                                             ((uintptr_t)slots & ~4095UL),
-                                         origProt});
+      recordPatched((uintptr_t)slots, sec->size, origProt);
       void** ptrs = (void**)slots;
       for (size_t k = 0; k < count; k++) {
         uint32_t idx = indirect[sec->reserved1 + k];

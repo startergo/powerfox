@@ -49,13 +49,10 @@ fetch libcxxabi-5.0.1.src
 
 TARGET_FLAGS="-target x86_64-apple-macos${MACOS_VERSION} -isysroot $SDKROOT"
 
-# 10.6 cannot compile libc++abi's internal thread_atexit fallback (its
-# __thread bookkeeping); see the header comment.
-if [ "$MACOS_VERSION" = "10.6" ]; then
-  ABI_THREAD_DEFS="-DHAVE___CXA_THREAD_ATEXIT_IMPL"
-else
-  ABI_THREAD_DEFS=
-fi
+# libc++abi's internal thread_atexit fallback does not compile for these
+# targets (its __thread bookkeeping); define HAVE so its wrapper calls the
+# implementation in _stub.c below.
+ABI_THREAD_DEFS="-DHAVE___CXA_THREAD_ATEXIT_IMPL"
 
 cat > "$DOWNLOADS/math_shim.h" <<'EOF'
 #ifndef POWERFOX_MATH_SHIM_H
@@ -93,11 +90,53 @@ done
 printf '%s\n' \
   'char* __cxa_demangle(const char* mangled, char* buf, unsigned long* n, int* status) { return 0; }' \
   > _stub.c
-if [ "$MACOS_VERSION" = "10.6" ]; then
-  printf '%s\n' \
-    'int __cxa_thread_atexit_impl(void(*dtor)(void*), void* obj, void* dso) { return -1; }' \
-    >> _stub.c
-fi
+# A real __cxa_thread_atexit_impl: the previous stub returned -1, which
+# made libc++abi drop every thread_local destructor registration. This is
+# the pthread-key registry libSystem itself uses; destructors run in
+# reverse registration order at thread exit. dso_handle is not tracked, so
+# registrations of a library that is later dlclose'd are not purged.
+cat >> _stub.c <<'STUB'
+#include <pthread.h>
+#include <stdlib.h>
+struct pf_dtor_entry {
+  void (*dtor)(void*);
+  void* obj;
+  struct pf_dtor_entry* next;
+};
+static pthread_key_t pf_thread_dtor_key;
+static pthread_once_t pf_thread_dtor_once = PTHREAD_ONCE_INIT;
+static void pf_run_thread_dtors(void* p) {
+  struct pf_dtor_entry* e = p;
+  while (e) {
+    struct pf_dtor_entry* n = e->next;
+    e->dtor(e->obj);
+    free(e);
+    e = n;
+  }
+}
+static void pf_make_thread_dtor_key(void) {
+  pthread_key_create(&pf_thread_dtor_key, pf_run_thread_dtors);
+}
+int __cxa_thread_atexit_impl(void (*dtor)(void*), void* obj,
+                             void* dso_handle) {
+  (void)dso_handle;
+  if (pthread_once(&pf_thread_dtor_once, pf_make_thread_dtor_key) != 0) {
+    return -1;
+  }
+  struct pf_dtor_entry* e = malloc(sizeof *e);
+  if (!e) {
+    return -1;
+  }
+  e->dtor = dtor;
+  e->obj = obj;
+  e->next = pthread_getspecific(pf_thread_dtor_key);
+  if (pthread_setspecific(pf_thread_dtor_key, e) != 0) {
+    free(e);
+    return -1;
+  }
+  return 0;
+}
+STUB
 $CC -c -O2 $TARGET_FLAGS -DNDEBUG _stub.c -o _stub.o
 $CC $TARGET_FLAGS -o "$DIST/lib/libc++abi.1.0.dylib" \
   -dynamiclib -nodefaultlibs \

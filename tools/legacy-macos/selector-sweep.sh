@@ -120,11 +120,13 @@ class_prefixes = ('NS', 'CI', 'CA', 'CT', 'AV', 'SF', 'QL', 'IK', 'PDF',
                   'Sec', 'ATSU', 'MTL', 'WK', 'CB', 'GK', 'NE', 'AS')
 ident_re = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 
-def colon_sends(text):
+def colon_sends(text, with_lineno=False):
     """(receiver, full selector with all colons) for each argument-taking
     send [recv sel:arg sel:arg ...]; argument subexpressions (nested
     brackets/parens/braces, literals) are skipped, and the regexes above
-    only see the first identifier of such selectors."""
+    only see the first identifier of such selectors. Parses the complete
+    text, so sends spanning multiple lines are found; with_lineno adds
+    the line the opening bracket starts on."""
     spans, stack = [], []
     for i, ch in enumerate(text):
         if ch == '[':
@@ -162,7 +164,9 @@ def colon_sends(text):
                     continue
             i += 1
         if recv and parts:
-            sends.append((recv, ''.join(parts)))
+            sends.append((recv, ''.join(parts),
+                          text.count('\n', 0, start) + 1) if with_lineno
+                         else (recv, ''.join(parts)))
     return sends
 
 hits = {}
@@ -184,6 +188,18 @@ for fp in open(files_path):
         m = impl_re.match(line)
         if m:
             our_classes.add(m.group(1))
+    # Argument-bearing sends can span lines; parse the whole file for
+    # them and map each match back to its starting line.
+    for recv, sel, ln in colon_sends(''.join(lines), with_lineno=True):
+        if sel not in cands or sel in hits:
+            continue
+        if recv.startswith(class_prefixes) and recv not in our_classes:
+            hits.setdefault(sel, []).append(
+                f"{rel}:{ln}: {lines[ln - 1].strip()[:90]}")
+        elif recv not in ('self', 'super') and recv not in our_classes and not recv.startswith(
+                ('ns', 'moz', 'MOZ', 'Gecko', 'Child', 'Toolbar', 'Base', 'Pixel', 'Native', 'Web')):
+            hits.setdefault(sel, []).append(
+                f"{rel}:{ln}: {lines[ln - 1].strip()[:90]}")
     for i, line in enumerate(lines, 1):
         if '[' not in line and '@selector' not in line:
             continue
@@ -203,14 +219,6 @@ for fp in open(files_path):
                     ('ns', 'moz', 'MOZ', 'Gecko', 'Child', 'Toolbar', 'Base', 'Pixel', 'Native', 'Web')):
                 continue
             unresolved.setdefault(sel, []).append(f"{rel}:{i}: {stripped[:90]}")
-        for recv, sel in colon_sends(line):
-            if sel not in cands or sel in hits:
-                continue
-            if recv.startswith(class_prefixes) and recv not in our_classes:
-                hits.setdefault(sel, []).append(f"{rel}:{i}: {stripped[:90]}")
-            elif recv not in ('self', 'super') and recv not in our_classes and not recv.startswith(
-                    ('ns', 'moz', 'MOZ', 'Gecko', 'Child', 'Toolbar', 'Base', 'Pixel', 'Native', 'Web')):
-                unresolved.setdefault(sel, []).append(f"{rel}:{i}: {stripped[:90]}")
 
 new_hits = {s: v for s, v in hits.items() if s.split(':')[0] not in safe and s not in safe}
 known_hits = {s: v for s, v in hits.items() if s in safe or s.split(':')[0] in safe}

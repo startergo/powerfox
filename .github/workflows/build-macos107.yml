@@ -66,7 +66,9 @@ jobs:
         id: cache
         uses: actions/cache/restore@v5
         with:
-          path: tools/legacy-macos/dist-10.7
+          path: |
+            tools/legacy-macos/dist-10.7
+            tools/legacy-macos/dist
           key: ${{ steps.key.outputs.key }}
 
       # sccache does not hash the custom Rust std's contents, so cached
@@ -103,13 +105,12 @@ jobs:
           tools/legacy-macos/build-rust-std.sh 10.7
 
       - name: Save support artifacts
-        # An explicit `if:` overrides the default success gate; without
-        # !failure() a partial libc++/rust-std build poisons the cache and
-        # later runs restore it, skip the build step, and fail at configure.
         if: steps.cache.outputs.cache-hit != 'true' && !failure() && !cancelled()
         uses: actions/cache/save@v5
         with:
-          path: tools/legacy-macos/dist-10.7
+          path: |
+            tools/legacy-macos/dist-10.7
+            tools/legacy-macos/dist
           key: ${{ steps.key.outputs.key }}
 
       - name: Build

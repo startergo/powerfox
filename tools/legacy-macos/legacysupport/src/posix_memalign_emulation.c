@@ -49,6 +49,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <dlfcn.h>
+#include <pthread.h>
 
 int posix_memalign(void** pp, size_t alignment, size_t bytes) {
 
@@ -83,10 +84,16 @@ int posix_memalign(void** pp, size_t alignment, size_t bytes) {
      * malloc_zone_memalign() for larger alignments. It is resolved
      * at run time because it may be missing on old systems.
      */
-    static void *(*zone_memalign)(void *, size_t, size_t) = NULL;
-    if (!zone_memalign)
+    /* Resolved once under pthread_once: concurrent first calls racing on
+     * a plain static would be undefined behavior in allocator code.
+     */
+    static void *(*zone_memalign)(void *, size_t, size_t);
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    static void resolve(void) {
       zone_memalign = (void *(*)(void *, size_t, size_t))
                       dlsym(RTLD_DEFAULT, "malloc_zone_memalign");
+    }
+    pthread_once(&once, resolve);
     if (zone_memalign) {
       extern void *malloc_default_zone(void);
       mem = (*zone_memalign)(malloc_default_zone(), alignment, bytes);

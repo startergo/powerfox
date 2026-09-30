@@ -3626,4 +3626,13 @@ pref("distribution.mozillaonline.ignore", true);
 
 #ifdef XP_MACOSX
   pref("browser.macAppMenu.setAsDefaultShown", false);
+  // The app version (153) matches no public Firefox release, and
+  // service-side client gates reject unknown versions: Spotify's
+  // web-player token endpoint answers "Unauthorized request" with it,
+  // so playback never starts past each track's clear lead. Report a
+  // current public version (139.0) as the default UA; users can still
+  // override per-profile.
+  pref("general.useragent.override",
+       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:139.0) "
+       "Gecko/20100101 Firefox/139.0");
 #endif

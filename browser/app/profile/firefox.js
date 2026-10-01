@@ -3644,12 +3644,4 @@ pref("distribution.mozillaonline.ignore", true);
   // The DoH rollout would enable DNS-over-HTTPS, whose requests stall
   // on 10.6 and wedge page loads.
   pref("doh-rollout.enabled", false);
-  // The app version (153) does not correspond to any public Firefox
-  // release, and service-side client gates reject unknown versions —
-  // Spotify's web-player token endpoint answers "Unauthorized request"
-  // and playback never starts. Claim a current public release version
-  // in the UA; oscpu/platform already report the frozen 10.15.
-  pref("general.useragent.override",
-       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:139.0) "
-       "Gecko/20100101 Firefox/139.0");
 #endif

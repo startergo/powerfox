@@ -2016,6 +2016,14 @@ NSEvent* gLastDragMouseDownEvent = nil;  // [strong]
       // zero-sized container used by NativeLayerRootCA. Give that container
       // the hosting view's bounds on Lion so its committed sublayers reach the
       // WindowServer. This is part of the current main-thread CA transaction.
+      //
+      // Snow Leopard and Lion redraw layer-backed views through drawRect:,
+      // and AppKit can replace the view's backing layer during a live resize
+      // (e.g. the emulated fullscreen transition), dropping externally added
+      // sublayers. Re-attach our root layer if it was orphaned.
+      if (mRootCALayer.superlayer != mPixelHostingView.layer) {
+        [mPixelHostingView.layer addSublayer:mRootCALayer];
+      }
       [CATransaction begin];
       [CATransaction setDisableActions:YES];
       mRootCALayer.position = NSZeroPoint;

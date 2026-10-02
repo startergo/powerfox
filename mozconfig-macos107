@@ -1,0 +1,65 @@
+# Mozconfig for building PowerFox for Mac OS X 10.7 Lion through 10.14
+# Mojave (x86_64, cross-compiled from an arm64 host), from the
+# 10.7-backporting branch.
+#
+# Matches the official PowerFox recipe (verified from the Jazzzny 153.2.0
+# release binaries): a modern SDK with a 10.7 deployment floor, ld-classic,
+# and a bundled libc++. The modern SDK declares everything; availability is
+# handled by weak linking and runtime checks.
+#
+# Prerequisites (built once with):
+#   tools/legacy-macos/build-libcxx.sh <26.5-sdk> 10.7
+#   tools/legacy-macos/build-rust-std.sh 10.7
+#   clang -c tools/legacy-macos/compat-10.7.c -o \
+#     tools/legacy-macos/dist-10.7/lib/compat-10.7.o \
+#     -target x86_64-apple-macos10.7
+
+ac_add_options --enable-application=browser
+
+mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-x86_64-mac107
+
+ac_add_options --target=x86_64-apple-darwin
+ac_add_options --enable-macos-target=10.7
+ac_add_options --enable-linker=ld-classic
+ac_add_options --with-macos-sdk=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk
+# The wasm sandboxing needs a wasm-capable toolchain (mach bootstrap).
+ac_add_options --without-wasm-sandboxed-libraries
+# Momiji CI parity (github.com/aobaharuki2005/momiji-web-browser): no crash
+# reporter shipped, and the content-process seatbelt sandbox misbehaves on
+# old macOS (their note: it breaks video streaming on 10.7).
+ac_add_options --disable-crashreporter
+ac_add_options --disable-sandbox
+ac_add_options --disable-tests
+ac_add_options --disable-dmd
+ac_add_options --disable-geckodriver
+ac_add_options --disable-profiling
+# Lets the NSPR subconfigure know the deployment floor (connectx etc.).
+export MACOSX_DEPLOYMENT_TARGET=10.7
+
+# Bundle the darwin11 libc++ built by tools/legacy-macos/build-libcxx.sh;
+# link-time -lc++ resolves to the SDK's but packaging swaps in the bundle
+# (browser/installer/Makefile.in).
+export LEGACY_CXX_RUNTIME_DIR=$topsrcdir/tools/legacy-macos/dist-10.7/lib
+
+# Rust std built from source for the 10.7 deployment target (rustc's
+# distributed std floors at 10.12); the wrapper also overrides rustc's
+# deployment-target clamp with a trailing link arg.
+export RUSTC="$topsrcdir/tools/legacy-macos/rustc-legacy-10.7"
+export RUSTC_BOOTSTRAP=1
+
+# No compat shims at link time: pre-10.10 symbol gaps are filled after the
+# build by rewriting /usr/lib/libSystem.B.dylib to libMacportsLegacySystem.B
+#.dylib (built from the aobaharuki2005/macports-legacy-support fork, which
+# re-exports libSystem and adds CCRandomGenerateBytes, getentropy,
+# clock_gettime, the $INODE64 at-calls and _availability_version_check) —
+# the same polyfill the Momiji CI applies.
+export CC="/usr/bin/clang"
+export CXX="/usr/bin/clang++"
+# headerpad leaves room for the longer @executable_path load paths the
+# polyfill's install_name_tool rewrites need.
+export LDFLAGS="-Wl,-lobjc -Wl,-rpath,@executable_path/. -Wl,-headerpad_max_install_names"
+# GNU ar (homebrew binutils) writes members ld-classic rejects with
+# "not 8-byte aligned"; use Apple's tools.
+export AR=/usr/bin/ar
+export RANLIB=/usr/bin/ranlib
+ac_add_options --disable-install-strip

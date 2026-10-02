@@ -125,11 +125,11 @@ impl Queue {
     }
 
     pub fn get_global_queue() -> Self {
-        let mut queue = unsafe { dispatch_get_global_queue(QOS_CLASS_DEFAULT as isize, 0) };
-        if queue.is_null() {
-            // Snow Leopard does not accept QoS-class identifiers here.
-            queue = unsafe { dispatch_get_global_queue(0, 0) };
-        }
+        // QoS-class identifiers are a 10.10+ concept; on older systems the
+        // value lands in the legacy priority-flag space and misbehaves, and
+        // a null return is not guaranteed to detect it. Plain
+        // DISPATCH_QUEUE_PRIORITY_DEFAULT is correct everywhere we ship.
+        let queue = unsafe { dispatch_get_global_queue(0, 0) };
         Self {
             queue: Mutex::new(queue),
             owned: AtomicBool::new(false),

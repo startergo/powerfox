@@ -1,0 +1,34 @@
+name: build libMacportsLegacySystem.B.dylib on macOS ARM runner
+
+on:
+  workflow_dispatch: 
+
+jobs:
+  build:
+    name: build
+    runs-on: macos-15
+    steps: 
+      - name: Checkout source code
+        id: checkout
+        uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: build
+        id: build
+        run: |
+            CC="clang --target=x86_64-apple-macos10.6" \
+            CXX="clang++ --target=x86_64-apple-macos10.6" \
+            CFLAGS="-march=nocona -Os" \
+            CXXFLAGS="-march=nocona -Os" \
+            LDFLAGS="--target=x86_64-apple-macos10.6" \
+            make
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          archive: false
+          path: |
+            lib/libMacportsLegacySystem.B.dylib
+          if-no-files-found: error
+          retention-days: 7

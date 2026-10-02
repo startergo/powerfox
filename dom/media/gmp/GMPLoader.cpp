@@ -23,6 +23,23 @@
 #ifdef XP_WIN
 #  include <windows.h>
 #endif
+#ifdef XP_MACOSX
+#  include <dlfcn.h>
+#  include <fcntl.h>
+#  include <limits.h>
+#  include <mach-o/dyld.h>
+#  include <mach-o/fat.h>
+#  include <mach-o/loader.h>
+#  include <mach-o/nlist.h>
+#  include <mach/mach.h>
+#  include <mach/mach_vm.h>
+#  include <objc/objc.h>
+#  include <objc/runtime.h>
+#  include <string.h>
+#  include <sys/mman.h>
+#  include <sys/stat.h>
+#  include <unistd.h>
+#endif
 
 namespace mozilla::gmp {
 class PassThroughGMPAdapter : public GMPAdapter {
@@ -77,6 +94,506 @@ class PassThroughGMPAdapter : public GMPAdapter {
  private:
   PRLibrary* mLib = nullptr;
 };
+
+#ifdef XP_MACOSX
+namespace {
+
+// mprotect requires a page-aligned address and a length spanning to the
+// end of the range; sections are arbitrarily aligned inside __DATA.
+static bool UnprotectSection(uintptr_t aAddr, size_t aSize) {
+  uintptr_t page = aAddr & ~4095UL;
+  return mprotect((void*)page, ((aAddr + aSize + 4095) & ~4095UL) - page,
+                  PROT_READ | PROT_WRITE) == 0;
+}
+
+// Widevine CDMs are built for modern macOS. On pre-10.12 systems the plain
+// load fails: the CDM hard-imports os_log-era libSystem symbols, and its
+// ObjC metadata uses patterns old runtimes don't process. The shim dylib
+// next to XUL fills the symbol gaps; loading with dyld's flat namespace
+// flipped on makes the CDM bind against it, and the fixups below repair
+// its selector references and message-send slots.
+
+void* CDMShim() {
+  static void* sShim = nullptr;
+  static bool sTried = false;
+  if (sTried) {
+    return sShim;
+  }
+  sTried = true;
+  Dl_info info;
+  if (dladdr((void*)&CDMShim, &info) && info.dli_fname) {
+    char path[PATH_MAX];
+    size_t len = strlen(info.dli_fname);
+    const char* slash = strrchr(info.dli_fname, '/');
+    if (slash && len + 32 < sizeof(path)) {
+      memcpy(path, info.dli_fname, slash + 1 - info.dli_fname);
+      strcpy(path + (slash + 1 - info.dli_fname),
+             "libWidevineLegacyShim.dylib");
+      sShim = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
+      if (sShim) {
+        // The shim creates its TLS keys in a constructor; this explicit
+        // call covers shim builds predating that.
+        typedef void (*InitFn)(void);
+        InitFn init = (InitFn)dlsym(sShim, "WidevineLegacyShimInit");
+        if (init) {
+          init();
+        }
+      }
+    }
+  }
+  return sShim;
+}
+
+typedef void (*DyldSetVarFn)(const char*, const char*);
+
+DyldSetVarFn FindDyldSetVariable() {
+  // dyld >= 239.4 (macOS 10.9) has a static _dyld_set_variable(key, value)
+  // that re-processes one DYLD_ variable at runtime. Resolve it through the
+  // on-disk symbol table, relocated by dyld's runtime base.
+  int fd = open("/usr/lib/dyld", O_RDONLY);
+  if (fd < 0) {
+    return nullptr;
+  }
+  struct stat st;
+  if (fstat(fd, &st) != 0 || st.st_size < 0x1000) {
+    close(fd);
+    return nullptr;
+  }
+  unsigned char* data = (unsigned char*)malloc(st.st_size);
+  if (!data || read(fd, data, st.st_size) != st.st_size) {
+    free(data);
+    close(fd);
+    return nullptr;
+  }
+  close(fd);
+
+  const unsigned char* mh = data;
+  uint32_t magic;
+  memcpy(&magic, mh, 4);
+  if (OSSwapBigToHostInt32(magic) == FAT_MAGIC) {
+    uint32_t nfat;
+    memcpy(&nfat, mh + 4, 4);
+    nfat = OSSwapBigToHostInt32(nfat);
+    const unsigned char* fa = mh + 8;
+    for (uint32_t i = 0; i < nfat; i++, fa += 20) {
+      int32_t cputype;
+      memcpy(&cputype, fa, 4);
+      if (OSSwapBigToHostInt32(cputype) == CPU_TYPE_X86_64) {
+        uint32_t off;
+        memcpy(&off, fa + 8, 4);
+        mh = data + OSSwapBigToHostInt32(off);
+        break;
+      }
+    }
+  }
+  memcpy(&magic, mh, 4);
+  if (magic != MH_MAGIC_64) {
+    free(data);
+    return nullptr;
+  }
+
+  uint32_t ncmds;
+  memcpy(&ncmds, mh + 16, 4);
+  const unsigned char* lc = mh + 32;
+  uint64_t textvm = 0;
+  uint64_t symval = 0;
+  const symtab_command* symtab = nullptr;
+  for (uint32_t i = 0; i < ncmds; i++) {
+    uint32_t cmd, cmdsize;
+    memcpy(&cmd, lc, 4);
+    memcpy(&cmdsize, lc + 4, 4);
+    if (cmd == LC_SEGMENT_64) {
+      char segname[17];
+      memcpy(segname, lc + 8, 16);
+      segname[16] = 0;
+      if (strcmp(segname, SEG_TEXT) == 0) {
+        memcpy(&textvm, lc + 24, 8);
+      }
+    } else if (cmd == LC_SYMTAB) {
+      symtab = (const symtab_command*)lc;
+    }
+    lc += cmdsize;
+  }
+  if (symtab && textvm) {
+    const nlist_64* syms = (const nlist_64*)(mh + symtab->symoff);
+    const char* strs = (const char*)(mh + symtab->stroff);
+    for (uint32_t k = 0; k < symtab->nsyms; k++) {
+      if (syms[k].n_un.n_strx < symtab->strsize &&
+          strcmp(strs + syms[k].n_un.n_strx,
+                 "__ZL18_dyld_set_variablePKcS0_") == 0) {
+        symval = syms[k].n_value;
+        break;
+      }
+    }
+  }
+  free(data);
+  if (!symval || !textvm) {
+    return nullptr;
+  }
+
+  task_t task = mach_task_self();
+  struct task_dyld_info ti;
+  mach_msg_type_number_t count = TASK_DYLD_INFO_COUNT;
+  if (task_info(task, TASK_DYLD_INFO, (task_info_t)&ti, &count) !=
+      KERN_SUCCESS) {
+    return nullptr;
+  }
+  // struct dyld_all_image_infos: dyldImageLoadAddress sits at offset 0x20.
+  uint64_t dyldHeader;
+  memcpy(&dyldHeader, (const void*)(ti.all_image_info_addr + 0x20), 8);
+  long slide = (long)dyldHeader - (long)textvm;
+  if (labs(slide) > 0x10000000 || (long)dyldHeader < 0) {
+    return nullptr;
+  }
+  return (DyldSetVarFn)(uintptr_t)(symval + slide);
+}
+
+bool IsObjCSendSlotName(const char* aName) {
+  return strcmp(aName, "_objc_msgSend") == 0 ||
+         strcmp(aName, "_objc_msgSend_stret") == 0 ||
+         strcmp(aName, "_objc_msgSend_fpret") == 0 ||
+         strcmp(aName, "_objc_msgSendSuper") == 0;
+}
+
+// mprotect requires a page-aligned address spanning to the range end.
+// Returns the pages' original protection through aOrigProt so it can be
+// restored once the caller is done patching; sections sharing a page must
+// all be patched before the first restore.
+static bool UnprotectSection(uintptr_t aAddr, size_t aSize, int* aOrigProt) {
+  uintptr_t page = aAddr & ~4095UL;
+  size_t len = ((aAddr + aSize + 4095) & ~4095UL) - page;
+  mach_vm_address_t region = page;
+  mach_vm_size_t regionSize = 0;
+  vm_region_basic_info_data_64_t info;
+  mach_msg_type_number_t infoCount = VM_REGION_BASIC_INFO_COUNT_64;
+  mach_port_t name;
+  // -1 leaves the pages writable on an unreadable region: losing the
+  // hardening is safe, restoring an RW section to read-only is not.
+  *aOrigProt = -1;
+  if (mach_vm_region(mach_task_self(), &region, &regionSize,
+                     VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info,
+                     &infoCount, &name) == KERN_SUCCESS &&
+      region <= page && page < region + regionSize) {
+    *aOrigProt = info.protection;
+  }
+  return mprotect((void*)page, len, PROT_READ | PROT_WRITE) == 0;
+}
+
+void FixupCDMImage(void* aShim, const char* aLibPath) {
+  struct PatchedPages {
+    uintptr_t page;
+    size_t len;
+    int prot;
+  };
+  AutoTArray<PatchedPages, 8> patched;
+  // Sections can share a page; record each page once, from the first
+  // query, so a later record cannot restore a different protection.
+  auto recordPatched = [&patched](uintptr_t aAddr, size_t aSize, int aProt) {
+    uintptr_t page = aAddr & ~4095UL;
+    uintptr_t end = (aAddr + aSize + 4095) & ~4095UL;
+    for (const PatchedPages& p : patched) {
+      if (p.page == page) {
+        return;
+      }
+    }
+    patched.AppendElement(PatchedPages{page, end - page, aProt});
+  };
+  const char* base = strrchr(aLibPath, '/');
+  base = base ? base + 1 : aLibPath;
+  size_t baseLen = strlen(base);
+  const mach_header_64* hdr = nullptr;
+  intptr_t slide = 0;
+  for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+    const char* name = _dyld_get_image_name(i);
+    if (!name) {
+      continue;
+    }
+    size_t nameLen = strlen(name);
+    // An empty basename (trailing '/') would suffix-match every image, so
+    // require one and anchor the suffix to a path separator.
+    bool match = strcmp(name, aLibPath) == 0;
+    if (!match && baseLen > 0 && nameLen > baseLen + 1 &&
+        name[nameLen - baseLen - 1] == '/' &&
+        strcmp(name + nameLen - baseLen, base) == 0) {
+      match = true;
+    }
+    if (match) {
+      hdr = (const mach_header_64*)_dyld_get_image_header(i);
+      slide = _dyld_get_image_vmaddr_slide(i);
+      break;
+    }
+  }
+  if (!hdr) {
+    return;
+  }
+
+  const load_command* lc = (const load_command*)(hdr + 1);
+  const symtab_command* symtab = nullptr;
+  const dysymtab_command* dysym = nullptr;
+  uint64_t linkeditRuntime = 0;
+  for (uint32_t i = 0; i < hdr->ncmds;
+       i++, lc = (const load_command*)((const char*)lc + lc->cmdsize)) {
+    if (lc->cmd == LC_SYMTAB) {
+      symtab = (const symtab_command*)lc;
+    } else if (lc->cmd == LC_DYSYMTAB) {
+      dysym = (const dysymtab_command*)lc;
+    } else if (lc->cmd == LC_SEGMENT_64) {
+      const segment_command_64* sg = (const segment_command_64*)lc;
+      if (strncmp(sg->segname, SEG_LINKEDIT, 16) == 0) {
+        linkeditRuntime = sg->vmaddr + slide - sg->fileoff;
+      }
+    }
+  }
+  if (!symtab || !linkeditRuntime) {
+    return;
+  }
+  const nlist_64* syms = (const nlist_64*)(linkeditRuntime + symtab->symoff);
+  const char* strs = (const char*)(linkeditRuntime + symtab->stroff);
+  const uint32_t* indirect =
+      dysym ? (const uint32_t*)(linkeditRuntime + dysym->indirectsymoff)
+            : nullptr;
+
+  lc = (const load_command*)(hdr + 1);
+  for (uint32_t i = 0; i < hdr->ncmds;
+       i++, lc = (const load_command*)((const char*)lc + lc->cmdsize)) {
+    if (lc->cmd != LC_SEGMENT_64) {
+      continue;
+    }
+    const segment_command_64* sg = (const segment_command_64*)lc;
+    if (strncmp(sg->segname, "__DATA", 6) != 0) {
+      continue;
+    }
+    const section_64* sec = (const section_64*)((const char*)sg + sizeof(*sg));
+    for (uint32_t s = 0; s < sg->nsects; s++, sec++) {
+      void* slots = (void*)(uintptr_t)(sec->addr + slide);
+      size_t count = sec->size / sizeof(void*);
+      if (strcmp(sec->sectname, "__thread_vars") == 0) {
+        // Where the weak-patched TLV binds zeroed the descriptor thunks
+        // (10.6), install the shim's bootstrap; on 10.7+ dyld bound the
+        // system TLV runtime and the thunks stay untouched.
+        void** thunks = (void**)slots;
+        void* tlvBootstrap = dlsym(aShim, "__tlv_bootstrap");
+        int origProt = PROT_READ;
+        if (!UnprotectSection((uintptr_t)slots, sec->size, &origProt)) {
+          continue;
+        }
+        recordPatched((uintptr_t)slots, sec->size, origProt);
+        for (size_t k = 0; k < count / 3 && tlvBootstrap; k++) {
+          if (!thunks[k * 3]) {
+            thunks[k * 3] = tlvBootstrap;
+          }
+        }
+        continue;
+      }
+      if (strcmp(sec->sectname, "__objc_selrefs") == 0) {
+        // The old ObjC runtime never canonicalized this image's selector
+        // references; the CDM also passes embedded name strings directly.
+        int origProt = PROT_READ;
+        if (!UnprotectSection((uintptr_t)slots, sec->size, &origProt)) {
+          continue;
+        }
+        recordPatched((uintptr_t)slots, sec->size, origProt);
+        SEL* refs = (SEL*)slots;
+        for (size_t k = 0; k < count; k++) {
+          if (refs[k]) {
+            refs[k] = sel_registerName((const char*)refs[k]);
+          }
+        }
+        continue;
+      }
+      uint32_t type = sec->flags & SECTION_TYPE;
+      if (!indirect || (type != S_LAZY_SYMBOL_POINTERS &&
+                        type != S_NON_LAZY_SYMBOL_POINTERS)) {
+        continue;
+      }
+      int origProt = PROT_READ;
+      if (!UnprotectSection((uintptr_t)slots, sec->size, &origProt)) {
+        continue;
+      }
+      recordPatched((uintptr_t)slots, sec->size, origProt);
+      void** ptrs = (void**)slots;
+      for (size_t k = 0; k < count; k++) {
+        uint32_t idx = indirect[sec->reserved1 + k];
+        if (idx == INDIRECT_SYMBOL_ABS || idx == INDIRECT_SYMBOL_LOCAL) {
+          continue;
+        }
+        if (idx >= symtab->nsyms) {
+          continue;
+        }
+        const char* name = strs + syms[idx].n_un.n_strx;
+        if (IsObjCSendSlotName(name)) {
+          void* hook = dlsym(aShim, name + 1);
+          if (hook) {
+            ptrs[k] = hook;
+          }
+        }
+      }
+    }
+  }
+  for (const PatchedPages& p : patched) {
+    if (p.prot != -1) {
+      mprotect((void*)p.page, p.len, p.prot);
+    }
+  }
+}
+
+// dyld on 10.6 cannot bind the CDM's thread-local descriptor thunks (the
+// bind throws even when the symbol is available; 10.7+ binds them against
+// libSystem's TLV runtime). Marking those two bind entries weak makes the
+// bind silently zero them; FixupCDMImage installs our thunk afterwards.
+// Writing the one-byte flags edits into a sibling copy keeps the CDM file
+// itself untouched. Returns null when no patch is needed or it fails; the
+// caller then loads the original path.
+const unsigned char* FindBytes(const unsigned char* aHaystack, size_t aHayLen,
+                               const char* aNeedle, size_t aNeedleLen) {
+  if (aNeedleLen == 0 || aHayLen < aNeedleLen) {
+    return nullptr;
+  }
+  for (size_t i = 0; i + aNeedleLen <= aHayLen; i++) {
+    if (memcmp(aHaystack + i, aNeedle, aNeedleLen) == 0) {
+      return aHaystack + i;
+    }
+  }
+  return nullptr;
+}
+
+char* PatchCDMForTLV(const char* aLibPath) {
+  static const char* kNames[2] = {"__tlv_bootstrap", "__tlv_atexit"};
+  int fd = open(aLibPath, O_RDONLY);
+  if (fd < 0) {
+    return nullptr;
+  }
+  struct stat st;
+  if (fstat(fd, &st) != 0 || st.st_size < 0x1000 || st.st_size > 0x8000000) {
+    close(fd);
+    return nullptr;
+  }
+  size_t size = st.st_size;
+  unsigned char* data = (unsigned char*)malloc(size);
+  if (!data || read(fd, data, size) != (ssize_t)size) {
+    free(data);
+    close(fd);
+    return nullptr;
+  }
+  close(fd);
+
+  int patched = 0;
+  for (size_t n = 0; n < sizeof(kNames) / sizeof(kNames[0]); n++) {
+    size_t len = strlen(kNames[n]);
+    const unsigned char* p = data;
+    const unsigned char* end = data + size;
+    while ((p = FindBytes(p, end - p, kNames[n], len)) && p + len < end &&
+           p[len] == 0) {
+      // The SET_SYMBOL_TRAILING_FLAGS opcode (0x40 | flags) directly
+      // precedes the name; flags 0x01 is a weak import.
+      if (p > data && (p[-1] & 0xf0) == 0x40 && (p[-1] & 0x0f) == 0) {
+        ((unsigned char*)p)[-1] = 0x41;
+        patched++;
+      }
+      p += len;
+    }
+  }
+  if (!patched) {
+    free(data);
+    return nullptr;
+  }
+
+  size_t outLen = strlen(aLibPath) + 32;
+  char* out = (char*)malloc(outLen);
+  if (!out) {
+    free(data);
+    return nullptr;
+  }
+  // Write to a unique temp name and rename, so a crash mid-write never
+  // leaves a truncated .legacy that a subsequent session would load. A
+  // stale .legacy from a previous CDM version is also cleaned up here.
+  snprintf(out, outLen, "%s.legacy.tmp.%d", aLibPath, (int)getpid());
+  int outFd = open(out, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  if (outFd < 0 || write(outFd, data, size) != (ssize_t)size) {
+    close(outFd);
+    unlink(out);
+    free(data);
+    free(out);
+    return nullptr;
+  }
+  close(outFd);
+
+  char finalPath[PATH_MAX];
+  snprintf(finalPath, sizeof(finalPath), "%s.legacy", aLibPath);
+  unlink(finalPath);
+  if (rename(out, finalPath) != 0) {
+    unlink(out);
+    free(data);
+    free(out);
+    return nullptr;
+  }
+  free(out);
+  free(data);
+  return strdup(finalPath);
+}
+
+PRLibrary* LoadCDMWithLegacySupport(const PRLibSpec& aSpec,
+                                    const char* aLibPath) {
+  void* shim = CDMShim();
+  if (!shim) {
+    return nullptr;
+  }
+  // _dyld_set_variable only exists from 10.9. Without it the stub-framework
+  // fallback paths and the runtime flat-namespace flip cannot be applied;
+  // attempt the load anyway so pre-10.9 hosts fail at dlopen with a real
+  // bind error instead of an unexplained null.
+  DyldSetVarFn setvar = FindDyldSetVariable();
+  // The CDM hard-depends on LocalAuthentication, CryptoTokenKit,
+  // libpmenergy and libpmsample, which only exist from 10.10 on. Stub
+  // copies ship in the bundle; dyld's fallback search paths (settable
+  // through the same dyld helper) resolve the dependencies from there on
+  // older systems.
+  Dl_info info;
+  if (dladdr((void*)&LoadCDMWithLegacySupport, &info) && info.dli_fname) {
+    char libDir[PATH_MAX], fwDir[PATH_MAX], fwFile[PATH_MAX];
+    size_t len = strlen(info.dli_fname);
+    const char* slash = strrchr(info.dli_fname, '/');
+    if (slash && slash + 2 < info.dli_fname + len &&
+        len + 64 < sizeof(libDir)) {
+      memcpy(libDir, info.dli_fname, slash - info.dli_fname);
+      libDir[slash - info.dli_fname] = 0;
+      snprintf(fwFile, sizeof(fwFile),
+               "%s/../Frameworks/"
+               "LocalAuthentication.framework",
+               libDir);
+      struct stat fwst;
+      if (setvar && stat(fwFile, &fwst) == 0) {
+        snprintf(fwDir, sizeof(fwDir), "%s/../Frameworks", libDir);
+        setvar("DYLD_FALLBACK_FRAMEWORK_PATH", fwDir);
+        setvar("DYLD_FALLBACK_LIBRARY_PATH", libDir);
+      }
+    }
+  }
+  char* patchedPath = PatchCDMForTLV(aLibPath);
+  const char* loadPath = patchedPath ? patchedPath : aLibPath;
+  PRLibSpec spec = aSpec;
+  spec.value.pathname = loadPath;
+
+  if (setvar) {
+    setvar("DYLD_FORCE_FLAT_NAMESPACE", "1");
+  }
+  PRLibrary* lib = PR_LoadLibraryWithFlags(spec, PR_LD_NOW);
+  if (setvar) {
+    setvar("DYLD_FORCE_FLAT_NAMESPACE", "0");
+  }
+  GMP_LOG_DEBUG(
+      "GMPLoader: legacy CDM load path={} patched={} flat-load={} pr={} os={}",
+      loadPath, patchedPath ? 1 : 0, lib ? "ok" : "FAIL", PR_GetError(),
+      PR_GetOSError());
+  if (lib) {
+    FixupCDMImage(shim, loadPath);
+  }
+  free(patchedPath);
+  return lib;
+}
+
+}  // namespace
+#endif  // XP_MACOSX
 
 #if defined(XP_WIN) && defined(MOZ_SANDBOX)
 // This performs the same checks for an AppLocker policy that are performed in
@@ -215,6 +732,15 @@ bool GMPLoader::Load(const char* aUTF8LibPath, uint32_t aUTF8LibPathLen,
   libSpec.type = PR_LibSpec_Pathname;
 #endif
   PRLibrary* lib = PR_LoadLibraryWithFlags(libSpec, 0);
+  if (!lib) {
+#ifdef XP_MACOSX
+    const char* dlErr = dlerror();
+    GMP_LOG_DEBUG(
+        "GMPLoader: plain CDM load failed path={} pr={} os={} dl={}",
+        aUTF8LibPath, PR_GetError(), PR_GetOSError(), dlErr ? dlErr : "(none)");
+    lib = LoadCDMWithLegacySupport(libSpec, aUTF8LibPath);
+#endif
+  }
   if (!lib) {
     MOZ_CRASH_UNSAFE_PRINTF("Cannot load plugin as library %d %d",
                             PR_GetError(), PR_GetOSError());

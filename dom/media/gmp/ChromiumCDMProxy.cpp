@@ -598,6 +598,18 @@ void ChromiumCDMProxy::OnRejectPromise(uint32_t aPromiseId,
   RejectPromise(aPromiseId, std::move(aException), aMsg);
 }
 
+void ChromiumCDMProxy::EnsureCDMDecoderInitialized() {
+  RefPtr<gmp::ChromiumCDMParent> cdm = GetCDMParent();
+  if (!cdm) {
+    return;
+  }
+  mGMPThread->Dispatch(
+      NewRunnableMethod("gmp::ChromiumCDMParent::EnsureCDMDecoderInitialized",
+                        cdm,
+                        &gmp::ChromiumCDMParent::EnsureCDMDecoderInitialized),
+      NS_DISPATCH_NORMAL);
+}
+
 RefPtr<DecryptPromise> ChromiumCDMProxy::Decrypt(MediaRawData* aSample) {
   RefPtr<gmp::ChromiumCDMParent> cdm = GetCDMParent();
   if (!cdm) {

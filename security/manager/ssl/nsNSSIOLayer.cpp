@@ -1591,9 +1591,9 @@ static nsresult nsSSLIOLayerSetOptions(PRFileDesc* fd, bool forSTARTTLS,
   if (StaticPrefs::security_tls_enable_kyber() &&
       range.max >= SSL_LIBRARY_VERSION_TLS_1_3) {
     const SSLNamedGroup namedGroups[] = {
-        ssl_grp_kem_mlkem768x25519, ssl_grp_ec_curve25519, ssl_grp_ec_secp256r1,
-        ssl_grp_ec_secp384r1,       ssl_grp_ec_secp521r1,  ssl_grp_ffdhe_2048,
-        ssl_grp_ffdhe_3072};
+        ssl_grp_kem_mlkem768x25519, ssl_grp_ec_curve25519,
+        ssl_grp_ec_secp256r1,       ssl_grp_ec_secp384r1,
+        ssl_grp_ec_secp521r1};
     if (SECSuccess !=
         SSL_NamedGroupConfig(fd, namedGroups, std::size(namedGroups))) {
       return NS_ERROR_FAILURE;
@@ -1602,7 +1602,7 @@ static nsresult nsSSLIOLayerSetOptions(PRFileDesc* fd, bool forSTARTTLS,
   } else {
     const SSLNamedGroup namedGroups[] = {
         ssl_grp_ec_curve25519, ssl_grp_ec_secp256r1, ssl_grp_ec_secp384r1,
-        ssl_grp_ec_secp521r1,  ssl_grp_ffdhe_2048,   ssl_grp_ffdhe_3072};
+        ssl_grp_ec_secp521r1};
     // Skip the |ssl_grp_kem_mlkem768x25519| entry.
     if (SECSuccess !=
         SSL_NamedGroupConfig(fd, namedGroups, std::size(namedGroups))) {

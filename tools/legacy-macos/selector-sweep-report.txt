@@ -1,0 +1,298 @@
+selector-sweep report — sources scanned: 204 ObjC files
+candidates absent from 10.6 runtime: 271795; system-class send-sites: 17; already in safe list: 17; NEW needing classification: 0; UNRESOLVED variable-receiver sends: 101
+
+== NEW UNGUARDED CANDIDATES (system-class sends) ==
+
+== UNRESOLVED (variable receivers — classify by receiver type) ==
+### accessibilityCustomActions
+    accessible/xpcom/xpcAccessibleMacInterface.mm:122: if (NSArray* customActions = [mNativeObject accessibilityCustomActions]) {
+    accessible/xpcom/xpcAccessibleMacInterface.mm:153: if (NSArray* customActions = [mNativeObject accessibilityCustomActions]) {
+    accessible/xpcom/xpcAccessibleMacInterface.mm:187: if (NSArray* customActions = [mNativeObject accessibilityCustomActions]) {
+### addObserver
+    widget/cocoa/nsCocoaWindow.mm:9255: [mFullscreenTitlebarTracker addObserver:self
+    dom/media/systemservices/objc_video_capture/rtc_video_capture_objc.mm:82: [notify addObserver:self
+    dom/media/systemservices/objc_video_capture/rtc_video_capture_objc.mm:86: [notify addObserver:self
+### authorizationStatus
+    widget/cocoa/nsMacPermissionMonitor.mm:101: bool isGranted = StatusIsGranted([aManager authorizationStatus]);
+    dom/geolocation/GeolocationSystemMac.mm:191: return [mLocationManager authorizationStatus];
+    dom/geolocation/GeolocationSystemMac.mm:210: CLAuthorizationStatus authStatus = [locationManager authorizationStatus];
+### backingScaleFactor
+    widget/cocoa/nsCocoaUtils.mm:827: ? [screen backingScaleFactor]
+### baseType
+    widget/cocoa/nsTouchBar.mm:152: if ([input baseType] == TouchBarInputBaseType::kScrubber) {
+    widget/cocoa/nsTouchBar.mm:162: if ([input baseType] == TouchBarInputBaseType::kPopover) {
+    widget/cocoa/nsTouchBar.mm:180: if ([input baseType] == TouchBarInputBaseType::kScrollView) {
+    (+15 more)
+### becomeCurrent
+    widget/cocoa/nsMacSharingService.mm:225: [shareActivity becomeCurrent];
+### bssid
+    netwerk/wifi/mac/MacWifiScanner.mm:75: NSString* macString = [anObject bssid];
+### bssidData
+    netwerk/wifi/mac/MacWifiScanner.mm:68: NSData* data = [anObject bssidData];
+### callback
+    widget/cocoa/nsTouchBar.mm:541: nsCOMPtr<nsITouchBarInputCallback> callback = [input callback];
+### configuration
+    toolkit/mozapps/update/updater/launchchild_osx.mm:128: NSWorkspaceOpenConfiguration* config = [configClass configuration];
+### contentViewContents
+    widget/cocoa/nsCocoaWindow.mm:6548: NSArray* contentViewContents = [mWindow contentViewContents];
+### createTrackingArea
+    widget/cocoa/nsCocoaWindow.mm:5685: [mWindow createTrackingArea];
+### disableSetNeedsDisplay
+    widget/cocoa/nsCocoaWindow.mm:344: [win disableSetNeedsDisplay];
+    widget/cocoa/nsCocoaWindow.mm:7331: [mWindow disableSetNeedsDisplay];
+### disableSnapshotRestoration
+    widget/cocoa/nsCocoaWindow.mm:5598: [mWindow disableSnapshotRestoration];
+### effectiveAppearance
+    widget/cocoa/nsLookAndFeel.mm:449: [[NSApp effectiveAppearance] bestMatchFromAppearancesWithNames:@[
+### enableSetNeedsDisplay
+    widget/cocoa/nsCocoaWindow.mm:346: [win enableSetNeedsDisplay];
+    widget/cocoa/nsCocoaWindow.mm:7333: [mWindow enableSetNeedsDisplay];
+### exportSettings
+    widget/cocoa/nsPrintDialogX.mm:241: [viewController exportSettings];
+### exportState
+    widget/cocoa/nsCocoaWindow.mm:6554: NSMutableDictionary* state = [mWindow exportState];
+### foreground
+    ipc/glue/ExtensionKitUtils.mm:101: BEProcessCapability* cap = [BEProcessCapability foreground];
+### formats
+    dom/media/systemservices/objc_video_capture/video_capture_avfoundation.mm:47: for (AVCaptureDeviceFormat* format in [aDevice formats]) {
+### geckoAccessible
+    accessible/mac/mozSelectableElements.mm:194: [parent geckoAccessible]->Role() == roles::PARENT_MENUITEM) {
+    accessible/mac/mozSelectableElements.mm:221: if (LocalAccessible* acc = [child geckoAccessible]->AsLocal()) {
+    accessible/mac/mozSelectableElements.mm:274: Accessible* parentAcc = [parent geckoAccessible];
+    (+6 more)
+### geckoWidget
+    widget/cocoa/nsCocoaWindow.mm:7916: nsCocoaWindow* geckoWidget = [windowDelegate geckoWidget];
+    widget/cocoa/nsCocoaWindow.mm:9431: nsCocoaWindow* geckoWindow = [windowDelegate geckoWidget];
+### hasListener
+    widget/uikit/EventDispatcher.mm:495: return [dispatcher hasListener:XPCOMStringToNSString(aEvent)];
+### hasMOXAccessibles
+    accessible/mac/MOXAccessibleBase.mm:173: if ([value hasMOXAccessibles]) {
+### hasMozAccessible
+    widget/cocoa/nsCocoaWindow.mm:9083: return [self.mainChildView hasMozAccessible];
+    accessible/mac/mozAccessible.mm:92: if (![view hasMozAccessible]) {
+### hasPreciseScrollingDeltas
+    widget/cocoa/nsCocoaWindow.mm:3002: [aEvent hasPreciseScrollingDeltas]) {
+    widget/cocoa/nsCocoaWindow.mm:3071: [theEvent hasPreciseScrollingDeltas] &&
+    widget/cocoa/nsCocoaWindow.mm:3199: [aMouseEvent hasPreciseScrollingDeltas] &&
+    (+1 more)
+### hasRepresentedView
+    accessible/mac/MOXAccessibleBase.mm:504: if ([nativeChild hasRepresentedView]) {
+### imageURI
+    widget/cocoa/nsTouchBar.mm:326: if ([input imageURI]) {
+    widget/cocoa/nsTouchBar.mm:385: if ([input imageURI]) {
+    widget/cocoa/nsTouchBar.mm:551: if (!aInput || ![aInput imageURI] || !aItem || !mTouchBarHelper) {
+    (+1 more)
+### inputs
+    dom/media/systemservices/objc_video_capture/rtc_video_capture_objc.mm:126: NSArray* currentInputs = [NSArray arrayWithArray:[_captureSession inputs]];
+    dom/media/systemservices/objc_video_capture/rtc_video_capture_objc.mm:277: NSArray* currentInputs = [_captureSession inputs];
+### interface
+    netwerk/wifi/mac/MacWifiScanner.mm:45: id scanResult = [[CWI_class interface] scanForNetworksWithSSID:nil
+### isAccessibilityElement
+    accessible/mac/mozAccessible.mm:212: if ([focusedChild isAccessibilityElement]) {
+    accessible/mac/mozAccessible.mm:252: return [nativeChild isAccessibilityElement]
+    accessible/mac/MOXAccessibleBase.mm:169: value = [value isAccessibilityElement] ? GetObjectOrRepresentedView(value)
+    (+2 more)
+### isDisabled
+    widget/cocoa/nsTouchBar.mm:335: [button setEnabled:![input isDisabled]];
+### isDragInProgress
+    widget/cocoa/nsCocoaWindow.mm:353: if ([mChildView isDragInProgress]) {
+### isExpired
+    widget/cocoa/nsCocoaWindow.mm:4914: NSAssert(![nativeAccessible isExpired], @"native acc is expired!!!");
+### isHandlingSendEvent
+    ipc/chromium/src/base/chrome_application_mac.mm:60: handling_([app_ isHandlingSendEvent]) {
+### isMOXAccessible
+    accessible/mac/MOXAccessibleBase.mm:166: if ([value isMOXAccessible]) {
+    accessible/mac/MOXAccessibleBase.mm:418: if (![parent isMOXAccessible]) {
+### isOpened
+    accessible/mac/mozSelectableElements.mm:201: return ![parentMenu isOpened];
+    accessible/mac/mozSelectableElements.mm:293: return ![parentMenu isOpened];
+### logMessage
+    toolkit/crashreporter/google-breakpad/src/common/mac/GTMLogger.m:324: [writer_ logMessage:msg level:level];
+    toolkit/crashreporter/google-breakpad/src/common/mac/GTMLogger.m:372: [child logMessage:msg level:level];
+### markLayerForDisplay
+    widget/uikit/nsWindow.mm:1173: [mNativeView markLayerForDisplay];
+    widget/uikit/nsWindow.mm:1197: [mNativeView markLayerForDisplay];
+    widget/cocoa/nsCocoaWindow.mm:401: [mChildView markLayerForDisplay];
+    (+2 more)
+### maybePostValidationErrorChanged
+    accessible/mac/Platform.mm:186: [wrapper maybePostValidationErrorChanged];
+### momentumPhase
+    widget/cocoa/nsCocoaUtils.mm:227: [aEvent momentumPhase] != NSEventPhaseNone;
+    widget/cocoa/nsCocoaUtils.mm:233: [aEvent momentumPhase] != NSEventPhaseNone);
+    widget/cocoa/nsCocoaUtils.mm:1585: switch ([aEvent momentumPhase]) {
+### moxChildren
+    accessible/mac/mozTableAccessible.mm:199: addObjectsFromArray:[[curr moxChildren]
+### moxEditableAncestor
+    accessible/mac/Platform.mm:165: if (mozAccessible* editable = [wrapper moxEditableAncestor]) {
+    accessible/mac/Platform.mm:180: if (mozAccessible* editable = [wrapper moxEditableAncestor]) {
+    accessible/mac/mozAccessible.mm:930: id higherAncestor = [ancestorParent moxEditableAncestor];
+### moxFocused
+    accessible/mac/MOXTextMarkerDelegate.mm:160: if ([[caretEditable moxFocused] boolValue]) {
+### moxInvalid
+    accessible/mac/mozAccessible.mm:1321: NSString* invalidStr = [related moxInvalid];
+### moxIsLiveRegion
+    accessible/mac/RotorRules.mm:384: if (![nativeMatch moxIsLiveRegion]) {
+### moxIsTextField
+    accessible/mac/mozAccessible.mm:918: return [moxAcc moxIsTextField];
+### moxParent
+    accessible/mac/MOXSearchInfo.mm:58: [mRoot isKindOfClass:[mozAccessible class]] ? mRoot : [mRoot moxParent];
+    accessible/mac/mozSelectableElements.mm:197: id grandparent = [parent moxParent];
+    accessible/mac/mozSelectableElements.mm:285: id grandparent = [parent moxParent];
+### moxPosition
+    accessible/mac/MOXWebAreaAccessible.mm:64: return [mParent moxPosition];
+### moxRole
+    accessible/mac/MOXSearchInfo.mm:233: NSString* macRole = [native moxRole];
+    accessible/mac/MOXSearchInfo.mm:243: NSString* macRole = [native moxRole];
+    accessible/mac/mozSelectableElements.mm:41: if ([[child moxRole] isEqualToString:@"AXGroup"]) {
+    (+11 more)
+### moxRows
+    accessible/mac/mozTableAccessible.mm:572: NSUInteger index = [[outline moxRows] indexOfObjectIdenticalTo:self];
+### moxSize
+    accessible/mac/MOXWebAreaAccessible.mm:68: return [mParent moxSize];
+### moxSubrole
+    accessible/mac/MOXWebAreaAccessible.mm:56: return [mParent moxSubrole];
+    accessible/mac/mozTableAccessible.mm:528: if ([[parent moxSubrole] isEqualToString:@"AXOutlineRow"]) {
+### moxTextMarkerDelegate
+    accessible/mac/mozTextAccessible.mm:43: id<MOXTextMarkerSupport> delegate = [aObj moxTextMarkerDelegate];
+### moxUnignoredChildren
+    accessible/mac/mozSelectableElements.mm:42: unnest([child moxUnignoredChildren]);
+    accessible/mac/MOXAccessibleBase.mm:517: addObjectsFromArray:[nativeChild moxUnignoredChildren]];
+### moxUnignoredParent
+    accessible/mac/mozAccessible.mm:254: : [nativeChild moxUnignoredParent];
+    accessible/mac/mozAccessible.mm:925: id ancestorParent = [highestAncestor moxUnignoredParent];
+    accessible/mac/MOXAccessibleBase.mm:549: return [moxNativeParent moxUnignoredParent];
+    (+1 more)
+### moxValue
+    accessible/mac/MacUtils.mm:175: [attrDict setObject:[heading moxValue] forKey:@"AXHeadingLevel"];
+### moxVisited
+    accessible/mac/RotorRules.mm:268: if (![[nativeMatch moxVisited] boolValue]) {
+    accessible/mac/RotorRules.mm:288: if ([[nativeMatch moxVisited] boolValue]) {
+### moxWindow
+    accessible/mac/MacUtils.mm:186: NSWindow* window = [aAcc moxWindow];
+### nativeIdentifier
+    widget/cocoa/nsTouchBar.mm:98: self.mappedLayoutItems[[convertedInput nativeIdentifier]] =
+    widget/cocoa/nsTouchBar.mm:103: [orderedIdentifiers addObject:[convertedInput nativeIdentifier]];
+    widget/cocoa/nsTouchBar.mm:123: [self.mappedLayoutItems setObject:input forKey:[input nativeIdentifier]];
+    (+27 more)
+### new
+    widget/cocoa/nsDragService.mm:309: NSPasteboardItem* pbItem = [[NSPasteboardItem new] autorelease];
+### occlusionState
+    widget/cocoa/nsCocoaWindow.mm:7447: ([mWindow occlusionState] & NSWindowOcclusionStateVisible));
+### outputs
+    dom/media/systemservices/objc_video_capture/rtc_video_capture_objc.mm:183: return [[_captureSession outputs] firstObject];
+### performSearch
+    accessible/mac/MOXWebAreaAccessible.mm:76: return [search performSearch];
+    accessible/mac/mozAccessible.mm:1012: return [search performSearch];
+### pixelHostingView
+    widget/cocoa/nsCocoaWindow.mm:944: [[mChildView pixelHostingView] setNeedsDisplay:YES];
+### releaseJSObjects
+    widget/cocoa/nsTouchBarInput.mm:77: [child releaseJSObjects];
+    widget/cocoa/nsTouchBarInput.mm:207: [child releaseJSObjects];
+    widget/cocoa/nsTouchBar.mm:589: [input releaseJSObjects];
+    (+2 more)
+### removeFromParentViewController
+    widget/cocoa/nsCocoaWindow.mm:9276: [mFullscreenTitlebarTracker removeFromParentViewController];
+### requestWhenInUseAuthorization
+    dom/geolocation/GeolocationSystemMac.mm:97: [mLocationManager requestWhenInUseAuthorization];
+### resignCurrent
+    widget/cocoa/nsMacSharingService.mm:71: [mShareActivity resignCurrent];
+### rootCALayer
+    widget/uikit/nsWindow.mm:808: NativeLayerRootCA::CreateForCALayer([mNativeView rootCALayer]);
+### rootGroup
+    accessible/mac/mozAccessible.mm:277: if (id<mozAccessible> rootGroup = [nativeParent rootGroup]) {
+### rootGroupChildren
+    accessible/mac/MOXWebAreaAccessible.mm:45: return [mParent rootGroupChildren];
+### rssiValue
+    netwerk/wifi/mac/MacWifiScanner.mm:90: int signal = (int)((NSInteger)[anObject rssiValue]);
+### scrollingDeltaX
+    widget/cocoa/nsCocoaWindow.mm:3084: CGFloat pixelDeltaX = [theEvent scrollingDeltaX];
+### scrollingDeltaY
+    widget/cocoa/nsCocoaWindow.mm:3085: CGFloat pixelDeltaY = [theEvent scrollingDeltaY];
+### selectionChangeInfo
+    accessible/mac/mozAccessible.mm:1237: [[[delegate selectionChangeInfo] mutableCopy] autorelease];
+### sendToplevelActivateEvents
+    widget/cocoa/nsWindowMap.mm:177: [delegate sendToplevelActivateEvents];
+### sendToplevelDeactivateEvents
+    widget/cocoa/nsWindowMap.mm:197: [delegate sendToplevelDeactivateEvents];
+### set
+    widget/cocoa/MOZDynamicCursor.mm:280: [mCurrentCursor set];
+    widget/cocoa/MOZDynamicCursor.mm:345: [mCurrentCursor set];
+### setAsDefaultMenuItem
+    widget/cocoa/nsMenuBarX.mm:601: [[mApplicationMenuDelegate setAsDefaultMenuItem]
+    widget/cocoa/nsMenuBarX.mm:605: [[mApplicationMenuDelegate setAsDefaultMenuItem] setHidden:true];
+### setCallback
+    netwerk/protocol/http/MicrosoftEntraSSOUtils.mm:379: [mRequestDelegate setCallback:this];
+    dom/webauthn/MacOSWebAuthnService.mm:975: [mRequestDelegate setCallback:this transactionId:aTransactionId];
+### setEventHandler
+    toolkit/xre/MacApplicationDelegate.mm:218: [aeMgr setEventHandler:self
+    toolkit/xre/MacApplicationDelegate.mm:223: [aeMgr setEventHandler:self
+    toolkit/xre/MacApplicationDelegate.mm:228: [aeMgr setEventHandler:self
+### showPopover
+    widget/cocoa/nsTouchBar.mm:402: [aPopoverItem showPopover:self];
+    widget/cocoa/nsTouchBar.mm:523: [popoverItem showPopover:self];
+### ssid
+    netwerk/wifi/mac/MacWifiScanner.mm:93: ap->setSSID([[anObject ssid] UTF8String], 32);
+### stage
+    widget/cocoa/nsCocoaWindow.mm:4821: NSInteger stage = [event stage];
+### startUpdatingLocation
+    dom/geolocation/GeolocationSystemMac.mm:105: [mLocationManager startUpdatingLocation];
+### stopCapture
+    dom/media/systemservices/objc_video_capture/video_capture.mm:44: [capture_device_ stopCapture];
+    dom/media/systemservices/objc_video_capture/video_capture.mm:95: if (![capture_device_ stopCapture]) {
+### stopUpdatingLocation
+    dom/geolocation/GeolocationSystemMac.mm:150: [mLocationManager stopUpdatingLocation];
+    dom/geolocation/GeolocationSystemMac.mm:318: [aManager stopUpdatingLocation];
+    dom/geolocation/GeolocationSystemMac.mm:324: [aManager stopUpdatingLocation];
+### systemPurpleColor
+    widget/uikit/nsLookAndFeel.mm:195: aResult = GetColorFromUIColor([UIColor systemPurpleColor]);
+### titlebarContainerView
+    widget/cocoa/nsCocoaWindow.mm:8153: titlebarContainerView = [frameView titlebarContainerView];
+### titlebarView
+    widget/cocoa/nsCocoaWindow.mm:8150: titlebarView = [frameView titlebarView];
+### toplevelActiveState
+    widget/cocoa/nsWindowMap.mm:176: if ([delegate toplevelActiveState]) return;
+    widget/cocoa/nsWindowMap.mm:196: if (![delegate toplevelActiveState]) return;
+### uninstallTextInputHandler
+    widget/cocoa/TextInputHandler.mm:1795: TextInputHandler::~TextInputHandler() { [mView uninstallTextInputHandler]; }
+### unpublish
+    widget/cocoa/nsMacFinderProgress.mm:21: [mProgress unpublish];
+    widget/cocoa/nsMacFinderProgress.mm:90: [mProgress unpublish];
+### updateChildViewFrameRect
+    widget/cocoa/nsCocoaWindow.mm:6774: [mWindow updateChildViewFrameRect];
+### updateRootCALayer
+    widget/cocoa/nsCocoaWindow.mm:5063: [child updateRootCALayer];
+### viewsWindowDidBecomeKey
+    widget/cocoa/nsWindowMap.mm:209: [firstResponder viewsWindowDidBecomeKey];
+### viewsWindowDidResignKey
+    widget/cocoa/nsWindowMap.mm:222: [firstResponder viewsWindowDidResignKey];
+### widget
+    widget/cocoa/nsCocoaWindow.mm:5204: if (![childView widget]) return nil;
+    widget/cocoa/nsCocoaWindow.mm:9064: static_cast<nsCocoaWindow*>([self.mainChildView widget]);
+    accessible/mac/mozAccessible.mm:1052: nsIWidget* widget = [objOrView widget];
+### widgetDestroyed
+    widget/uikit/nsWindow.mm:748: [mNativeView widgetDestroyed];  // Safe if mNativeView is nil.
+    widget/uikit/nsWindow.mm:829: [mNativeView widgetDestroyed];
+    widget/cocoa/nsCocoaWindow.mm:5342: [mChildView widgetDestroyed];  // Safe if mView is nil.
+    (+1 more)
+### widthAnchor
+    widget/cocoa/nsTouchBar.mm:287: [[button widthAnchor] constraintGreaterThanOrEqualToConstant:buttonSize]
+    widget/cocoa/nsTouchBar.mm:445: [[button widthAnchor] constraintGreaterThanOrEqualToConstant:buttonSize]
+
+-- classified-as-safe this run (in selector-sweep-safe.txt) --
+    IBeamCursorForVerticalLayout  [guarded]
+    _shouldZoomOnDoubleClick  [guarded]
+    accessibilityDisplayShouldInvertColors  [guarded]
+    addObserver  [false-positive]
+    columnResizeCursor  [available-guard]
+    configuration  [available-guard]
+    didLaunch  [false-positive]
+    frontmostApplication  [guarded]
+    isSwipeTrackingFromScrollEventsEnabled  [guarded]
+    isSwitchControlEnabled  [guarded]
+    isVoiceOverEnabled  [guarded]
+    preferredScrollerStyle  [guarded]
+    rowResizeCursor  [available-guard]
+    set  [false-positive]
+    thermalState  [guarded]
+    zoomInCursor  [available-guard]
+    zoomOutCursor  [available-guard]

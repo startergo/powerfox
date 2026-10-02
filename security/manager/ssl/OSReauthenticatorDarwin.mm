@@ -9,7 +9,10 @@
 using namespace mozilla;
 
 #include <CoreFoundation/CoreFoundation.h>
-#include <LocalAuthentication/LocalAuthentication.h>
+#if __has_include(<LocalAuthentication/LocalAuthentication.h>)
+#  define MOZ_HAVE_LOCALAUTHENTICATION 1
+#  include <LocalAuthentication/LocalAuthentication.h>
+#endif
 
 static const int32_t kPasswordNotSetErrorCode = -1000;
 
@@ -20,6 +23,9 @@ nsresult ReauthenticateUserMacOS(const nsAString& aPrompt,
   // This should cause a prompt to come up for the user asking them for their
   // password. If they correctly enter it, we'll set aReauthenticated to true.
 
+#ifndef MOZ_HAVE_LOCALAUTHENTICATION
+  return NS_ERROR_NOT_IMPLEMENTED;
+#else
   LAContext* context = [[LAContext alloc] init];
   NSString* prompt = mozilla::XPCOMStringToNSString(aPrompt);
 
@@ -58,4 +64,5 @@ nsresult ReauthenticateUserMacOS(const nsAString& aPrompt,
 
   [context release];
   return NS_OK;
+#endif
 }

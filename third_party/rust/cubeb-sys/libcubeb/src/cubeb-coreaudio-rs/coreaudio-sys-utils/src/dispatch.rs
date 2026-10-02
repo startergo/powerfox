@@ -124,7 +124,7 @@ impl Queue {
 
     pub fn get_global_queue() -> Self {
         Self {
-            queue: Mutex::new(unsafe { dispatch_get_global_queue(QOS_CLASS_DEFAULT as isize, 0) }),
+            queue: Mutex::new(unsafe { dispatch_get_global_queue(0, 0) }),
             owned: AtomicBool::new(false),
         }
     }

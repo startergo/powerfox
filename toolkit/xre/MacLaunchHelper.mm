@@ -7,6 +7,11 @@
 #include "MacAutoreleasePool.h"
 
 #include <Cocoa/Cocoa.h>
+
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
+#  import "SDKDeclarations.h"
+#endif
 #include <crt_externs.h>
 #include <ServiceManagement/ServiceManagement.h>
 #include <Security/Authorization.h>

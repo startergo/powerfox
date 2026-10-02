@@ -80,6 +80,18 @@ const char * PRIVATE_AGGREGATE_DEVICE_NAME = "CubebAggregateDevice";
  * frames. */
 const uint32_t SAFE_MIN_LATENCY_FRAMES = 128;
 const uint32_t SAFE_MAX_LATENCY_FRAMES = 512;
+#if defined(__APPLE__) && (!defined(MAC_OS_X_VERSION_10_12) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_12)
+// Renamed from ElementMaster in macOS 12.
+#define kAudioObjectPropertyElementMain kAudioObjectPropertyElementMaster
+// Introduced in macOS 10.14.
+#define kAudioAggregateDeviceIsStackedKey "stacked"
+// Introduced in macOS 10.10.
+#ifndef DISPATCH_QUEUE_SERIAL
+#define DISPATCH_QUEUE_SERIAL NULL
+#endif
+#endif
+
 
 const AudioObjectPropertyAddress DEFAULT_INPUT_DEVICE_PROPERTY_ADDRESS = {
     kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal,

@@ -129,6 +129,11 @@ already_AddRefed<NativeFontResourceMac> NativeFontResourceMac::Create(
     return nullptr;
   }
 
+  if (!&CTFontManagerCreateFontDescriptorFromData) {
+    // Requires macOS 10.13.
+    CFRelease(data);
+    return nullptr;
+  }
   CTFontDescriptorRef ctFontDesc =
       CTFontManagerCreateFontDescriptorFromData(data);
   if (!ctFontDesc) {

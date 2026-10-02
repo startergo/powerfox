@@ -260,8 +260,8 @@ nsresult nsMacDockSupport::UpdateDockTile() {
       mHasBadgeImage) {
     BuildDockTile();
 
-    if (NSApp.dockTile.contentView != mDockTileWrapperView) {
-      NSApp.dockTile.contentView = mDockTileWrapperView;
+    if ([[NSApp dockTile] contentView] != mDockTileWrapperView) {
+      [[NSApp dockTile] setContentView:mDockTileWrapperView];
     }
 
     mDockBadgeView.hidden = !mHasBadgeImage;
@@ -277,10 +277,10 @@ nsresult nsMacDockSupport::UpdateDockTile() {
     } else {
       mProgressDockOverlayView.hidden = true;
     }
-    [NSApp.dockTile display];
-  } else if (NSApp.dockTile.contentView) {
-    NSApp.dockTile.contentView = nil;
-    [NSApp.dockTile display];
+    [[NSApp dockTile] display];
+  } else if ([[NSApp dockTile] contentView]) {
+    [[NSApp dockTile] setContentView:nil];
+    [[NSApp dockTile] display];
   }
 
   return NS_OK;

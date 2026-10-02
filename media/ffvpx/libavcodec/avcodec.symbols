@@ -59,6 +59,13 @@ avsubtitle_free
 ff_get_buffer
 ff_mpa_freq_tab
 ff_mpa_bitrate_tab
+#ifdef MOZ_LEGACY_MACOS_TARGET
+ff_aac_decoder
+#if !defined(MOZ_FFVPX_AUDIOONLY)
+ff_h264_decoder
+ff_hevc_decoder
+#endif
+#endif
 ff_thread_progress_await
 ff_thread_progress_destroy
 ff_thread_progress_init

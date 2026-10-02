@@ -384,7 +384,18 @@ bool mozilla::PrintfTarget::cvt_s(const char* s, int width, int prec,
   }
 
   // Limit string length by precision value
-  size_t slen = strnlen(s, size_t(prec));
+  size_t slen;
+#if defined(XP_DARWIN) && \
+    (!defined(MAC_OS_X_VERSION_10_7) || \
+     MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7)
+  // strnlen requires 10.7.
+  slen = 0;
+  while (slen < size_t(prec) && s[slen]) {
+    slen++;
+  }
+#else
+  slen = strnlen(s, size_t(prec));
+#endif
   if (slen > INT_MAX) {
     return false;
   }

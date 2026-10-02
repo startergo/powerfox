@@ -6,6 +6,24 @@
 #include "mozilla/ProfilerState.h"
 #include <Foundation/Foundation.h>
 
+#if !defined(MAC_OS_X_VERSION_10_10) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_10
+// NSProcessInfo thermal state requires macOS 10.10.5.
+typedef NSInteger NSProcessInfoThermalState;
+enum {
+  NSProcessInfoThermalStateNominal = 0,
+  NSProcessInfoThermalStateFair = 1,
+  NSProcessInfoThermalStateSerious = 2,
+  NSProcessInfoThermalStateCritical = 3,
+};
+// Weak import: NULL before 10.10.5, the real symbol on newer runtimes.
+extern NSString* const NSProcessInfoThermalStateDidChangeNotification
+    __attribute__((weak_import));
+@interface NSProcessInfo (PowerFoxThermalCompat)
+@property(readonly) NSProcessInfoThermalState thermalState;
+@end
+#endif
+
 static nsLiteralCString ThermalStateToString(NSProcessInfoThermalState state) {
   switch (state) {
     case NSProcessInfoThermalStateNominal:
@@ -22,6 +40,9 @@ static nsLiteralCString ThermalStateToString(NSProcessInfoThermalState state) {
 }
 
 static void AddThermalStateMarker() {
+  if (![[NSProcessInfo processInfo] respondsToSelector:@selector(thermalState)]) {
+    return;
+  }
   NSProcessInfoThermalState state = [[NSProcessInfo processInfo] thermalState];
   PROFILER_MARKER_TEXT(
       "Thermal State", OTHER,
@@ -40,14 +61,18 @@ static void ThermalStateCallback(ProfilingState aProfilingState) {
     // Add marker for current thermal state
     AddThermalStateMarker();
 
-    // Register for thermal state change notifications
-    gThermalObserver = [[NSNotificationCenter defaultCenter]
-        addObserverForName:NSProcessInfoThermalStateDidChangeNotification
+    // Register for thermal state change notifications. The notification
+    // name is a weak import that is NULL before 10.10.5, where
+    // addObserverForName:nil would subscribe to every notification.
+    if (NSProcessInfoThermalStateDidChangeNotification != nil) {
+      gThermalObserver = [[NSNotificationCenter defaultCenter]
+          addObserverForName:NSProcessInfoThermalStateDidChangeNotification
                     object:nil
                      queue:nil
                 usingBlock:^(NSNotification* note) {
                   AddThermalStateMarker();
                 }];
+    }
   } else if (aProfilingState == ProfilingState::Pausing) {
     // Add marker but keep observer active
     AddThermalStateMarker();

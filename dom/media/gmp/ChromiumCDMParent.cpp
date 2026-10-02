@@ -177,6 +177,8 @@ void ChromiumCDMParent::SetServerCertificate(uint32_t aPromiseId,
   if (!SendSetServerCertificate(aPromiseId, aCert)) {
     RejectPromiseWithStateError(
         aPromiseId, "Failed to send setServerCertificate to CDM process"_ns);
+  } else {
+    mPendingServerCerts.InsertOrUpdate(aPromiseId, aCert.Clone());
   }
 }
 
@@ -382,6 +384,25 @@ bool ChromiumCDMParent::SendBufferToCDM(uint32_t aSizeInBytes) {
   return true;
 }
 
+void ChromiumCDMParent::EnsureCDMDecoderInitialized() {
+  MOZ_ASSERT(mGMPThread->IsOnCurrentThread());
+  if (mIsShutdown || mVideoDecoderInitialized) {
+    return;
+  }
+  gmp::CDMVideoDecoderConfig config;
+  config.mCodec() = cdm::VideoCodec::kCodecH264;
+  config.mProfile() = cdm::VideoCodecProfile::kProfileNotNeeded;
+  config.mFormat() = cdm::VideoFormat::kI420;
+  config.mImageWidth() = 320;
+  config.mImageHeight() = 180;
+  if (NS_WARN_IF(!SendInitializeVideoDecoder(config))) {
+    return;
+  }
+  mVideoDecoderInitialized = true;
+  mAwaitingPreInitResult = true;
+  mPreInitGen = mVideoDecoderGen;
+}
+
 RefPtr<DecryptPromise> ChromiumCDMParent::Decrypt(MediaRawData* aSample) {
   if (mIsShutdown) {
     MOZ_ASSERT(mGMPThread->IsOnCurrentThread());
@@ -500,6 +521,13 @@ void ChromiumCDMParent::ResolvePromise(uint32_t aPromiseId) {
 ipc::IPCResult ChromiumCDMParent::RecvOnResolvePromise(
     const uint32_t& aPromiseId) {
   MOZ_ASSERT(mGMPThread->IsOnCurrentThread());
+  if (aPromiseId == kInternalPromiseId) {
+    return IPC_OK();
+  }
+  nsTArray<uint8_t> pending;
+  if (mPendingServerCerts.Remove(aPromiseId, &pending)) {
+    mServerCert = std::move(pending);
+  }
   ResolvePromise(aPromiseId);
   return IPC_OK();
 }
@@ -565,6 +593,10 @@ ipc::IPCResult ChromiumCDMParent::RecvOnRejectPromise(
     const uint32_t& aPromiseId, const cdm::Exception& aException,
     const uint32_t& aSystemCode, const nsCString& aErrorMessage) {
   MOZ_ASSERT(mGMPThread->IsOnCurrentThread());
+  if (aPromiseId == kInternalPromiseId) {
+    return IPC_OK();
+  }
+  mPendingServerCerts.Remove(aPromiseId);
   RejectPromise(aPromiseId, ToErrorResult(aException, aErrorMessage),
                 aErrorMessage);
   return IPC_OK();
@@ -1192,6 +1224,26 @@ RefPtr<MediaDataDecoder::InitPromise> ChromiumCDMParent::InitializeVideoDecoder(
         __func__);
   }
 
+  if (mVideoDecoderInitialized) {
+    // EnsureCDMDecoderInitialized() may have initialized the CDM's video
+    // decoder with a dummy config. The CDM requires DeinitializeDecoder()
+    // before the decoder can be initialized again.
+    (void)SendDeinitializeVideoDecoder();
+    mVideoDecoderInitialized = false;
+    mVideoDecoderGen++;
+    // Any certificate still in flight was superseded by this deinitialize;
+    // its late resolution must not update the cache the replay below
+    // re-establishes.
+    mPendingServerCerts.Clear();
+    if (!mServerCert.IsEmpty()) {
+      // DeinitializeDecoder also discards the CDM's stored service
+      // certificate, which the page set before playback started. Re-send it
+      // so the license request is built against it.
+      nsTArray<uint8_t> certCopy = mServerCert.Clone();
+      (void)SendSetServerCertificate(kInternalPromiseId, std::move(certCopy));
+    }
+  }
+
   if (!SendInitializeVideoDecoder(aConfig)) {
     return MediaDataDecoder::InitPromise::CreateAndReject(
         MediaResult(NS_ERROR_DOM_MEDIA_FATAL_ERR,
@@ -1221,6 +1273,19 @@ ipc::IPCResult ChromiumCDMParent::RecvOnDecoderInitDone(
                 fmt::ptr(this), static_cast<int>(aStatus));
   if (mIsShutdown) {
     MOZ_ASSERT(mInitVideoDecoderPromise.IsEmpty());
+    return IPC_OK();
+  }
+  if (mAwaitingPreInitResult) {
+    // Result of the dummy init sent by EnsureCDMDecoderInitialized(), which
+    // has no init promise. If a real init was sent in the meantime, its own
+    // result will arrive next and must not be disturbed. If a deinitialize
+    // superseded the dummy init, the decoder is no longer in the state this
+    // result describes and it must not touch decoder state at all.
+    mAwaitingPreInitResult = false;
+    if (mVideoDecoderGen == mPreInitGen &&
+        mInitVideoDecoderPromise.IsEmpty()) {
+      mVideoDecoderInitialized = aStatus == cdm::kSuccess;
+    }
     return IPC_OK();
   }
   if (aStatus == cdm::kSuccess) {
@@ -1352,6 +1417,7 @@ RefPtr<ShutdownPromise> ChromiumCDMParent::ShutdownVideoDecoder() {
     return ShutdownPromise::CreateAndResolve(true, __func__);
   }
   mVideoDecoderInitialized = false;
+  mVideoDecoderGen++;
 
   GMP_LOG_DEBUG("ChromiumCDMParent::~ShutdownVideoDecoder(this={}) ",
                 fmt::ptr(this));
@@ -1397,6 +1463,7 @@ void ChromiumCDMParent::Shutdown() {
   if (mVideoDecoderInitialized && !mActorDestroyed) {
     (void)SendDeinitializeVideoDecoder();
     mVideoDecoderInitialized = false;
+    mVideoDecoderGen++;
   }
 
   // Note: MediaKeys rejects all outstanding promises when it initiates

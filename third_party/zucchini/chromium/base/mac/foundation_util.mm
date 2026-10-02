@@ -126,12 +126,12 @@ bool GetSearchPathDirectory(NSSearchPathDirectory directory,
                             NSSearchPathDomainMask domain_mask,
                             FilePath* result) {
   DCHECK(result);
-  NSArray<NSString*>* dirs =
+  NSArray* dirs =
       NSSearchPathForDirectoriesInDomains(directory, domain_mask, YES);
   if (dirs.count < 1) {
     return false;
   }
-  *result = NSStringToFilePath(dirs[0]);
+  *result = NSStringToFilePath([dirs objectAtIndex:0]);
   return true;
 }
 

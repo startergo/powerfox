@@ -14,6 +14,11 @@
 
 #include <AppKit/AppKit.h>
 #import <Cocoa/Cocoa.h>
+
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
+#  import "SDKDeclarations.h"
+#endif
 #include "NativeMenuMac.h"
 #import <Carbon/Carbon.h>
 
@@ -401,7 +406,7 @@ void StartupURLCollectionComplete() {
 }
 
 - (void)application:(NSApplication*)application
-           openURLs:(NSArray<NSURL*>*)urls {
+           openURLs:(NSArray*)urls {
   [self openURLs:urls];
 }
 
@@ -441,7 +446,7 @@ void StartupURLCollectionComplete() {
   }
 
   NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
-  return [self openURLs:((NSArray<NSURL*>*) @[filename])];
+  return [self openURLs:((NSArray*) @[filename])];
   NS_OBJC_END_TRY_BLOCK_RETURN(NO);
 }
 
@@ -483,7 +488,7 @@ void StartupURLCollectionComplete() {
   }
 }
 
-- (BOOL)openURLs:(NSArray<NSURL*>*)urls {
+- (BOOL)openURLs:(NSArray*)urls {
   nsTArray<const char*> args([urls count] * 2 + 2);
   // Placeholder for unused program name.
   args.AppendElement(nullptr);

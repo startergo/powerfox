@@ -11,6 +11,11 @@
 #ifndef AOM_AOM_AOM_INTEGER_H_
 #define AOM_AOM_AOM_INTEGER_H_
 
+#if !defined(__cplusplus) && !defined(static_assert)
+// The pre-Lion SDK's assert.h predates C11.
+#define static_assert(cond, msg) _Static_assert(cond, msg)
+#endif
+
 /* get ptrdiff_t, size_t, wchar_t, NULL */
 #include <stddef.h>  // IWYU pragma: export
 

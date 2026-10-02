@@ -7,6 +7,7 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include "SDKDeclarations.h"
 #include "InputData.h"
 #include "nsCocoaFeatures.h"
 #include "nsRect.h"

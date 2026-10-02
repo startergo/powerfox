@@ -38,7 +38,7 @@ static const uint32_t kInputIconSize = 16;
   return [self initWithInputs:nil];
 }
 
-- (instancetype)initWithInputs:(NSMutableArray<TouchBarInput*>*)aInputs {
+- (instancetype)initWithInputs:(NSMutableArray*)aInputs {
   if ((self = [super init])) {
     mTouchBarHelper = do_GetService(NS_TOUCHBARHELPER_CID);
     if (!mTouchBarHelper) {
@@ -619,10 +619,10 @@ static const uint32_t kInputIconSize = 16;
   return @[ urlToShare, titleToShare ];
 }
 
-- (NSArray<NSSharingService*>*)
+- (NSArray*)
        sharingServicePicker:(NSSharingServicePicker*)aSharingServicePicker
     sharingServicesForItems:(NSArray*)aItems
-    proposedSharingServices:(NSArray<NSSharingService*>*)aProposedServices {
+    proposedSharingServices:(NSArray*)aProposedServices {
   // redundant services
   NSArray* excludedServices = @[
     @"com.apple.share.System.add-to-safari-reading-list",

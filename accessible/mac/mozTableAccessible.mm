@@ -502,9 +502,10 @@ class OutlineRule : public PivotRule {
 
   // first we check the relations to see if we're in a xul tree
   // with weird row semantics
-  NSArray<mozAccessible*>* disclosingRows =
+  NSArray* disclosingRows =
       [self getRelationsByType:RelationType::NODE_CHILD_OF];
-  mozAccessible* disclosingRow = [disclosingRows firstObject];
+  mozAccessible* disclosingRow =
+      [disclosingRows count] ? [disclosingRows objectAtIndex:0] : nil;
 
   if (disclosingRow) {
     // if we find a row from our relation check,

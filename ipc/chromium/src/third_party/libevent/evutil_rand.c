@@ -56,6 +56,10 @@ evutil_secure_rng_init(void)
 	(void) arc4random();
 	return 0;
 }
+#if defined(__APPLE__) && !defined(__cplusplus)
+extern void arc4random_buf(void *, size_t);
+#endif
+
 #ifndef EVENT__DISABLE_THREAD_SUPPORT
 int
 evutil_secure_rng_global_setup_locks_(const int enable_locks)

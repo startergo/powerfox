@@ -65,7 +65,7 @@ static NSPasteboard* GetPasteboard(
       return [NSPasteboard generalPasteboard];
     case nsIClipboard::kFindClipboard:
       if (@available(macOS 10.13, *)) {
-      return [NSPasteboard pasteboardWithName:NSPasteboardNameFind];
+        return [NSPasteboard pasteboardWithName:NSPasteboardNameFind];
       }
       return [NSPasteboard pasteboardWithName:NSFindPboard];
     default:
@@ -99,8 +99,6 @@ nsClipboard::SetNativeClipboardData(nsITransferable* aTransferable,
       PasteboardDictFromTransferable(aTransferable);
   if (!pasteboardOutputDict) return NS_ERROR_FAILURE;
 
-  unsigned int outputCount = [pasteboardOutputDict count];
-  NSArray* outputKeys = [pasteboardOutputDict allKeys];
   NSPasteboard* cocoaPasteboard = GetPasteboard(aWhichClipboard);
   MOZ_ASSERT(cocoaPasteboard);
   if (aWhichClipboard == kFindClipboard) {
@@ -108,68 +106,64 @@ nsClipboard::SetNativeClipboardData(nsITransferable* aTransferable,
         [UTIHelper stringFromPboardType:NSPasteboardTypeString];
     [cocoaPasteboard declareTypes:[NSArray arrayWithObject:stringType]
                             owner:nil];
+    NSString* stringValue = [pasteboardOutputDict objectForKey:stringType];
+    if (stringValue) {
+      [cocoaPasteboard setString:stringValue forType:stringType];
+    }
   } else {
     // Write everything else out to the general pasteboard.
     MOZ_ASSERT(aWhichClipboard == kGlobalClipboard);
-    [cocoaPasteboard declareTypes:outputKeys owner:nil];
-  }
-
-  for (unsigned int i = 0; i < outputCount; i++) {
-    NSString* currentKey = [outputKeys objectAtIndex:i];
-    id currentValue = [pasteboardOutputDict valueForKey:currentKey];
-    if (aWhichClipboard == kFindClipboard) {
-      if ([currentKey isEqualToString:[UTIHelper stringFromPboardType:
-                                                     NSPasteboardTypeString]]) {
-        [cocoaPasteboard setString:currentValue forType:currentKey];
-      }
-    } else {
-      if ([currentKey isEqualToString:[UTIHelper stringFromPboardType:
-                                                     NSPasteboardTypeString]] ||
-          [currentKey
-              isEqualToString:[UTIHelper
-                                  stringFromPboardType:kPublicUrlPboardType]] ||
-          [currentKey
-              isEqualToString:
-                  [UTIHelper stringFromPboardType:kPublicUrlNamePboardType]]) {
-        [cocoaPasteboard setString:currentValue forType:currentKey];
-      } else if ([currentKey
-                     isEqualToString:
-                         [UTIHelper
-                             stringFromPboardType:kUrlsWithTitlesPboardType]]) {
-        [cocoaPasteboard
-            setPropertyList:[pasteboardOutputDict valueForKey:currentKey]
-                    forType:currentKey];
-      } else if ([currentKey
-                     isEqualToString:[UTIHelper stringFromPboardType:
-                                                    NSPasteboardTypeHTML]]) {
-        [cocoaPasteboard
-            setString:(nsClipboard::WrapHtmlForSystemPasteboard(currentValue))
-              forType:currentKey];
-      } else if ([currentKey
-                     isEqualToString:[UTIHelper stringFromPboardType:
-                                                    kMozFileUrlsPboardType]]) {
-        [cocoaPasteboard writeObjects:currentValue];
-      } else if ([currentKey
-                     isEqualToString:
-                         [UTIHelper
-                             stringFromPboardType:(NSString*)kUTTypeFileURL]]) {
-        [cocoaPasteboard setString:currentValue forType:currentKey];
-      } else if ([currentKey
-                     isEqualToString:
-                         [UTIHelper
-                             stringFromPboardType:kPasteboardConcealedType]]) {
-        // It's fine to set the data to null for this field - this field is an
-        // addition to a value's other type and works like a flag.
-        [cocoaPasteboard setData:nullptr forType:currentKey];
-      } else {
-        [cocoaPasteboard setData:currentValue forType:currentKey];
-      }
-    }
+    WritePasteboardOutputDict(cocoaPasteboard, pasteboardOutputDict);
   }
 
   return NS_OK;
 
   NS_OBJC_END_TRY_BLOCK_RETURN(NS_ERROR_FAILURE);
+}
+
+// static
+void nsClipboard::WritePasteboardOutputDict(NSPasteboard* aPasteboard,
+                                            NSDictionary* aDict,
+                                            NSArray* aExtraTypes) {
+  NSArray* outputKeys = [aDict allKeys];
+  NSMutableArray* types = [NSMutableArray arrayWithArray:outputKeys];
+  if (aExtraTypes) {
+    [types addObjectsFromArray:aExtraTypes];
+  }
+  [aPasteboard declareTypes:types owner:nil];
+
+  for (NSString* currentKey in outputKeys) {
+    id currentValue = [aDict valueForKey:currentKey];
+    if ([currentKey isEqualToString:
+             [UTIHelper stringFromPboardType:NSPasteboardTypeString]] ||
+        [currentKey
+            isEqualToString:[UTIHelper stringFromPboardType:kPublicUrlPboardType]] ||
+        [currentKey
+            isEqualToString:
+                [UTIHelper stringFromPboardType:kPublicUrlNamePboardType]]) {
+      [aPasteboard setString:currentValue forType:currentKey];
+    } else if ([currentKey isEqualToString:
+                    [UTIHelper stringFromPboardType:kUrlsWithTitlesPboardType]]) {
+      [aPasteboard setPropertyList:currentValue forType:currentKey];
+    } else if ([currentKey isEqualToString:
+                    [UTIHelper stringFromPboardType:NSPasteboardTypeHTML]]) {
+      [aPasteboard setString:(nsClipboard::WrapHtmlForSystemPasteboard(
+                                 currentValue)) forType:currentKey];
+    } else if ([currentKey isEqualToString:
+                    [UTIHelper stringFromPboardType:kMozFileUrlsPboardType]]) {
+      [aPasteboard writeObjects:currentValue];
+    } else if ([currentKey isEqualToString:
+                    [UTIHelper stringFromPboardType:(NSString*)kUTTypeFileURL]]) {
+      [aPasteboard setString:currentValue forType:currentKey];
+    } else if ([currentKey isEqualToString:
+                    [UTIHelper stringFromPboardType:kPasteboardConcealedType]]) {
+      // It's fine to set the data to null for this field - this field is an
+      // addition to a value's other type and works like a flag.
+      [aPasteboard setData:nullptr forType:currentKey];
+    } else {
+      [aPasteboard setData:currentValue forType:currentKey];
+    }
+  }
 }
 
 mozilla::Result<nsCOMPtr<nsISupports>, nsresult>
@@ -507,7 +501,7 @@ nsClipboard::HasNativeClipboardDataMatchingFlavors(
     uint32_t count = [types count];
     MOZ_CLIPBOARD_LOG("    Pasteboard types (nums %u)\n", count);
     for (uint32_t i = 0; i < count; i++) {
-      NSPasteboardType type = [types objectAtIndex:i];
+      NSString* type = [types objectAtIndex:i];
       if (!type) {
         MOZ_CLIPBOARD_LOG("        failed to get MIME\n");
         continue;

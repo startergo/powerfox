@@ -14,7 +14,8 @@ namespace mozilla {
 nsresult GetSelectedCityInfo(nsAString& aCountryCode) {
   NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
 
-  NSString* countryCode = NSLocale.currentLocale.countryCode;
+  NSString* countryCode =
+      [NSLocale.currentLocale objectForKey:NSLocaleCountryCode];
 
   if (!countryCode) {
     return NS_ERROR_FAILURE;

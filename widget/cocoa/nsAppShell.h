@@ -12,6 +12,8 @@
 
 #import <AppKit/NSApplication.h>
 
+#include <dispatch/dispatch.h>
+
 #include "nsBaseAppShell.h"
 #include "nsTArray.h"
 
@@ -51,8 +53,10 @@ class nsAppShell : public nsBaseAppShell {
   // public only to be visible to Objective-C code that must call it
   void WillTerminate();
 
+#  if defined(DISPATCH_SOURCE_TYPE_MEMORYPRESSURE)
   static void OnMemoryPressureChanged(
       dispatch_source_memorypressure_flags_t aPressureLevel);
+#  endif
 
  protected:
   virtual ~nsAppShell();

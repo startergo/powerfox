@@ -40,6 +40,11 @@
 
 #include <limits>
 
+#if defined(__APPLE__) && !defined(S_THREAD_LOCAL_ZEROFILL)
+// Missing from the pre-Lion SDK's mach-o headers.
+#define S_THREAD_LOCAL_ZEROFILL 0x12
+#endif
+
 // Unfortunately, CPU_TYPE_ARM is not define for 10.4.
 #if !defined(CPU_TYPE_ARM)
 #define CPU_TYPE_ARM 12

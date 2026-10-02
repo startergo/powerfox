@@ -310,6 +310,10 @@ CertificateTrustResult ProcessCertificateTrustSettings(
                 ("  kSecTrustSettingsPolicy present, but null?"));
         continue;
       }
+      if (!kSecPolicyOid || !kSecPolicyAppleSSL ||
+          !&SecPolicyCopyProperties) {
+        continue;
+      }
       ScopedCFType<CFDictionaryRef> policyProperties(
           SecPolicyCopyProperties(policy));
       CFStringRef policyOid = (CFStringRef)CFDictionaryGetValue(
@@ -400,6 +404,10 @@ CertificateTrustResult GetCertificateTrustResult(
 
 OSStatus GatherEnterpriseCertsMacOS(nsTArray<EnterpriseCert>& certs,
                                     UniqueSECMODModule& rootsModule) {
+  if (!kSecClassCertificate) {
+    // The SecItem certificate class is unavailable before 10.7.
+    return errSecUnimplemented;
+  }
   // The following builds a search dictionary corresponding to:
   // { class: "certificate",
   //   match limit: "match all" }
@@ -407,7 +415,7 @@ OSStatus GatherEnterpriseCertsMacOS(nsTArray<EnterpriseCert>& certs,
   // us all 3rd party certificates. Unfortunately, if a root that shipped with
   // the OS has had its trust settings changed, it can also be returned from
   // this query. Further work (below) filters such certificates out.
-  const CFStringRef keys[] = {kSecClass, kSecMatchLimit};
+  const CFStringRef keys[] = {(CFStringRef)kSecClass, (CFStringRef)kSecMatchLimit};
   const void* values[] = {kSecClassCertificate, kSecMatchLimitAll};
   static_assert(std::size(keys) == std::size(values),
                 "mismatched SecItemCopyMatching key/value array sizes");

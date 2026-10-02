@@ -531,6 +531,14 @@ kern_return_t ForwardException(mach_port_t task, mach_port_t failed_thread,
   // so that the current exception ports are the ones that we should be
   // forwarding to.
   ExceptionParameters current;
+#if !defined(EXC_MASK_RESOURCE)
+// EXC_RESOURCE requires macOS 10.8, EXC_GUARD requires 10.9.
+#define EXC_RESOURCE 15
+#define EXC_GUARD 18
+#define EXC_MASK_RESOURCE (1 << EXC_RESOURCE)
+#define EXC_MASK_GUARD (1 << EXC_GUARD)
+#endif
+
 #ifdef XP_MACOSX
   if(__builtin_available(macOS 10.9, *)) {
     s_exception_mask |= EXC_MASK_RESOURCE | EXC_MASK_GUARD;

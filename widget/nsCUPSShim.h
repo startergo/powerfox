@@ -9,7 +9,10 @@
 #include "mozilla/Mutex.h"
 
 // TODO: This should be a configure option, ideally.
-#ifndef XP_MACOSX
+#if !defined(XP_MACOSX) || !defined(MAC_OS_X_VERSION_10_8) || \
+    (MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_8)
+// Pre-10.8 SDKs ship CUPS headers older than the 1.6 API this shim
+// expects; resolve everything at runtime instead.
 #  define CUPS_SHIM_RUNTIME_LINK
 #endif
 

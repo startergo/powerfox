@@ -217,6 +217,10 @@ using namespace mozilla::a11y;
 
 @end
 
+@interface mozIncrementableAccessible ()
+- (void)setValue:(double)value;
+@end
+
 @implementation mozIncrementableAccessible
 
 - (NSString*)moxValueDescription {

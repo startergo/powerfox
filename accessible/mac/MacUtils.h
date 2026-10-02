@@ -20,7 +20,7 @@ namespace utils {
 
 // convert an array of Gecko accessibles to an NSArray of native accessibles
 template <typename AccArray>
-NSArray<mozAccessible*>* ConvertToNSArray(AccArray& aArray) {
+NSArray* ConvertToNSArray(AccArray& aArray) {
   NSMutableArray* nativeArray = [[[NSMutableArray alloc] init] autorelease];
 
   // iterate through the list, and get each native accessible.

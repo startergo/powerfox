@@ -15,6 +15,12 @@ if CONFIG['TARGET_CPU'] == 'aarch64':
 
 DIRS += ['bsf']
 
+if CONFIG['MOZ_LEGACY_MACOS_TARGET']:
+    DIRS += ['aac']
+
+    if not CONFIG['MOZ_FFVPX_AUDIOONLY']:
+        DIRS += ['hevc']
+
 LOCAL_INCLUDES += ['/modules/fdlibm/inexact-math-override']
 
 SharedLibrary('mozavcodec')
@@ -84,6 +90,20 @@ SOURCES += [
     'xiph.c'
 ]
 
+if CONFIG['MOZ_LEGACY_MACOS_TARGET']:
+    SOURCES += [
+        'aacps_common.c',
+        'aacps_float.c',
+        'aacpsdsp_float.c',
+        'aacsbr.c',
+        'aactab.c',
+        'cbrt_data.c',
+        'cbrt_tablegen_common.c',
+        'kbdwin.c',
+        'sbrdsp.c',
+        'sinewin.c',
+    ]
+
 if not CONFIG['MOZ_FFVPX_AUDIOONLY']:
     SOURCES += [
         'atsc_a53.c',
@@ -122,6 +142,40 @@ if not CONFIG['MOZ_FFVPX_AUDIOONLY']:
         'vp9recon.c',
         'vpx_rac.c',
     ]
+
+    if CONFIG['MOZ_LEGACY_MACOS_TARGET']:
+        SOURCES += [
+            'aom_film_grain.c',
+            'bswapdsp.c',
+            'cabac.c',
+            'dynamic_hdr_vivid.c',
+            'error_resilience.c',
+            'h2645_parse.c',
+            'h2645_sei.c',
+            'h2645_vui.c',
+            'h2645data.c',
+            'h264_cabac.c',
+            'h264_cavlc.c',
+            'h264_direct.c',
+            'h264_loopfilter.c',
+            'h264_mb.c',
+            'h264_parse.c',
+            'h264_picture.c',
+            'h264_ps.c',
+            'h264_refs.c',
+            'h264_sei.c',
+            'h264_slice.c',
+            'h264chroma.c',
+            'h264data.c',
+            'h264dec.c',
+            'h264dsp.c',
+            'h264idct.c',
+            'h264qpel.c',
+            'h274.c',
+            'me_cmp.c',
+            'mpegutils.c',
+            'startcode.c',
+        ]
 
     if CONFIG["MOZ_SYSTEM_AV1"]:
         CFLAGS += CONFIG['MOZ_SYSTEM_LIBDAV1D_CFLAGS']

@@ -1,0 +1,22 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+SOURCES += [
+    'aacdec.c',
+    'aacdec_ac.c',
+    'aacdec_float.c',
+    'aacdec_lpd.c',
+    'aacdec_tab.c',
+    'aacdec_usac.c',
+    'aacdec_usac_mps212.c',
+]
+
+LOCAL_INCLUDES += [ "../" ]
+
+LOCAL_INCLUDES += ['/modules/fdlibm/inexact-math-override']
+
+FINAL_LIBRARY = 'mozavcodec'
+NoVisibilityFlags()
+
+include('/media/ffvpx/ffvpxcommon.mozbuild')

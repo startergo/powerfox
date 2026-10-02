@@ -35,6 +35,43 @@ SOURCES += [
     'vp9mc_16bpp.asm',
 ]
 
+if CONFIG['MOZ_LEGACY_MACOS_TARGET']:
+    SOURCES += [
+        'aacpsdsp.asm',
+        'aacpsdsp_init.c',
+        'bswapdsp.asm',
+        'bswapdsp_init.c',
+        'fpel.asm',
+        'h264_chromamc.asm',
+        'h264_chromamc_10bit.asm',
+        'h264_deblock.asm',
+        'h264_deblock_10bit.asm',
+        'h264_idct.asm',
+        'h264_idct_10bit.asm',
+        'h264_qpel.c',
+        'h264_qpel_10bit.asm',
+        'h264_qpel_8bit.asm',
+        'h264_weight.asm',
+        'h264_weight_10bit.asm',
+        'h264chroma_init.c',
+        'h264dsp_init.c',
+        'h26x/h2656_inter.asm',
+        'h26x/h2656dsp.c',
+        'hevc/add_res.asm',
+        'hevc/deblock.asm',
+        'hevc/dequant.asm',
+        'hevc/dsp_init.c',
+        'hevc/idct.asm',
+        'hevc/mc.asm',
+        'hevc/sao.asm',
+        'hevc/sao_10bit.asm',
+        'me_cmp.asm',
+        'me_cmp_init.c',
+        'qpel.asm',
+        'sbrdsp.asm',
+        'sbrdsp_init.c',
+    ]
+
 LOCAL_INCLUDES += [ "../" ]
 
 if CONFIG['TARGET_CPU'] == 'x86':

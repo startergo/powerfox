@@ -27,6 +27,8 @@ typedef struct AVDOVIMetadata {
 } AVDOVIMetadata;
 
 static void ff_dovi_ctx_unref(DOVIContext* ctx) {}
+static void ff_dovi_ctx_replace(DOVIContext* s, const DOVIContext* s0) {}
+static void ff_dovi_ctx_flush(DOVIContext* s) {}
 static void ff_dovi_update_cfg(DOVIContext* ctx,
                                AVDOVIDecoderConfigurationRecord* record) {}
 static int ff_dovi_rpu_parse(DOVIContext* ctx, uint8_t* buf, size_t len,

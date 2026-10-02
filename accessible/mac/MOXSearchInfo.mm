@@ -74,7 +74,7 @@ using namespace mozilla::a11y;
 - (NSArray*)getMatchesForRule:(PivotRule&)rule {
   int resultLimit = mResultLimit;
 
-  NSMutableArray<mozAccessible*>* matches =
+  NSMutableArray* matches =
       [[[NSMutableArray alloc] init] autorelease];
   Accessible* geckoRootAcc = [self rootGeckoAccessible];
   Accessible* geckoStartAcc = [self startGeckoAccessible];

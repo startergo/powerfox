@@ -1,0 +1,104 @@
+# selector-sweep-safe.txt — selectors absent from the 10.6 runtime whose
+# send sites are known-handled (guarded, unreachable pre-10.8, or verified
+# benign). Format: <selector> <category> [# comment]
+# Categories: guarded (respondsToSelector probe), guarded-instances
+# (instancesRespondToSelector), available-guard (kept behind a working
+# availability check), unreachable (path never taken on 10.6), stubbed
+# (compat shim provides it), false-positive (exists at runtime via another
+# framework / string collision).
+
+# --- fixed during bring-up (respondsToSelector/instancesRespondSelector) ---
+windowTitlebarLayoutDirection guarded-instances
+appearance guarded-instances
+effectiveAppearance guarded
+accessibilityDisplayShouldReduceTransparency guarded
+accessibilityDisplayShouldInvertColors guarded
+initWithSuiteName guarded
+dismissCorrectionIndicatorForView guarded
+setContentsScale guarded
+contentsScale guarded
+setTitlebarSeparatorStyle guarded-instances
+addTitlebarAccessoryViewController guarded
+setBadge guarded
+accessibilityDisplayShouldIncreaseContrast guarded
+accessibilityDisplayShouldReduceMotion guarded
+layoutDirection guarded
+windowTitlebarLayoutDirection-set guarded
+
+# --- classified by selector-sweep run 2026-09-07 ---
+IBeamCursorForVerticalLayout guarded
+isSwipeTrackingFromScrollEventsEnabled guarded
+frontmostApplication guarded
+thermalState guarded
+zoomInCursor available-guard
+zoomOutCursor available-guard
+columnResizeCursor available-guard
+rowResizeCursor available-guard
+_shouldZoomOnDoubleClick guarded
+preferredScrollerStyle guarded
+isVoiceOverEnabled guarded
+isSwitchControlEnabled guarded
+configuration available-guard
+addObserver false-positive
+set false-positive
+didLaunch false-positive
+
+# --- AVFoundation / CoreMedia / VideoToolbox / Metal: frameworks are absent
+# on 10.6; all uses are behind __has_include / weak_framework / dlsym paths
+# that resolve to our stubs or are never called (VDA path is 10.6-eligible,
+# VT path is 10.9+ guarded at runtime) ---
+AVPlayerItemVideoOutput unreachable
+AVPlayerLayer unreachable
+playerWithPlayerItem unreachable
+playerWithURL unreachable
+addPeriodicTimeObserverForInterval:queue:usingBlock: unreachable
+seekToTime unreachable
+currentTime unreachable
+rate unreachable
+play unreachable
+pause unreachable
+cancelPendingPrerolls unreachable
+prerollAtRate unreachable
+setRate:time:atHostTime: unreachable
+setAudioTimePitchAlgorithm unreachable
+audioTimePitchAlgorithm unreachable
+videoComposition unreachable
+setVideoComposition unreachable
+setOutputObscuredDueToInsufficientExternalProtection unreachable
+outputObscuredDueToInsufficientExternalProtection unreachable
+copyPixelBufferForItemTime:itemTimeForDisplay: unreachable
+timeControlStatus unreachable
+automaticallyWaitsToMinimizeStalling unreachable
+setAutomaticallyWaitsToMinimizeStalling unreachable
+preferredForwardBufferDuration unreachable
+setPreferredForwardBufferDuration unreachable
+setOutputsObscuredDueToInsufficientExternalProtection unreachable
+usesAirPlayVideoWhileAirPlayScreenIsActive unreachable
+
+# --- CoreText variation APIs reached only via honest availability checks ---
+kCTFontVariationAxesAttribute available-guard
+
+# --- Notification Center / Service framework (10.8+), disabled pre-10.8 ---
+UNUserNotificationCenter currentNotificationCenter unreachable
+removeAllDeliveredNotifications unreachable
+removePendingNotificationRequestsWithIdentifiers: unreachable
+getDeliveredNotificationsWithCompletionHandler: unreachable
+removeDeliveredNotificationsWithIdentifiers: unreachable
+setCategoryWithActions:intentIdentifiers:options: unreachable
+requestAuthorizationWithOptions:completionHandler: unreachable
+addNotificationRequest:withCompletionHandler: unreachable
+
+# --- MTL* (Metal, 10.11+): reached only via dlsym/weak paths on our builds ---
+device unreachable
+
+# --- benign / verified present at runtime via colons or other frameworks ---
+retain false-positive
+release false-positive
+autorelease false-positive
+copy false-positive
+mutableCopy false-positive
+hash false-positive
+description false-positive
+self false-positive
+class false-positive
+conformsToProtocol false-positive

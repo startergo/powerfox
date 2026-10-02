@@ -49,6 +49,7 @@ if CONFIG["OS_ARCH"] == "Darwin":
         "nsObjCExceptions.h",
     ]
     EXPORTS.mozilla += [
+        "AutoCFTypeRef.h",
         "DarwinObjectPtr.h",
         "MacStringHelpers.h",
     ]

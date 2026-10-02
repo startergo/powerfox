@@ -82,6 +82,7 @@ class ChromiumCDMParent final : public PChromiumCDMParent,
   void GetStatusForPolicy(uint32_t aPromiseId,
                           const dom::HDCPVersion& aMinHdcpVersion);
 
+  void EnsureCDMDecoderInitialized();
   RefPtr<DecryptPromise> Decrypt(MediaRawData* aSample);
 
   // TODO: Add functions for clients to send data to CDM, and
@@ -212,6 +213,23 @@ class ChromiumCDMParent final : public PChromiumCDMParent,
 
   bool mIsShutdown = false;
   bool mVideoDecoderInitialized = false;
+  // True between a dummy decoder init sent by EnsureCDMDecoderInitialized()
+  // and the OnDecoderInitDone result for it arriving. mVideoDecoderGen is
+  // bumped by every deinitialize; a result whose generation no longer matches
+  // was superseded by a deinitialize and must not touch decoder state.
+  bool mAwaitingPreInitResult = false;
+  uint32_t mVideoDecoderGen = 0;
+  uint32_t mPreInitGen = 0;
+  // The most recent service certificate accepted by the CDM, re-sent after a
+  // decoder deinitialize, which the CDM also applies to its stored
+  // certificate. The pending pair commits only once the CDM resolves the
+  // certificate promise.
+  nsTArray<uint8_t> mServerCert;
+  // Certificates sent to the CDM but not yet accepted, keyed by the
+  // promise id their resolution carries; the last accepted certificate is
+  // kept for replay across a decoder deinitialize, which drops it CDM-side.
+  nsTHashMap<nsUint32HashKey, nsTArray<uint8_t>> mPendingServerCerts;
+  static constexpr uint32_t kInternalPromiseId = 0x7ffffffe;
   bool mActorDestroyed = false;
   bool mAbnormalShutdown = false;
 

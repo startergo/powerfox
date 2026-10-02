@@ -8,6 +8,7 @@
 #import <ApplicationServices/ApplicationServices.h>
 
 #import "MOXTextMarkerDelegate.h"
+#import "SDKDeclarations.h"
 
 #include "Platform.h"
 #include "RemoteAccessible.h"

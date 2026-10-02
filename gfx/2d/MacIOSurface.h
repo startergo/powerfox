@@ -10,6 +10,62 @@
 #  include <QuartzCore/QuartzCore.h>
 #  include <dlfcn.h>
 
+#  if !defined(MAC_OS_X_VERSION_10_7) || \
+      MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
+// Pixel formats and colorimetry constants missing from the pre-Lion SDK.
+// The externs are weak so string comparisons against them are safe (nil)
+// on systems where they do not exist.
+enum : OSType {
+  kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange = '420v',
+  kCVPixelFormatType_420YpCbCr8BiPlanarFullRange = '420f',
+  kCVPixelFormatType_420YpCbCr8PlanarFullRange = 'f420',
+  kCVPixelFormatType_422YpCbCr8FullRange = 'yuvf',
+  kCVPixelFormatType_422YpCbCr8_yuvs = 'yuvs',
+  kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange = 'x420',
+  kCVPixelFormatType_420YpCbCr10BiPlanarFullRange = 'xf20',
+  kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange = 'x422',
+  kCVPixelFormatType_422YpCbCr10BiPlanarFullRange = 'xf22',
+  kCVPixelFormatType_4444AYpCbCr8 = 'y408',
+  kCVPixelFormatType_4444AYpCbCr16 = 'y416',
+  kCVPixelFormatType_4444AYpCbCrFloat = 'r4fl',
+  kCVPixelFormatType_OneComponent8 = 'L008',
+  kCVPixelFormatType_64RGBAHalf = 'RGhA',
+  kCVPixelFormatType_128RGBAFloat = 'RGfA',
+  kCVPixelFormatType_ARGB2101010LEPacked = 'l10r',
+};
+
+extern "C" {
+extern const CFStringRef kCVImageBufferYCbCrMatrix_ITU_R_2020
+    __attribute__((weak_import));
+extern const CFStringRef kCVImageBufferColorPrimaries_ITU_R_2020
+    __attribute__((weak_import));
+extern const CFStringRef kCVImageBufferColorPrimaries_P3_D65
+    __attribute__((weak_import));
+extern const CFStringRef kCVImageBufferColorPrimaries_P22
+    __attribute__((weak_import));
+extern const CFStringRef kCVImageBufferTransferFunction_sRGB
+    __attribute__((weak_import));
+extern const CFStringRef kCVImageBufferTransferFunction_ITU_R_2100_HLG
+    __attribute__((weak_import));
+extern const CFStringRef kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ
+    __attribute__((weak_import));
+extern const CFStringRef kCVImageBufferTransferFunction_Linear
+    __attribute__((weak_import));
+extern const CFStringRef kCVImageBufferContentLightLevelInfoKey
+    __attribute__((weak_import));
+extern const CFStringRef kCVImageBufferMasteringDisplayColorVolumeKey
+    __attribute__((weak_import));
+void IOSurfaceIncrementUseCount(IOSurfaceRef buffer)
+    __attribute__((weak_import));
+void IOSurfaceDecrementUseCount(IOSurfaceRef buffer)
+    __attribute__((weak_import));
+Boolean IOSurfaceIsInUse(IOSurfaceRef buffer) __attribute__((weak_import));
+extern const CFStringRef kCGColorSpaceDisplayP3 __attribute__((weak_import));
+extern const CFStringRef kCGColorSpaceITUR_2020 __attribute__((weak_import));
+extern const CFStringRef kCGColorSpaceITUR_709 __attribute__((weak_import));
+}
+#  endif
+
 #  include "mozilla/gfx/Types.h"
 #  include "mozilla/Maybe.h"
 #  include "CFTypeRefPtr.h"
@@ -59,8 +115,10 @@ class MacIOSurface final
   // of the MacIOSurface instance.
   // MacIOSurface holds a reference to the corresponding IOSurface.
 
-  static already_AddRefed<MacIOSurface> CreateIOSurface(int aWidth, int aHeight,
-                                                        AllowAlpha aAllowAlpha);
+  static already_AddRefed<MacIOSurface> CreateIOSurface(
+      int aWidth, int aHeight, AllowAlpha aAllowAlpha,
+      YUVColorSpace aColorSpace = YUVColorSpace::Identity,
+      TransferFunction aTransferFunction = TransferFunction::SRGB);
   static already_AddRefed<MacIOSurface> CreateBiPlanarSurface(
       const IntSize& aYSize, const IntSize& aCbCrSize,
       ChromaSubsampling aChromaSubsampling, YUVColorSpace aColorSpace,

@@ -25,6 +25,15 @@
 #import <ApplicationServices/ApplicationServices.h>
 #endif
 
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
+// Renamed in later SDKs.
+#define kCTFontOrientationDefault kCTFontDefaultOrientation
+#define kCTFontOrientationHorizontal kCTFontHorizontalOrientation
+#define kCTFontOrientationVertical kCTFontVerticalOrientation
+#define kCTFontColorGlyphsTrait (1 << 13)
+#endif
+
 #ifdef SK_BUILD_FOR_IOS
 #include <CoreText/CoreText.h>
 #include <CoreText/CTFontManager.h>

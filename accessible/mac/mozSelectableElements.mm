@@ -115,7 +115,8 @@ using namespace mozilla::a11y;
 - (id)moxValue {
   // The value of a tab group is its selected child. In the case
   // of multiple selections this will return the first one.
-  return [[self moxSelectedChildren] firstObject];
+  NSArray* children = [self moxSelectedChildren];
+  return [children count] ? [children objectAtIndex:0] : nil;
 }
 
 @end

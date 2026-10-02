@@ -110,6 +110,7 @@ class OffTheBooksCondVar : BlockingResourceBase {
 
   OffTheBooksMutex* mLock;
   detail::ConditionVariableImpl mImpl;
+
 };
 
 /**

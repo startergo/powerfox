@@ -3,6 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "MacIOSurfaceTextureHostOGL.h"
+#if defined(XP_MACOSX)
+#  include "nsCocoaFeatures.h"
+#endif
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/gfx/MacIOSurface.h"
 #include "mozilla/layers/GpuFence.h"
@@ -212,6 +215,26 @@ void MacIOSurfaceTextureHostOGL::PushDisplayItems(
     const Range<wr::ImageKey>& aImageKeys, PushDisplayItemFlagSet aFlags) {
   bool preferCompositorSurface =
       aFlags.contains(PushDisplayItemFlag::PREFER_COMPOSITOR_SURFACE);
+#if defined(XP_MACOSX)
+  // CoreAnimation before 10.8 cannot display YUV IOSurface contents, so
+  // never hand a YUV surface to the compositor as an external image below
+  // 10.8; WebRender rasterizes it into a BGRA surface instead. RGB
+  // IOSurface contents display fine there.
+  static const bool sPreML = !nsCocoaFeatures::OnMountainLionOrLater();
+#else
+  constexpr bool sPreML = false;
+#endif
+  bool supportsExternalCompositing = true;
+  if (sPreML) {
+    switch (GetFormat()) {
+      case gfx::SurfaceFormat::B8G8R8A8:
+      case gfx::SurfaceFormat::B8G8R8X8:
+        break;
+      default:
+        supportsExternalCompositing = false;
+        break;
+    }
+  }
   switch (GetFormat()) {
     case gfx::SurfaceFormat::B8G8R8A8:
     case gfx::SurfaceFormat::B8G8R8X8: {
@@ -219,13 +242,11 @@ void MacIOSurfaceTextureHostOGL::PushDisplayItems(
         MOZ_ASSERT_UNREACHABLE("unexpected key length or plane count");
         return;
       }
-      // We disable external compositing for RGB surfaces for now until
-      // we've tested support more thoroughly. Bug 1667917.
       aBuilder.PushImage(aBounds, aClip, true, false, aFilter, aImageKeys[0],
                          !(mFlags & TextureFlags::NON_PREMULTIPLIED),
                          wr::ColorF{1.0f, 1.0f, 1.0f, 1.0f},
                          preferCompositorSurface,
-                         /* aSupportsExternalCompositing */ true);
+                         /* aSupportsExternalCompositing */ supportsExternalCompositing);
       break;
     }
     case gfx::SurfaceFormat::YUY2: {
@@ -239,7 +260,7 @@ void MacIOSurfaceTextureHostOGL::PushDisplayItems(
           aBounds, aClip, true, aImageKeys[0], wr::ColorDepth::Color8,
           wr::ToWrYuvColorSpace(GetYUVColorSpace()),
           wr::ToWrColorRange(GetColorRange()), aFilter, preferCompositorSurface,
-          /* aSupportsExternalCompositing */ true);
+          /* aSupportsExternalCompositing */ supportsExternalCompositing);
       break;
     }
     case gfx::SurfaceFormat::NV12: {
@@ -251,7 +272,7 @@ void MacIOSurfaceTextureHostOGL::PushDisplayItems(
           aBounds, aClip, true, aImageKeys[0], aImageKeys[1],
           wr::ColorDepth::Color8, wr::ToWrYuvColorSpace(GetYUVColorSpace()),
           wr::ToWrColorRange(GetColorRange()), aFilter, preferCompositorSurface,
-          /* aSupportsExternalCompositing */ true);
+          /* aSupportsExternalCompositing */ supportsExternalCompositing);
       break;
     }
     case gfx::SurfaceFormat::P010:
@@ -264,7 +285,7 @@ void MacIOSurfaceTextureHostOGL::PushDisplayItems(
           aBounds, aClip, true, aImageKeys[0], aImageKeys[1],
           wr::ColorDepth::Color10, wr::ToWrYuvColorSpace(GetYUVColorSpace()),
           wr::ToWrColorRange(GetColorRange()), aFilter, preferCompositorSurface,
-          /* aSupportsExternalCompositing */ true);
+          /* aSupportsExternalCompositing */ supportsExternalCompositing);
       break;
     }
     case gfx::SurfaceFormat::NV16: {
@@ -276,7 +297,7 @@ void MacIOSurfaceTextureHostOGL::PushDisplayItems(
           aBounds, aClip, true, aImageKeys[0], aImageKeys[1],
           wr::ColorDepth::Color10, wr::ToWrYuvColorSpace(GetYUVColorSpace()),
           wr::ToWrColorRange(GetColorRange()), aFilter, preferCompositorSurface,
-          /* aSupportsExternalCompositing */ true);
+          /* aSupportsExternalCompositing */ supportsExternalCompositing);
       break;
     }
     default: {

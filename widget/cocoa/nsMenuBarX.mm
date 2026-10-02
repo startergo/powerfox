@@ -250,7 +250,7 @@ void nsMenuBarX::InsertMenuAtIndex(RefPtr<nsMenuX>&& aMenu, uint32_t aIndex) {
     CreateApplicationMenu(aMenu.get());
 
     // Hook the new Application menu up to the menu bar.
-    NSMenu* mainMenu = NSApp.mainMenu;
+    NSMenu* mainMenu = [NSApp mainMenu];
     NS_ASSERTION(
         mainMenu.numberOfItems > 0,
         "Main menu does not have any items, something is terribly wrong!");
@@ -430,7 +430,7 @@ void nsMenuBarX::SetSystemHelpMenu() {
   if (xulHelpMenu) {
     NSMenu* helpMenu = xulHelpMenu->NativeNSMenu();
     if (helpMenu) {
-      NSApp.helpMenu = helpMenu;
+      [NSApp setHelpMenu:helpMenu];
     }
   }
 
@@ -459,7 +459,7 @@ static bool RemoveProblematicMenuItems(NSMenu* aMenu) {
   for (NSInteger i = 0; i < aMenu.numberOfItems; i++) {
     NSMenuItem* item = [aMenu itemAtIndex:i];
 
-    if (item.hidden &&
+    if ([item isHidden] &&
         (item.action == @selector(startDictation:) ||
          item.action == @selector(orderFrontCharacterPalette:))) {
       [itemsToRemove addObject:@(i)];
@@ -481,7 +481,7 @@ static bool RemoveProblematicMenuItems(NSMenu* aMenu) {
 nsresult nsMenuBarX::Paint() {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
 
-  if (!NSApp.active && gSomeMenuBarPainted) {
+  if (![NSApp isActive] && gSomeMenuBarPainted) {
     // Early exit if the app isn't active, and we already have a menubar.
     // This is because we can't safely set the NSApp.mainMenu property in
     // such a case. We early exit so we also don't invoke any side effects.
@@ -494,7 +494,7 @@ nsresult nsMenuBarX::Paint() {
 
   // We have to keep the same menu item for the Application menu so we keep
   // passing it along.
-  NSMenu* outgoingMenu = [NSApp.mainMenu retain];
+  NSMenu* outgoingMenu = [[NSApp mainMenu] retain];
   NS_ASSERTION(
       outgoingMenu.numberOfItems > 0,
       "Main menu does not have any items, something is terribly wrong!");
@@ -524,7 +524,7 @@ nsresult nsMenuBarX::Paint() {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
 
   // Set menu bar and event target.
-  NSApp.mainMenu = mNativeMenu;
+  [NSApp setMainMenu:mNativeMenu];
 
   NS_OBJC_END_TRY_ABORT_BLOCK;
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
@@ -800,7 +800,7 @@ void nsMenuBarX::CreateApplicationMenu(nsMenuX* aMenu) {
   // At this point, the application menu is the application menu from
   // the nib in cocoa widgets. We do not have a way to create an application
   // menu manually, so we grab the one from the nib and use that.
-  sApplicationMenu = [[NSApp.mainMenu itemAtIndex:0].submenu retain];
+  sApplicationMenu = [[[NSApp mainMenu] itemAtIndex:0].submenu retain];
 
   /*
     We support the following menu items here:
@@ -925,7 +925,7 @@ void nsMenuBarX::CreateApplicationMenu(nsMenuX* aMenu) {
       // set this menu item up as the macOS Services menu
       NSMenu* servicesMenu = [[GeckoNSMenu alloc] initWithTitle:@""];
       itemBeingAdded.submenu = servicesMenu;
-      NSApp.servicesMenu = servicesMenu;
+      [NSApp setServicesMenu:servicesMenu];
       [servicesMenu release];
 
       [itemBeingAdded release];
@@ -1075,7 +1075,7 @@ void nsMenuBarX::CreateApplicationMenu(nsMenuX* aMenu) {
     return NO;
   }
 
-  NSWindow* keyWindow = NSApp.keyWindow;
+  NSWindow* keyWindow = [NSApp keyWindow];
 
   // If there is no key window then just behave normally. This
   // probably means that this menu is associated with Gecko's
@@ -1099,7 +1099,7 @@ void nsMenuBarX::CreateApplicationMenu(nsMenuX* aMenu) {
   // Return YES if we invoked a command and there is now no key window or we
   // changed the first responder. In this case we do not want to propagate the
   // event because we don't want it handled again.
-  if (!NSApp.keyWindow || NSApp.keyWindow.firstResponder != firstResponder) {
+  if (!keyWindow || keyWindow.firstResponder != firstResponder) {
     return YES;
   }
 
@@ -1194,11 +1194,12 @@ void nsMenuBarX::CreateApplicationMenu(nsMenuX* aMenu) {
   // system does not pass an NSEvent to our action selector, but we can query
   // the current NSEvent instead. The current NSEvent can be a key event or a
   // mouseup event, depending on how the menu item is activated.
+  NSEvent* currentEvent = [NSApp currentEvent];
   NSEventModifierFlags modifierFlags =
-      NSApp.currentEvent ? NSApp.currentEvent.modifierFlags : 0;
+      currentEvent ? currentEvent.modifierFlags : 0;
   mozilla::MouseButton button =
-      NSApp.currentEvent ? nsCocoaUtils::ButtonForEvent(NSApp.currentEvent)
-                         : mozilla::MouseButton::ePrimary;
+      currentEvent ? nsCocoaUtils::ButtonForEvent(currentEvent)
+                   : mozilla::MouseButton::ePrimary;
 
   // Do special processing if this is for an app-global command.
   if (tag == eCommand_ID_About) {

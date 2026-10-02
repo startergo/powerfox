@@ -18,6 +18,14 @@
 #include "nsCocoaUtils.h"
 
 #import <Cocoa/Cocoa.h>
+
+#if !defined(MAC_OS_X_VERSION_10_10) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_10
+// Requires macOS 10.10; weak-imported for the availability-guarded call.
+extern "C" CFURLRef LSCopyDefaultApplicationURLForURL(CFURLRef, LSRolesMask,
+                                                      void*)
+    __attribute__((weak_import));
+#endif
 #import <CoreFoundation/CoreFoundation.h>
 #import <ApplicationServices/ApplicationServices.h>
 

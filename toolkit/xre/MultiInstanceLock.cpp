@@ -131,10 +131,19 @@ MultiInstLockHandle OpenMultiInstanceLock(const char* nameToken,
   return h;
 
 #else
+// O_CLOEXEC requires macOS 10.7; on older systems set it after open.
+#ifdef O_CLOEXEC
+#  define PF_LOCK_OPEN_FLAGS O_CLOEXEC
+#else
+#  define PF_LOCK_OPEN_FLAGS 0
+#endif
   int fd = ::open(PromiseFlatCString(filePath).get(),
-                  O_CLOEXEC | O_CREAT | O_NOFOLLOW,
+                  PF_LOCK_OPEN_FLAGS | O_CREAT | O_NOFOLLOW,
                   S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
   if (fd != -1) {
+#ifndef O_CLOEXEC
+    ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+#endif
     // We would like to ensure that the lock file is deleted when we are done
     // with it. The normal way to do that would be to call unlink on it right
     // now, but that would immediately delete the name from the file system, and

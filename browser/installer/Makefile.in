@@ -107,7 +107,7 @@ endif
 include $(topsrcdir)/toolkit/mozapps/installer/packager.mk
 
 ifeq (1,$(MOZ_LEGACY_MACOS))
-LEGACY_CXX_RUNTIME_DIR := /opt/pfx-toolchain/x86_64-apple-darwin10/lib
+LEGACY_CXX_RUNTIME_DIR ?= $(topsrcdir)/tools/legacy-macos/dist/lib
 LEGACY_CXX_RUNTIME_DEST := $(DIST)/$(MOZ_PKG_DIR)/$(MOZ_PKG_BINPATH)
 
 .PHONY: stage-legacy-cxx-runtimes
@@ -116,10 +116,25 @@ stage-legacy-cxx-runtimes: stage-package
 	@echo 'Bundling legacy macOS C++ runtime libraries...'
 	test -f '$(LEGACY_CXX_RUNTIME_DIR)/libc++.1.0.dylib'
 	test -f '$(LEGACY_CXX_RUNTIME_DIR)/libc++abi.1.0.dylib'
-	test -f '$(LEGACY_CXX_RUNTIME_DIR)/libunwind.1.0.dylib'
 	cp -f '$(LEGACY_CXX_RUNTIME_DIR)/libc++.1.0.dylib' '$(LEGACY_CXX_RUNTIME_DEST)/libc++.1.dylib'
 	cp -f '$(LEGACY_CXX_RUNTIME_DIR)/libc++abi.1.0.dylib' '$(LEGACY_CXX_RUNTIME_DEST)/libc++abi.1.dylib'
-	cp -f '$(LEGACY_CXX_RUNTIME_DIR)/libunwind.1.0.dylib' '$(LEGACY_CXX_RUNTIME_DEST)/libunwind.1.dylib'
+	if test -f '$(LEGACY_CXX_RUNTIME_DIR)/libunwind.1.0.dylib'; then \
+	  cp -f '$(LEGACY_CXX_RUNTIME_DIR)/libunwind.1.0.dylib' '$(LEGACY_CXX_RUNTIME_DEST)/libunwind.1.dylib'; \
+	fi
+	cd '$(DIST)/$(MOZ_PKG_DIR)' && \
+	  find . -type f | while read f; do \
+	    deps=$$(otool -L "$$f" 2>/dev/null) || continue; \
+	    case "$$deps" in *"/usr/lib/libc++"*) \
+	      install_name_tool -change /usr/lib/libc++.1.dylib @rpath/libc++.1.dylib "$$f" && \
+	      install_name_tool -change /usr/lib/libc++abi.dylib @rpath/libc++abi.1.dylib "$$f" && \
+	      install_name_tool -change /usr/lib/libc++abi.1.dylib @rpath/libc++abi.1.dylib "$$f" || exit 1; \
+	      otool -l "$$f" | grep -q 'path @executable_path/\.' || \
+	        install_name_tool -add_rpath @executable_path/. "$$f" || exit 1; \
+	      case "$$f" in ./Contents/MacOS/*.app/Contents/MacOS/*) \
+	        install_name_tool -add_rpath @executable_path/../../../. "$$f" || exit 1; \
+	        ;; esac; \
+	      ;; esac; \
+	  done
 	cd '$(DIST)/$(MOZ_PKG_DIR)/$(MOZ_PKG_RESPATH)' && \
 	  $(PYTHON3) '$(MOZILLA_DIR)/config/createprecomplete.py'
 endif

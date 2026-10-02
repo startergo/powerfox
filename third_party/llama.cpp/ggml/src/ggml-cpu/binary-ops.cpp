@@ -76,7 +76,8 @@ static void apply_binary_op(const ggml_compute_params * params, ggml_tensor * ds
         } else if (op == op_mul) {
             vDSP_op = vDSP_vmul;
         } else if (op == op_div) {
-            vDSP_op = vDSP_vdiv;
+            // The pre-Lion SDK's vDSP_vdiv takes non-const input pointers.
+            vDSP_op = (vDSP_fn_t)vDSP_vdiv;
         }
     }
 #endif

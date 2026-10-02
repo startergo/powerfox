@@ -565,6 +565,13 @@ impl SceneBuilderThread {
                     doc.view.quality_settings = settings;
                 }
                 SceneMsg::SetDocumentView { device_rect } => {
+                    // A view size change must rebuild the scene: the built
+                    // scene's output_rect bounds the picture-cache tile grid,
+                    // and a stale larger size keeps off-screen tiles visible
+                    // and their compositor surfaces re-added every frame.
+                    if doc.view.device_rect.size() != device_rect.size() {
+                        rebuild_scene = true;
+                    }
                     doc.view.device_rect = device_rect;
                 }
                 SceneMsg::SetDisplayList {

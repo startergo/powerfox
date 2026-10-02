@@ -34,7 +34,7 @@ const NSTouchBarItemIdentifier kTouchBarBaseIdentifier =
  * Contains TouchBarInput representations of the inputs currently in
  * the Touch Bar. Populated in `init` and updated by nsITouchBarUpdater.
  */
-@property(strong) NSMutableDictionary<NSTouchBarItemIdentifier, TouchBarInput*>*
+@property(strong) NSMutableDictionary*
     mappedLayoutItems;
 
 /**
@@ -43,7 +43,7 @@ const NSTouchBarItemIdentifier kTouchBarBaseIdentifier =
  * cannot be retrieved with [NSTouchBar itemForIdentifier].
  */
 @property(strong)
-    NSMutableDictionary<NSTouchBarItemIdentifier, NSCustomTouchBarItem*>*
+    NSMutableDictionary*
         scrollViewButtons;
 
 /**
@@ -57,7 +57,7 @@ const NSTouchBarItemIdentifier kTouchBarBaseIdentifier =
  * initialized. Otherwise, a nsTouchBar is initialized containing a default set
  * of inputs.
  */
-- (instancetype)initWithInputs:(NSMutableArray<TouchBarInput*>*)aInputs;
+- (instancetype)initWithInputs:(NSMutableArray*)aInputs;
 
 - (void)dealloc;
 
@@ -129,10 +129,10 @@ const NSTouchBarItemIdentifier kTouchBarBaseIdentifier =
 - (NSArray*)itemsForSharingServicePickerTouchBarItem:
     (NSSharingServicePickerTouchBarItem*)aPickerTouchBarItem;
 
-- (NSArray<NSSharingService*>*)
+- (NSArray*)
        sharingServicePicker:(NSSharingServicePicker*)aSharingServicePicker
     sharingServicesForItems:(NSArray*)aItems
-    proposedSharingServices:(NSArray<NSSharingService*>*)aProposedServices;
+    proposedSharingServices:(NSArray*)aProposedServices;
 
 - (void)releaseJSObjects;
 

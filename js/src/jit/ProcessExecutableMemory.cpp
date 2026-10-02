@@ -507,7 +507,8 @@ static void* ReserveProcessExecutableMemory(size_t bytes) {
   void* randomAddr = ComputeRandomAllocationAddress();
   unsigned protection = PROT_NONE;
   unsigned flags = MAP_NORESERVE | MAP_PRIVATE | MAP_ANON;
-#  if defined(XP_DARWIN)
+#  if defined(XP_DARWIN) && defined(MAP_JIT)
+  // MAP_JIT requires macOS 10.14.
   flags |= MAP_JIT;
 #    if defined(JS_USE_APPLE_FAST_WX)
   protection = PROT_READ | PROT_WRITE | PROT_EXEC;

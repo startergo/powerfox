@@ -191,12 +191,19 @@ SharedLibraryInfo SharedLibraryInfo::GetInfoForSelf() {
 
   struct dyld_all_image_infos* aii =
       (struct dyld_all_image_infos*)task_dyld_info.all_image_info_addr;
+#if !defined(MAC_OS_X_VERSION_10_7) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_7
+  // The pre-Lion SDK's dyld_all_image_infos has no path field; the dyld
+  // entry cannot be attributed.
+  (void)aii;
+#else
   if (aii->version >= 15) {
     const platform_mach_header* header =
         reinterpret_cast<const platform_mach_header*>(
             aii->dyldImageLoadAddress);
     addSharedLibrary(header, aii->dyldPath, sharedLibraryInfo);
   }
+#endif
 
   return sharedLibraryInfo;
 }

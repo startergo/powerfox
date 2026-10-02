@@ -1,0 +1,18 @@
+#!/bin/sh
+# Allow unstable options on the stable toolchain (for -Ztls-model=emulated).
+export RUSTC_BOOTSTRAP=1
+# rustc clamps the deployment target to its own 10.12 minimum, which then
+# conflicts with -Wl,-macosx_version_min,10.6 from the C toolchain and makes
+# clang drop crt1.o ("entry point (start) undefined"). A trailing link arg
+# overrides rustc's -mmacosx-version-min. Only for the cross target: the
+# arm64 host needs a newer minimum.
+case " $* " in
+    *" --target x86_64-apple-darwin"* | *" --target=x86_64-apple-darwin"*)
+        set -- "$@" -Clink-arg=-mmacosx-version-min=10.6
+        SYSROOT="$(cd "$(dirname "$0")" && pwd)/dist/rust-sysroot"
+        if [ -d "$SYSROOT/lib/rustlib/x86_64-apple-darwin/lib" ]; then
+            set -- "$@" --sysroot="$SYSROOT"
+        fi
+        ;;
+esac
+exec "$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc" "$@"

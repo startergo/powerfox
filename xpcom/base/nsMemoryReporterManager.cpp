@@ -443,10 +443,12 @@ static bool InSharedRegion(mach_vm_address_t aAddr, cpu_type_t aType) {
       base = SHARED_REGION_BASE_ARM;
       size = SHARED_REGION_SIZE_ARM;
       break;
+#ifdef CPU_TYPE_ARM64
     case CPU_TYPE_ARM64:
       base = SHARED_REGION_BASE_ARM64;
       size = SHARED_REGION_SIZE_ARM64;
       break;
+#endif
     case CPU_TYPE_I386:
       base = SHARED_REGION_BASE_I386;
       size = SHARED_REGION_SIZE_I386;
@@ -499,8 +501,10 @@ static bool InSharedRegion(mach_vm_address_t aAddr, cpu_type_t aType) {
     }
 
     switch (topInfo.share_mode) {
+#ifdef SM_LARGE_PAGE
       case SM_LARGE_PAGE:
         // NB: Large pages are not shareable and always resident.
+#endif
       case SM_PRIVATE:
         privatePages += topInfo.private_pages_resident;
         privatePages += topInfo.shared_pages_resident;
@@ -558,6 +562,7 @@ static bool InSharedRegion(mach_vm_address_t aAddr, cpu_type_t aType) {
                                                       mach_port_t aPort = 0) {
   MOZ_ASSERT(aN);
 
+#if defined(TASK_VM_INFO_COUNT)
   // The phys_footprint value (introduced in 10.11) of the TASK_VM_INFO data
   // matches the value in the 'Memory' column of the Activity Monitor.
   task_vm_info_data_t task_vm_info;
@@ -570,6 +575,11 @@ static bool InSharedRegion(mach_vm_address_t aAddr, cpu_type_t aType) {
 
   *aN = task_vm_info.phys_footprint;
   return NS_OK;
+#else
+  // phys_footprint is unavailable; reporting resident size instead would
+  // double-count shared pages when child processes are summed.
+  return NS_ERROR_NOT_AVAILABLE;
+#endif
 }
 
 #elif defined(XP_WIN)

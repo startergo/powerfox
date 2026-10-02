@@ -70,9 +70,22 @@ void AwakeTimeStamp::operator-=(const AwakeTimeDuration& aOther) {
 #  include <sys/types.h>
 #  include <mach/mach_time.h>
 
+// clock_gettime_nsec_np and the clockid_t clocks require macOS 10.12.
+#  if !defined(__MAC_OS_X_VERSION_MIN_REQUIRED) || \
+      __MAC_OS_X_VERSION_MIN_REQUIRED < 101200
+AwakeTimeStamp AwakeTimeStamp::Now() {
+  static mach_timebase_info_data_t timebaseInfo;
+  if (timebaseInfo.denom == 0) {
+    mach_timebase_info(&timebaseInfo);
+  }
+  return AwakeTimeStamp(mach_absolute_time() * timebaseInfo.numer /
+                        timebaseInfo.denom / kNSperUS);
+}
+#  else
 AwakeTimeStamp AwakeTimeStamp::Now() {
   return AwakeTimeStamp(clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / kNSperUS);
 }
+#  endif
 AwakeTimeStamp AwakeTimeStamp::NowLoRes() { return Now(); }
 
 #elif defined(XP_WIN)

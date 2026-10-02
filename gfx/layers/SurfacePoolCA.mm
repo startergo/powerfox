@@ -5,7 +5,11 @@
 #include "mozilla/layers/SurfacePoolCA.h"
 
 #import <CoreVideo/CVPixelBuffer.h>
-#include <IOSurface/IOSurfaceTypes.h>
+#if __has_include(<IOSurface/IOSurfaceTypes.h>)
+#  include <IOSurface/IOSurfaceTypes.h>
+#else
+#  include <IOSurface/IOSurfaceBase.h>
+#endif
 
 #include <algorithm>
 #include <unordered_set>
@@ -210,7 +214,7 @@ void SurfacePoolCA::LockedPool::ReturnSurfaceToPool(
     CFTypeRefPtr<IOSurfaceRef> aSurface) {
   auto inUseEntryIter = mInUseEntries.find(aSurface);
   MOZ_RELEASE_ASSERT(inUseEntryIter != mInUseEntries.end());
-  if (IOSurfaceIsInUse(aSurface.get())) {
+  if (&::IOSurfaceIsInUse && ::IOSurfaceIsInUse(aSurface.get())) {
     // Move the entry from mInUseEntries to mPendingEntries.
     MutateEntryStorage(
         "Start waiting for", IntSize(inUseEntryIter->second.mSize), [&]() {
@@ -255,7 +259,8 @@ uint64_t SurfacePoolCA::LockedPool::CollectPendingSurfaces(
     // doing that, we cannot move the surface to mAvailableSurfaces because
     // anything we draw to it could reach the screen in a place where we don't
     // expect it.
-    if (IOSurfaceIsInUse(pendingSurf.mEntry.mIOSurface.get())) {
+    if (&::IOSurfaceIsInUse &&
+        ::IOSurfaceIsInUse(pendingSurf.mEntry.mIOSurface.get())) {
       // The surface is still in use. Update mPreviousCheckGeneration and
       // mCheckCount.
       pendingSurf.mPreviousCheckGeneration = mCollectionGeneration;

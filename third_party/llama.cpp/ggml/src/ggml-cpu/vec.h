@@ -368,7 +368,8 @@ inline static void ggml_vec_mad_f32_unroll(const int n, const int xs, const int 
 
 inline static void ggml_vec_mad1_f32(const int n, float * y, const float * x, const float s, const float b) {
 #if defined(GGML_USE_ACCELERATE)
-    vDSP_vsmsa(x, 1, &s, &b, y, 1, n);
+    // The pre-Lion SDK's vDSP functions take non-const input pointers.
+    vDSP_vsmsa((float *)x, 1, (float *)&s, (float *)&b, y, 1, n);
 #elif defined(GGML_SIMD)
     #if defined(__ARM_FEATURE_SVE)
         // scalar ; TODO: Write SVE code
@@ -1061,7 +1062,7 @@ inline static void ggml_vec_sum_f32(const int n, float * s, const float * x) {
     }
     *s = (float)sum;
 #else
-    vDSP_sve(x, 1, s, n);
+    vDSP_sve((float *)x, 1, s, n);
 #endif
 }
 
@@ -1097,7 +1098,7 @@ inline static void ggml_vec_max_f32(const int n, float * s, const float * x) {
     }
     *s = max;
 #else
-    vDSP_maxv(x, 1, s, n);
+    vDSP_maxv((float *)x, 1, s, n);
 #endif
 }
 

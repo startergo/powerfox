@@ -83,6 +83,10 @@ class KernelTimeout {
   struct timespec MakeRelativeTimespec() const;
 
 #ifndef _WIN32
+#if defined(__APPLE__) && !defined(CLOCK_MONOTONIC)
+  // clockid_t and the clockid_t clocks require macOS 10.12.
+  typedef int clockid_t;
+#endif
   // Convert to `struct timespec` for interfaces that expect an absolute timeout
   // on a specific clock `c`. This is similar to `MakeAbsTimespec()`, but
   // callers usually want to use this method with `CLOCK_MONOTONIC` when
